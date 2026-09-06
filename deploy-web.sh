@@ -15,7 +15,7 @@ s = open(src, encoding="utf-8").read()
 banner = """<main>
   <div class="card" style="border-color:var(--warn)">
     <h2 style="color:var(--warn)">Testnet only, for now</h2>
-    <p style="margin:0 0 8px;font-size:13.5px">This is live on Robinhood Chain <b>testnet</b> so you can try it end to end with test tokens. The mainnet contract is not deployed yet. Built from a request in the Robinhood Chain community.</p>
+    <p style="margin:0 0 8px;font-size:13.5px">This works on Robinhood Chain <b>testnet</b> only, so you can try the whole thing with test tokens. Mainnet is switched off until the contract is deployed and tested there. Built from a request in the Robinhood Chain community.</p>
     <p style="margin:0;font-size:13.5px">Two ways out, picked for you. If your wallet can send several transfers in one transaction, it sends them <b>as itself</b>: no approval to grant, nothing left to revoke, and it works on collections that only allow transfers their creator approved. Otherwise it uses <b>BulkSend</b>, a contract that holds nothing, takes no fee, and can only move what you approve in the transaction you sign; its source is verified on the explorer.</p>
   </div>
 """

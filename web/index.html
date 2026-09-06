@@ -8,7 +8,8 @@
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
   :root{ --bg:#f6f7f4; --ink:#17201c; --mut:#5f6b64; --line:#d9ded9; --card:#ffffff; --acc:#1f7a4d; --acc2:#0f5f3a; --warn:#9a5b00; --bad:#a32d2d; --ok:#1f7a4d; --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; }
-  @media (prefers-color-scheme: dark){ :root{ --bg:#101412; --ink:#e8ede9; --mut:#9aa69f; --line:#27302b; --card:#171d19; --acc:#3fbf7f; --acc2:#6fd9a1; } }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#101412; --ink:#e8ede9; --mut:#9aa69f; --line:#27302b; --card:#171d19; --acc:#3fbf7f; --acc2:#6fd9a1; --warn:#e5ab5e; --bad:#f28b8b; --ok:#6fd9a1; }
+    button{color:#0d1310} }
   *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
   header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid var(--line)}
   h1{font-size:18px;margin:0;letter-spacing:.2px} h1 small{color:var(--mut);font-weight:400;margin-left:8px}
@@ -27,6 +28,12 @@
   .log{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;max-height:280px;overflow:auto;border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
   .stat{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--mut)} .stat b{color:var(--ink)}
   .warn{color:var(--warn)} .bad{color:var(--bad)} .ok{color:var(--ok)}
+  /* .stat b was overriding the state colours, so every warning rendered as ordinary bold text */
+  .stat .warn b{color:var(--warn)} .stat .bad b{color:var(--bad)} .stat .ok b{color:var(--ok)}
+  .msg{font-size:12.5px;margin-top:6px;min-height:1px}
+  .hint{font-size:12.5px;color:var(--mut);margin-top:8px}
+  button.danger{border-color:var(--bad);color:var(--bad);background:transparent}
+  @media(max-width:640px){ input[type=text],select,textarea{font-size:16px} textarea{min-height:38vh} input[type=checkbox]{width:20px;height:20px} }
   .check{display:flex;gap:8px;align-items:center;font-size:13px;margin:8px 0}
   footer{color:var(--mut);font-size:12.5px;padding:18px 22px;border-top:1px solid var(--line);max-width:920px;margin:0 auto}
   a{color:var(--acc2)}
@@ -34,44 +41,48 @@
 </head>
 <body>
 <header>
-  <h1>BulkSend <small>airdrops on Robinhood Chain</small></h1>
+  <h1>BulkSend <small>send an NFT or token to hundreds of wallets at once</small></h1>
   <div id="walletBox"><button id="connect">Connect wallet</button></div>
 </header>
 <main>
   <div class="card">
     <h2>1 · Network and token</h2>
     <div class="row">
-      <div><label>Network</label><select id="net"><option value="46630">Robinhood Chain testnet (46630)</option><option value="4663">Robinhood Chain mainnet (4663)</option></select></div>
-      <div><label>Token standard</label><select id="std"><option value="721">ERC-721 (one id per wallet)</option><option value="1155">ERC-1155 (id + amount per wallet)</option><option value="20">ERC-20 (amount per wallet)</option></select></div>
+      <div><label for="net">Network</label><select id="net" aria-label="Network"><option value="46630">Robinhood Chain testnet (46630)</option><option value="4663" disabled>Robinhood Chain mainnet (not live yet)</option></select></div>
+      <div><label for="std">Token standard</label><select id="std" aria-label="Token standard"><option value="721">ERC-721 (one id per wallet)</option><option value="1155">ERC-1155 (id + amount per wallet)</option><option value="20">ERC-20 (amount per wallet)</option></select></div>
     </div>
-    <label>Token contract address</label><input type="text" id="token" placeholder="0x…" spellcheck="false">
-    <div id="tokenInfo" class="stat" style="margin-top:8px"></div>
+    <label for="token">Token contract address</label><input type="text" id="token" aria-label="Token contract address" placeholder="0x…" spellcheck="false">
+    <div id="tokenInfo" class="stat" aria-live="polite" style="margin-top:8px"></div>
+    <div id="msgTop" class="msg" aria-live="polite"></div>
   </div>
 
   <div class="card">
     <h2>2 · Recipients</h2>
     <div class="row" style="margin-bottom:10px">
-      <div><label>Build the list from a collection's holders</label><div style="display:flex;gap:8px"><input type="text" id="snapAddr" placeholder="holders of 0x… (snapshot)" spellcheck="false"><button class="secondary" id="snap">Fetch</button></div></div>
+      <div><label>Build the list from a collection's holders</label><div style="display:flex;gap:8px"><input type="text" id="snapAddr" aria-label="Collection address to take a holder snapshot of" placeholder="holders of 0x… (snapshot)" spellcheck="false"><button class="secondary" id="snap">Fetch</button></div></div>
       <div><label>Or let it use the token ids you hold</label><div style="display:flex;gap:8px"><button class="secondary" id="assign" style="flex:1">Assign my token ids</button><button class="secondary" id="shuffle">Shuffle</button></div>
       <div class="check" style="margin:6px 0 0"><input type="checkbox" id="rand" checked><label for="rand" style="margin:0;font-size:12px">Random, so nobody can pick which NFT they get. Costs nothing: they still go out cheapest-first.</label></div></div>
     </div>
     <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV</label>
-    <textarea id="list" placeholder="0xabc…, 12&#10;0xdef…, 13"></textarea>
+    <textarea id="list" aria-label="Recipient list" placeholder="0xabc…, 12&#10;0xdef…, 13"></textarea>
     <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
-      <input type="file" id="csv" accept=".csv,.txt,text/csv">
+      <input type="file" id="csv" aria-label="Upload a CSV of recipients" accept=".csv,.txt,text/csv">
       <button class="secondary" id="parse">Check list</button>
-      <span id="parseOut" class="stat"></span>
+      <button class="secondary" id="dropContracts" style="display:none">Remove contract addresses</button>
+      <span id="parseOut" class="stat" aria-live="polite"></span>
+      <div id="msgList" class="msg" aria-live="polite" style="flex-basis:100%"></div>
     </div>
-    <div id="problems" class="log" style="display:none"></div>
+    <div id="problems" class="log" tabindex="0" aria-live="assertive" style="display:none"></div>
+    <div class="check" id="ackRow" style="display:none"><input type="checkbox" id="ack"><label for="ack" style="margin:0">Send to the good lines and leave the unreadable ones out</label></div>
   </div>
 
   <div class="card">
     <h2>3 · Options</h2>
     <div class="row">
-      <div><label>Batch size (recipients per transaction)</label><input type="text" id="batch" value="100"></div>
-      <div><label>Mode</label><select id="mode"><option value="lenient">Lenient: skip wallets that cannot receive, deliver the rest</option><option value="strict">Strict: any failure reverts the whole batch</option></select></div>
+      <div><label for="batch">Recipients per transaction</label><input type="number" inputmode="numeric" min="1" max="400" id="batch" value="100" aria-label="Recipients per transaction"></div>
+      <div><label for="mode">If a wallet cannot receive</label><select id="mode" aria-label="What to do if a wallet cannot receive"><option value="lenient">Keep going: skip that wallet and deliver to everyone else</option><option value="strict">All or nothing: if any wallet fails, send nothing</option></select></div>
     </div>
-    <div class="check" id="safeRow"><input type="checkbox" id="safe"><label for="safe" style="margin:0">Use safeTransferFrom (contract recipients must accept ERC-721)</label></div>
+    <div class="check" id="safeRow"><input type="checkbox" id="safe"><label for="safe" style="margin:0">Refuse to send to a contract that cannot hold NFTs. Slightly more gas, and a few unusual wallets are refused too.</label></div>
   </div>
 
   <div class="card">
@@ -83,14 +94,18 @@
       <button id="send" disabled>Send airdrop</button>
       <button class="secondary" id="stop" disabled>Stop after this batch</button>
       <button class="secondary" id="export" disabled>Download skipped</button>
+      <div id="msgSend" class="msg" aria-live="polite" style="flex-basis:100%"></div>
       <button class="secondary" id="revoke" disabled>Revoke approval</button>
-      <button class="secondary" id="forget">Start over</button>
+      <button class="danger" id="forget">Forget what was delivered</button>
     </div>
-    <div class="log" id="log"></div>
+    <div id="whyDisabled" class="hint"></div>
+    <div class="log" id="log" tabindex="0" aria-live="polite"></div>
   </div>
 </main>
 <footer>
+  Reviewed by several independent automated audits, not by a human audit firm.
   This page remembers, in your browser only, which wallets it already delivered to, so a reload cannot pay anyone twice. "Start over" clears that.
+  <span id="contractLine"></span>
   BulkSend holds nothing. Every transfer is <span class="mono">transferFrom(you, recipient, …)</span>, so it can only move what you approved, inside the transaction you sign. Revoke the approval from your wallet or the explorer when the airdrop is done. Contract source is verified on the explorer. Nothing here is financial advice.
 </footer>
 
@@ -118,13 +133,19 @@
   const $ = (id) => document.getElementById(id);
   // Everything shown is text. Token names, symbols and revert reasons come from contracts we do not control;
   // they must never become markup.
+  // Anything said about a control is also shown beside that control, because the log lives at the bottom of
+  // a long page and a message nobody scrolls to is a message that was never said.
+  function say(where, msg, cls) { const el = $(where); if (!el) return; el.textContent = msg || ''; el.className = 'msg' + (cls ? ' ' + cls : ''); }
   const log = (msg, cls, txHash) => { const el = $('log'); const line = document.createElement('div'); if (cls) line.className = cls; line.textContent = msg;
     if (txHash) { line.appendChild(document.createTextNode(' ')); const a = document.createElement('a'); a.href = cfg().explorer + '/tx/' + txHash; a.target = '_blank'; a.rel = 'noopener'; a.textContent = txHash.slice(0, 10) + '…'; line.appendChild(a); }
     el.appendChild(line); el.scrollTop = el.scrollHeight; };
   const setStat = (el, parts) => { el.textContent = ''; for (const [label, value, cls] of parts) { const span = document.createElement('span'); if (cls) span.className = cls; if (label) span.appendChild(document.createTextNode(label + ' ')); const b = document.createElement('b'); b.textContent = value; span.appendChild(b); el.appendChild(span); } };
 
+  let eth = null;   // the wallet the user chose, discovered through EIP-6963 rather than assumed
   let provider, signer, me, rows = [], stopFlag = false, decimals = null, tokenLoadedFor = null, skippedRows = [], sending = false;
+  let badLines = 0, badLinesOk = false;
   let walletBatch = null;   // does the wallet run several calls as itself, in one transaction (EIP-5792)
+  let walletBatchReady = false;   // 'ready' means it will prompt to upgrade the account before the first batch
   let gatedBy = null;       // the collection's creator transfer validator, if it has one
   let tokenPaused = false;  // a paused collection refuses every transfer, so say so before anyone pays gas
   let ethUsd = null;        // best effort, for the cost line; the page works fine without it
@@ -143,8 +164,10 @@
     return { to: token, value: '0x0', data: DIRECT.encodeFunctionData('transfer(address,uint256)', [row.to, row.amount]) };
   }
   const hexChain = () => '0x' + chainId().toString(16);
+  const LIVE_CHAINS = new Set([46630]);   // add 4663 only when BulkSend is deployed, verified and tested on mainnet
   // Which way this airdrop will go out.
   function deliveryPath() {
+    if (!LIVE_CHAINS.has(chainId())) return 'notlive';   // mainnet is switched off until it is deployed and tested there
     if (walletBatch) return 'wallet';
     if (gatedBy) return 'blocked';
     return bulkReady() ? 'bulk' : 'none';
@@ -156,7 +179,7 @@
   const bulkReady = () => ethers.isAddress(cfg().bulk || '');
   // From live receipts: 37k per recipient for plain 721 transfers, 54-57k once a receive hook runs (safe or lenient).
   const gasPer = () => (std() === '20' ? 32 : (safeMode() || lenient()) ? 57 : 37);
-  const maxBatch = () => (safeMode() || lenient()) ? 200 : 400;
+  const maxBatch = () => deliveryPath() === 'wallet' ? 25 : (safeMode() || lenient()) ? 200 : 400;
 
   const EXPLORER_API = () => (chainId() === 4663 ? 'https://robinhoodchain.blockscout.com/api/v2' : 'https://explorer.testnet.chain.robinhood.com/api/v2');
   async function explorer(path) { const r = await fetch(EXPLORER_API() + path, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error('explorer ' + r.status); return r.json(); }
@@ -172,16 +195,74 @@
     return null;
   }
 
-  // ---- connection ----
-  async function connect() {
-    if (!window.ethereum) { log('No wallet found in this browser. Install one, then reload.', 'bad'); return; }
-    provider = new ethers.BrowserProvider(window.ethereum); await provider.send('eth_requestAccounts', []); signer = await provider.getSigner(); me = await signer.getAddress();
-    const box = $('walletBox'); box.textContent = ''; const pill = document.createElement('span'); pill.className = 'pill ok mono'; pill.textContent = me.slice(0, 6) + '…' + me.slice(-4); box.appendChild(pill);
-    if (window.ethereum.on) {
-      window.ethereum.on('chainChanged', () => { if (sending) { stopFlag = true; log('The wallet changed network mid-airdrop. Stopping after this batch.', 'bad'); } });
-      window.ethereum.on('accountsChanged', () => { if (sending) { stopFlag = true; log('The wallet changed account mid-airdrop. Stopping after this batch.', 'bad'); } });
+  // ---- wallet discovery (EIP-6963) ----
+  // Several extensions can be installed at once and they fight over window.ethereum, so ask them to announce
+  // themselves and let the user choose. Falls back to window.ethereum for older wallets.
+  const wallets = new Map();
+  window.addEventListener('eip6963:announceProvider', (e) => {
+    try { const d = e.detail; if (d && d.info && d.provider) { wallets.set(d.info.rdns, d); renderWalletChoice(); } } catch (err) {}
+  });
+  try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (e) {}
+  function renderWalletChoice() {
+    if (me) return;
+    const box = $('walletBox');
+    if (wallets.size <= 1) return;   // one wallet: the plain Connect button is fine
+    box.textContent = '';
+    const label = document.createElement('span'); label.className = 'pill'; label.textContent = 'connect with'; box.appendChild(label);
+    for (const d of wallets.values()) {
+      const b = document.createElement('button'); b.className = 'secondary'; b.style.marginLeft = '6px'; b.textContent = d.info.name;
+      b.addEventListener('click', () => connect(d.provider, d.info.rdns)); box.appendChild(b);
     }
-    await switchChain(); await detectWalletBatch(); plan();
+  }
+  function walletChoice(explicit) {
+    if (explicit) return explicit;
+    const remembered = (() => { try { return localStorage.getItem('bulksend:wallet'); } catch (e) { return null; } })();
+    if (remembered && wallets.has(remembered)) return wallets.get(remembered).provider;
+    if (wallets.size === 1) return [...wallets.values()][0].provider;
+    return window.ethereum || null;
+  }
+  // Wallet errors have standard codes. Saying what happened beats a silent console rejection.
+  function walletError(e) {
+    const c = e && (e.code ?? (e.info && e.info.error && e.info.error.code));
+    if (c === 4001 || c === 'ACTION_REJECTED') return 'You cancelled that in your wallet.';
+    if (c === -32002) return 'Your wallet already has a request open. Open it and finish or dismiss that first.';
+    if (c === 4200) return 'This wallet cannot add a network by itself. Add Robinhood Chain testnet manually: chain id 46630, RPC https://rpc.testnet.chain.robinhood.com, symbol ETH.';
+    if (c === 4902) return 'Robinhood Chain is not in this wallet yet, and it refused to add it. Add it manually: chain id 46630, RPC https://rpc.testnet.chain.robinhood.com, symbol ETH.';
+    if (c === 5700) return 'This wallet does not support sending a batch on this network.';
+    if (c === 5740) return 'That batch is too large for this wallet. Lower the batch size and try again.';
+    if (c === 5750) return 'You declined the account upgrade, so the batch could not be sent as your wallet.';
+    if (c === 5730) return 'Your wallet no longer has a record of that batch. Check the explorer before sending again.';
+    return String(e && (e.shortMessage || e.message) || e).slice(0, 200);
+  }
+
+  // ---- connection ----
+  async function connect(explicitProvider, rdns) {
+    const chosen = walletChoice(explicitProvider);
+    if (!chosen) { say('msgTop', 'No wallet found in this browser. On a phone, open this page inside your wallet app\'s own browser. On a computer, install a wallet extension and reload.', 'bad'); return; }
+    eth = chosen;
+    if (rdns) { try { localStorage.setItem('bulksend:wallet', rdns); } catch (e) {} }
+    try {
+    say('msgTop', 'Check your wallet for a connection request…');
+    provider = new ethers.BrowserProvider(eth); await provider.send('eth_requestAccounts', []); signer = await provider.getSigner(); me = await signer.getAddress();
+    say('msgTop', '');
+    const box = $('walletBox'); box.textContent = ''; const pill = document.createElement('span'); pill.className = 'pill ok mono'; pill.textContent = me.slice(0, 6) + '…' + me.slice(-4); box.appendChild(pill);
+    if (eth && eth.on) {
+      eth.on('chainChanged', () => { if (sending) { stopFlag = true; log('The wallet changed network mid-airdrop. Stopping after this batch.', 'bad'); } });
+      eth.on('accountsChanged', async (accts) => {
+        if (sending) { stopFlag = true; log('The wallet changed account mid-airdrop. Stopping after this batch.', 'bad'); return; }
+        if (!accts || !accts.length) {
+          me = null; signer = null; provider = null;
+          const box = $('walletBox'); box.textContent = ''; const btn = document.createElement('button'); btn.id = 'connect'; btn.textContent = 'Connect wallet'; btn.addEventListener('click', () => connect()); box.appendChild(btn);
+          log('Your wallet disconnected this page.', 'warn'); plan(); return;
+        }
+        try { signer = await provider.getSigner(); me = await signer.getAddress();
+          const box = $('walletBox'); box.textContent = ''; const pill = document.createElement('span'); pill.className = 'pill ok mono'; pill.textContent = me.slice(0, 6) + '…' + me.slice(-4); box.appendChild(pill);
+          log('Switched to ' + me.slice(0, 6) + '…' + me.slice(-4) + '.'); await detectWalletBatch(); refreshRevoke(); plan();
+        } catch (e) { log('Could not read the new account: ' + String(e.shortMessage || e.message).slice(0, 90), 'bad'); }
+      });
+    }
+    await switchChain(); await detectWalletBatch(); refreshRevoke(); plan();
+    } catch (e) { me = null; provider = null; signer = null; say('msgTop', walletError(e), 'bad'); plan(); }
   }
   // EIP-5792: ask the wallet whether it can run several calls as one atomic transaction. Wallets do this by
   // temporarily running batch code as the account itself, so each transfer's sender is the owner, which is
@@ -189,25 +270,32 @@
   async function detectWalletBatch() {
     walletBatch = false;
     try {
-      const caps = await window.ethereum.request({ method: 'wallet_getCapabilities', params: [me, [hexChain()]] });
-      const c = caps && (caps[hexChain()] || caps[hexChain().toLowerCase()] || caps[chainId()]);
+      const caps = await eth.request({ method: 'wallet_getCapabilities', params: [me, [hexChain()]] });
+      let c = null;
+      if (caps) for (const k of Object.keys(caps)) { if (String(k).toLowerCase() === hexChain() || String(k) === String(chainId())) { c = caps[k]; break; } }
       const a = c && (c.atomic || c.atomicBatch);
       const st = a && (a.status !== undefined ? a.status : a.supported);
       walletBatch = st === 'supported' || st === 'ready' || st === true;
+      walletBatchReady = st === 'ready';   // the wallet can do it, but will ask to upgrade the account first
     } catch (e) { walletBatch = false; }
   }
   async function switchChain() {
     const id = chainId(), c = cfg(), hex = '0x' + id.toString(16);
-    try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }); }
-    catch (e) { if (e.code === 4902 || /unrecognized|not added/i.test(e.message || '')) { await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: hex, chainName: c.name, rpcUrls: [c.rpc], nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, blockExplorerUrls: [c.explorer] }] }); } else { log('Could not switch network: ' + (e.message || e), 'bad'); } }
-    provider = new ethers.BrowserProvider(window.ethereum); signer = await provider.getSigner();
+    try { await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }); }
+    catch (e) {
+      if (e.code === 4902 || /unrecognized|not added/i.test(e.message || '')) {
+        try { await eth.request({ method: 'wallet_addEthereumChain', params: [{ chainId: hex, chainName: c.name, rpcUrls: [c.rpc], nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, blockExplorerUrls: [c.explorer] }] }); }
+        catch (e2) { log(walletError(e2), 'bad'); }
+      } else { log('Could not switch network: ' + walletError(e), 'bad'); }
+    }
+    provider = new ethers.BrowserProvider(eth); signer = await provider.getSigner();
   }
   async function onSelectedChain() {
-    try { const net = await new ethers.BrowserProvider(window.ethereum).getNetwork();
+    try { const net = await new ethers.BrowserProvider(eth).getNetwork();
       if (Number(net.chainId) !== chainId()) { log('Your wallet is on chain ' + net.chainId + ' but ' + cfg().name + ' (' + chainId() + ') is selected. Switch the wallet, or pick the matching network above.', 'bad'); await switchChain(); return false; }
       return true; } catch (e) { log('Could not read the wallet network: ' + (e.shortMessage || e.message), 'bad'); return false; }
   }
-  $('connect').addEventListener('click', connect);
+  $('connect').addEventListener('click', () => connect());   // not `connect` directly: the click event would be taken as the chosen wallet
 
   // ---- token lookup. Amounts depend on decimals, so nothing may be parsed or sent until this has answered. ----
   $('token').addEventListener('change', () => { rows = []; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); tokenInfo(); });
@@ -216,7 +304,8 @@
     $('safeRow').style.display = std() === '721' ? 'flex' : 'none';
     rows = []; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); plan(); if ($('token').value.trim()) tokenInfo();
   });
-  $('net').addEventListener('change', async () => { tokenLoadedFor = null; gatedBy = null; plan(); if (provider) { await switchChain(); await detectWalletBatch(); plan(); } });
+  $('net').addEventListener('change', async () => { tokenLoadedFor = null; gatedBy = null; gasPriceFor = null; refreshGasPrice(); plan(); if (provider) { await switchChain(); await detectWalletBatch(); plan(); } });
+  $('ack').addEventListener('change', () => { badLinesOk = $('ack').checked; plan(); });
   $('mode').addEventListener('change', plan); $('safe').addEventListener('change', plan); $('batch').addEventListener('input', plan);
 
   async function tokenInfo() {
@@ -258,7 +347,7 @@
     const s = std();
     if (s === '20' && tokenLoadedFor !== $('token').value.trim().toLowerCase()) { setStat($('parseOut'), [['', 'Enter the token address first: the amounts depend on how many decimals it uses.', 'bad']]); rows = []; plan(); return; }
     const want = s === '1155' ? 3 : 2;   // fields per line; more than this means a stray separator, such as a thousands comma
-    const lines = $('list').value.split(/\r?\n/); const out = [], problems = []; const seenId = new Set();
+    const lines = $('list').value.split(/\r?\n/); const out = [], problems = []; const seenId = new Set(); let headers = 0;
     // Bare wallets, no ids: that is how most people start. Offer to fill the ids in rather than flagging every line.
     if (s === '721') {
       const rowsIn = lines.map(l => l.trim()).filter(l => l && !/^(address|wallet|to)\b/i.test(l));
@@ -274,15 +363,23 @@
       $('assign').style.borderColor = ''; $('assign').style.color = '';
     }
     lines.forEach((line, i) => {
-      const t = line.trim(); if (!t || /^(address|wallet|to)\b/i.test(t)) return;
+      const t = line.trim(); if (!t) return;
+      if (/^(address|wallet|to)\b/i.test(t) && !ethers.isAddress(t.split(/[,\t; ]+/)[0])) { headers++; return; }
       const parts = t.split(/[,\t;]+|\s+/).filter(Boolean);
-      if (parts.length > want) { problems.push('line ' + (i + 1) + ': ' + parts.length + ' values, expected ' + want + '. A thousands separator splits the line, so write 1234.5 rather than 1,234.5'); return; }
-      const addr = parts[0]; if (!ethers.isAddress(addr)) { problems.push('line ' + (i + 1) + ': bad address "' + String(addr).slice(0, 30) + '"'); return; }
+      const addr = parts[0];
+      if (!ethers.isAddress(addr)) {
+        const why = /\.eth$|\.[a-z]{2,}$/i.test(String(addr)) ? 'names like vitalik.eth are not supported here; paste the 0x address'
+                  : 'that is not a wallet address';
+        problems.push('line ' + (i + 1) + ': ' + why + ' ("' + String(addr).slice(0, 30) + '")'); return; }
+      if (parts.length > want) {
+        const looksLikeThousands = parts.length === want + 1 && /^\d{1,3}$/.test(parts[1] || '') && /^\d{3}(\.\d+)?$/.test(parts[2] || '');
+        problems.push('line ' + (i + 1) + ': ' + parts.length + ' values, expected ' + want + (looksLikeThousands ? '. A thousands separator splits the line, so write 1234.5 rather than 1,234.5' : '')); return; }
       const a = ethers.getAddress(addr);
       if (a === ethers.ZeroAddress) { problems.push('line ' + (i + 1) + ': the zero address would burn the token; not allowed'); return; }
       try {
         if (s === '721') { const id = parts[1]; if (!/^\d+$/.test(id || '')) { problems.push('line ' + (i + 1) + ': missing token id'); return; }
-          if (seenId.has(id)) { problems.push('line ' + (i + 1) + ': token id ' + id + ' is listed twice'); return; } seenId.add(id);
+          const idKey = BigInt(id).toString();   // 1 and 01 are the same token
+          if (seenId.has(idKey)) { problems.push('line ' + (i + 1) + ': token id ' + id + ' is listed twice'); return; } seenId.add(idKey);
           out.push({ to: a, id: BigInt(id), raw: id }); }
         else if (s === '1155') { const id = parts[1], amt = parts[2]; if (!/^\d+$/.test(id || '') || !/^\d+$/.test(amt || '')) { problems.push('line ' + (i + 1) + ': need a token id and a whole amount'); return; }
           out.push({ to: a, id: BigInt(id), amount: BigInt(amt), raw: amt }); }
@@ -302,28 +399,44 @@
     if (dupes) parts.push(['', dupes + ' identical lines (each one sends again)', 'warn']);
     else if (repeatWallets) parts.push(['', repeatWallets + ' wallets appear more than once', 'warn']);
     if (selfSends) parts.push(['', selfSends + ' of these are your own wallet', 'warn']);
+    if (headers) parts.push(['', headers + ' line' + (headers === 1 ? '' : 's') + ' skipped as a heading', 'warn']);
     setStat($('parseOut'), parts);
     $('problems').style.display = problems.length ? 'block' : 'none'; $('problems').textContent = problems.join('\n');
+    badLines = problems.length; badLinesOk = false;
+    if (problems.length) say('msgList', problems.length + ' line' + (problems.length === 1 ? '' : 's') + ' could not be read and will not be sent. Fix them, or tick the box below to go ahead without them.', 'bad');
+    else say('msgList', '');
+    $('ackRow').style.display = problems.length ? 'flex' : 'none'; $('ack').checked = false;
     plan(); refreshRevoke();
   }
 
   // ---- a record of what already went out, so closing the tab mid-airdrop cannot pay anyone twice ----
-  const runKey = () => 'bulksend:' + chainId() + ':' + ($('token').value.trim().toLowerCase()) + ':' + std();
+  // Scoped to the sending account as well as the chain, token and standard: two accounts airdropping the same
+  // collection from one browser are separate runs, and must not filter each other.
+  const runKey = () => 'bulksend:' + chainId() + ':' + (me || 'anon').toLowerCase() + ':' + ($('token').value.trim().toLowerCase()) + ':' + std();
+  // Keyed on the parsed id and amount, not the typed text, so "100" and "100.0" are the same payment and a
+  // second, different-sized drop to the same wallet is not mistaken for a repeat of the first.
+  const rowKey = (r) => r.to.toLowerCase() + ':' + (r.id !== undefined ? r.id.toString() : '') + ':' + (r.amount !== undefined ? r.amount.toString() : '');
   function loadDelivered() { try { return new Set(JSON.parse(localStorage.getItem(runKey()) || '[]')); } catch (e) { return new Set(); } }
   function markDelivered(rowsDone) {
-    try { const s = loadDelivered(); for (const r of rowsDone) s.add(r.to.toLowerCase() + ':' + (r.id ?? r.raw ?? '')); localStorage.setItem(runKey(), JSON.stringify([...s].slice(-20000))); } catch (e) {}
+    try { const s = loadDelivered(); for (const r of rowsDone) s.add(rowKey(r)); localStorage.setItem(runKey(), JSON.stringify([...s].slice(-20000))); }
+    catch (e) { log('This browser would not save the record of what was delivered, so it cannot protect you from sending twice. Keep the tab open and finish in one go.', 'bad'); }
   }
   function dropAlreadyDelivered(list) {
     const done = loadDelivered(); if (!done.size) return { list, skippedBefore: 0 };
-    const fresh = list.filter(r => !done.has(r.to.toLowerCase() + ':' + (r.id ?? r.raw ?? '')));
+    const fresh = list.filter(r => !done.has(rowKey(r)));
     return { list: fresh, skippedBefore: list.length - fresh.length };
   }
+  // One list, built once: already-delivered removed, then ordered. The test run and the send both use this,
+  // so what is simulated is exactly what is sent.
+  function workingList() { const r = dropAlreadyDelivered(rows); return { list: orderForDelivery(r.list), skippedBefore: r.skippedBefore }; }
   function forgetRun() { try { localStorage.removeItem(runKey()); } catch (e) {} }
 
   // ---- snapshot: take every holder of a collection and use them as the recipient list ----
+  $('snapAddr').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('snap').click(); } });
+  $('token').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('token').dispatchEvent(new Event('change')); } });
   $('snap').addEventListener('click', async () => {
     const addr = $('snapAddr').value.trim();
-    if (!ethers.isAddress(addr)) { log('Paste the collection address to take a snapshot of.', 'bad'); return; }
+    if (!ethers.isAddress(addr)) { say('msgList', 'Paste the address of the collection whose holders you want.', 'bad'); return; }
     $('snap').disabled = true;
     try {
       log('Reading holders of ' + addr.slice(0, 10) + '… from the explorer.');
@@ -337,7 +450,25 @@
       }
       const uniq = [...new Set(holders)].filter(h => h !== ethers.ZeroAddress && (!me || h.toLowerCase() !== me.toLowerCase()));
       if (!uniq.length) { log('The explorer returned no holders for that address.', 'bad'); return; }
+      if (holders.length >= 5000) log('Stopped at 5,000 holders. This collection has more, so the list is incomplete.', 'bad');
+      if (!confirmOverwrite()) return;
       $('list').value = uniq.join('\n');
+      // Some holders are contracts: marketplace escrows, vaults, bridges. Tokens sent there are usually stuck.
+      // A wallet running delegated code (0xef0100...) is still an ordinary wallet and must not be counted here.
+      try {
+        const rp = new ethers.JsonRpcProvider(cfg().rpc); const contracts = [];
+        for (let i = 0; i < uniq.length; i += 25) {
+          const part = uniq.slice(i, i + 25);
+          const codes = await Promise.all(part.map(a => rp.getCode(a).catch(() => '0x')));
+          part.forEach((a, k) => { const c = codes[k]; if (c && c !== '0x' && !c.toLowerCase().startsWith('0xef0100')) contracts.push(a); });
+        }
+        if (contracts.length) {
+          log(contracts.length + ' of these are contracts, not wallets: marketplace escrows, vaults and the like. Anything sent there is usually stuck.', 'warn');
+          window.__snapContracts = contracts;
+          log('Press "Remove contract addresses" below the list to take them out.', 'warn');
+          $('dropContracts').style.display = 'inline-block';
+        } else { $('dropContracts').style.display = 'none'; }
+      } catch (e) {}
       log(uniq.length + ' holders loaded' + (me ? ' (your own wallet left out)' : '') + '.', 'ok');
       if (std() === '721') log('Next: press "Assign my token ids to these wallets" to fill in which of your NFTs each one gets.');
       parseList();
@@ -361,8 +492,11 @@
   $('shuffle').addEventListener('click', () => {
     const s = std();
     const lines = $('list').value.split(/\r?\n/).map(l => l.trim()).filter(l => l && !/^(address|wallet|to)\b/i.test(l));
-    const parsed = lines.map(l => l.split(/[,\t; ]+/).filter(Boolean)).filter(p => ethers.isAddress(p[0]) && p.length > 1);
+    const all = lines.map(l => l.split(/[,\t; ]+/).filter(Boolean));
+    const parsed = all.filter(p => ethers.isAddress(p[0]) && p.length > 1);
     if (parsed.length < 2) { log('Put at least two lines with an id or amount in the box first.', 'bad'); return; }
+    if (parsed.length !== all.length) { log('Shuffle would drop ' + (all.length - parsed.length) + ' line' + (all.length - parsed.length === 1 ? '' : 's') + ' that have no id yet. Assign ids first, or finish the list.', 'bad'); return; }
+    if (s === '20' && !confirm('This will move the amounts between wallets at random. Amounts stay the same, but who gets what changes. Continue?')) return;
     const wallets = parsed.map(p => ethers.getAddress(p[0]));
     const rest = shuffled(parsed.map(p => p.slice(1)));
     $('list').value = wallets.map((w, i) => [w, ...rest[i]].join(',')).join('\n');
@@ -370,24 +504,40 @@
     parseList();
   });
 
+  $('dropContracts').addEventListener('click', () => {
+    const drop = new Set((window.__snapContracts || []).map(a => a.toLowerCase()));
+    if (!drop.size) return;
+    const kept = $('list').value.split(/\r?\n/).filter(l => { const a = l.trim().split(/[,\t; ]+/)[0]; return !(a && drop.has(a.toLowerCase())); });
+    $('list').value = kept.join('\n'); log(drop.size + ' contract addresses removed.', 'ok');
+    $('dropContracts').style.display = 'none'; window.__snapContracts = []; parseList();
+  });
+
+  function confirmOverwrite() {
+    const cur = $('list').value.trim();
+    if (!cur) return true;
+    return confirm('This replaces the ' + cur.split(/\r?\n/).filter(Boolean).length + ' lines already in the box. There is no undo. Continue?');
+  }
+
   // ---- assign the ids you hold to a list of bare addresses ----
   $('assign').addEventListener('click', async () => {
     const token = $('token').value.trim();
-    if (!ethers.isAddress(token) || !me) { log('Connect a wallet and enter the token address first.', 'bad'); return; }
-    if (std() === '20') { log('For an ERC-20 write the amount after each address; there are no ids to assign.', 'warn'); return; }
+    if (!ethers.isAddress(token) || !me) { say('msgList', 'Connect a wallet and enter the token address first.', 'bad'); return; }
+    if (std() === '20') { log('For a token, write the amount after each address; there are no ids to assign.', 'warn'); return; }
     const wallets = $('list').value.split(/\r?\n/).map(l => l.trim().split(/[,\t; ]+/)[0]).filter(x => ethers.isAddress(x)).map(x => ethers.getAddress(x));
-    if (!wallets.length) { log('Put the recipient wallets in the box first, one per line.', 'bad'); return; }
+    if (!wallets.length) { say('msgList', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
     $('assign').disabled = true;
     try {
       const ids = await myTokenIds(token, wallets.length);
-      if (!ids.length) { log('Could not find any token ids held by your wallet in this collection.', 'bad'); $('assign').disabled = false; return; }
+      if (!ids.length) { say('msgList', 'Your wallet does not appear to hold anything in this collection.', 'bad'); $('assign').disabled = false; return; }
       const n = Math.min(ids.length, wallets.length);
       const random = $('rand').checked;
       if (ids.length < wallets.length) log('You hold ' + ids.length + ' of these, for ' + wallets.length + ' wallets. ' + (random ? n + ' wallets are picked at random; the rest get nothing.' : 'The first ' + n + ' wallets are matched; the rest are left out.'), 'warn');
       const pickWallets = random ? shuffled(wallets).slice(0, n) : wallets.slice(0, n);
       const pickIds = random ? shuffled(ids).slice(0, n) : ids.slice(0, n);
-      $('list').value = pickWallets.map((w, i) => w + ',' + pickIds[i]).join('\n');
-      log('Assigned ' + n + ' token ids' + (random ? ', paired at random. They still go out lowest id first, which is the cheapest order.' : ', lowest first.'), 'ok');
+      // ERC-1155 lines need an amount as well as an id, or the list will not parse
+      $('list').value = pickWallets.map((w, i) => w + ',' + pickIds[i] + (std() === '1155' ? ',1' : '')).join('\n');
+      log('Assigned ' + n + ' token ids' + (std() === '1155' ? ', one of each' : '') + (random ? ', paired at random. They still go out lowest id first, which is the cheapest order.' : ', lowest first.'), 'ok');
+      if (std() === '1155') log('Change the last number on any line to send more than one of that id.');
       parseList();
     } catch (e) { log('Could not read your token ids: ' + String(e.message || e).slice(0, 120), 'bad'); }
     $('assign').disabled = false;
@@ -400,7 +550,7 @@
       const t = new ethers.Contract(token, ERC721_ABI, rp); const bal = Number(await t.balanceOf(me));
       for (let i = 0; i < Math.min(bal, want + 50); i++) out.push(BigInt(await t.tokenOfOwnerByIndex(me, i)));
       if (out.length) return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    } catch (e) {}
+    } catch (e) { out.length = 0; }   // a half-finished enumeration must not be blended with the explorer's answer
     let next = '';
     for (let page = 0; page < 20 && out.length < want + 50; page++) {
       const d = await explorer('/addresses/' + me + '/nft?type=ERC-721%2CERC-1155' + (next ? '&' + next : ''));
@@ -414,7 +564,12 @@
     return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   }
 
-  $('forget').addEventListener('click', () => { forgetRun(); log('Cleared this browser\'s record of what was already delivered for this collection.', 'ok'); });
+  $('forget').addEventListener('click', () => {
+    const n = loadDelivered().size;
+    if (!n) { say('msgSend', 'There is nothing recorded for this collection and account yet.', 'warn'); return; }
+    if (!confirm('Forget that ' + n + ' recipient' + (n === 1 ? ' was' : 's were') + ' already delivered for this collection?\n\nThis does not clear the form. It removes the protection that stops you sending to them a second time.')) return;
+    forgetRun(); say('msgSend', 'Record cleared. These recipients can be sent to again.', 'warn'); log('Cleared the record of what was already delivered for this collection and account.', 'warn');
+  });
 
   // ---- revoke the operator approval once an airdrop is done ----
   $('revoke').addEventListener('click', async () => {
@@ -440,8 +595,9 @@
   function plan() {
     const c = cfg(); const bs = batchSize(); const n = rows.length; const batches = Math.ceil(n / bs);
     const path = deliveryPath();
-    const ready = !!(provider && ethers.isAddress($('token').value.trim()) && n > 0 && !sending && (path === 'wallet' || path === 'bulk'));
-    const how = path === 'wallet' ? 'your wallet, as itself (no approval)'
+    const ready = !!(provider && ethers.isAddress($('token').value.trim()) && n > 0 && !sending && (path === 'wallet' || path === 'bulk') && (!badLines || badLinesOk));
+    const how = path === 'notlive' ? 'nothing yet: this tool is not live on ' + c.name
+              : path === 'wallet' ? 'your wallet, as itself (no approval)'
               : path === 'bulk' ? 'BulkSend ' + (bulkReady() ? c.bulk.slice(0, 8) + '…' : '')
               : path === 'blocked' ? 'this collection needs a wallet that batches' : 'not deployed on this network yet';
     setStat($('plan'), [
@@ -452,22 +608,37 @@
     ]);
     $('preflight').disabled = !ready; $('send').disabled = !ready;
     $('approve').disabled = !(ready && path === 'bulk');
+    let why = '';
+    if (sending) why = 'Sending. The form is locked until this finishes.';
+    else if (!provider) why = 'Connect a wallet to begin.';
+    else if (!ethers.isAddress($('token').value.trim())) why = 'Enter the address of the collection or token you are sending.';
+    else if (!n) why = 'Add recipients, then press Check list.';
+    else if (path === 'notlive') why = 'This tool is not live on ' + c.name + ' yet. Choose the testnet.';
+    else if (path === 'blocked') why = 'This collection only allows transfers its creator approved, and your wallet cannot send them as itself.';
+    else if (path === 'none') why = 'BulkSend is not deployed on this network.';
+    $('whyDisabled').textContent = why;
     $('export').disabled = skippedRows.length === 0;
   }
   function batchSize() { const v = parseInt($('batch').value); return Math.max(1, Math.min(maxBatch(), isNaN(v) ? 100 : v)); }
   // What this will actually cost the sender, in ETH always and in dollars when a price is available.
-  let gasPriceWei = null;
-  (async () => { try { gasPriceWei = BigInt(await new ethers.JsonRpcProvider(cfg().rpc).send('eth_gasPrice', [])); plan(); } catch (e) {} })();
+  let gasPriceWei = null, gasPriceFor = null;
+  async function refreshGasPrice() {
+    const id = chainId(); if (gasPriceFor === id) return;
+    try { gasPriceWei = BigInt(await new ethers.JsonRpcProvider(cfg().rpc).send('eth_gasPrice', [])); gasPriceFor = id; plan(); } catch (e) {}
+  }
+  refreshGasPrice();
   function costLine(n) {
-    const gas = BigInt(n) * BigInt(gasPer()) * 1000n;
-    if (!gasPriceWei) return gas.toLocaleString() + ' gas in total';
+    if (!n) return 'nothing yet';
+    const batches = BigInt(Math.ceil(n / batchSize()));
+    const gas = BigInt(n) * BigInt(gasPer()) * 1000n + batches * 21000n;   // include the per-transaction base cost
+    if (!gasPriceWei || gasPriceFor !== chainId()) return gas.toLocaleString() + ' gas in total';
     const wei = gas * gasPriceWei; const eth = Number(ethers.formatEther(wei));
     const usd = ethUsd ? ' (about $' + (eth * ethUsd).toFixed(2) + ')' : '';
     return eth.toFixed(5) + ' ETH in gas' + usd;
   }
 
   // ---- form lock while a send is in flight, so the list cannot change under the loop ----
-  const FORM = ['net', 'std', 'token', 'list', 'csv', 'parse', 'batch', 'mode', 'safe', 'connect'];
+  const FORM = ['net', 'std', 'token', 'list', 'csv', 'parse', 'batch', 'mode', 'safe', 'connect', 'snap', 'snapAddr', 'assign', 'shuffle', 'rand', 'revoke', 'forget', 'export'];
   function lockForm(on) { sending = on; for (const id of FORM) { const el = $(id); if (el) el.disabled = on; } }
 
   // ---- delivery order ----
@@ -491,28 +662,39 @@
   }
 
   // ---- preflight: run the whole airdrop against live chain state without signing anything ----
-  $('preflight').addEventListener('click', () => preflight(true));
-  async function preflight(verbose) {
-    const ordered = orderForDelivery(rows);
+  $('preflight').addEventListener('click', async () => {
+    if (sending) return;
+    $('preflight').disabled = true;
+    try { if (await onSelectedChain()) await preflight(true); } finally { plan(); }
+  });
+  async function preflight(verbose, listIn) {
+    const ordered = listIn || workingList().list;
     if (verbose) log('Test run: simulating every transfer against the live chain. Nothing is signed and nothing is spent.');
     // Wallet-batch path: simulate each transfer exactly as the wallet would make it, one eth_call each.
     // Anything that fails is left out of the batch, which gives the "skip the bad ones" behaviour without a contract.
     if (deliveryPath() === 'wallet') {
       const rp = new ethers.JsonRpcProvider(cfg().rpc); const good = [], bad = [];
-      for (const row of ordered) {
-        const c = directCall(row);
+      for (let i = 0; i < ordered.length; i++) {
+        const row = ordered[i]; const c = directCall(row);
+        if (verbose && ordered.length > 40 && i % 25 === 0 && i) log('  checked ' + i + ' of ' + ordered.length + ' …');
         try { await rp.call({ from: me, to: c.to, data: c.data }); good.push(row); }
-        catch (e) { bad.push({ row, why: explainCallError(e) }); }
+        catch (e) {
+          // A chain verdict means the transfer really would fail. A network problem means we could not ask, and
+          // quietly dropping a recipient for that reason would shrink someone's airdrop over a hiccup.
+          const chainSaidNo = e && (e.code === 'CALL_EXCEPTION' || e.data || (e.info && e.info.error && e.info.error.data));
+          if (!chainSaidNo) return { ok: false, why: 'could not reach the network while checking ' + row.to + ' (' + String(e.shortMessage || e.message).slice(0, 80) + '). Nothing was sent; try again.' };
+          bad.push({ row, why: explainCallError(e) });
+        }
       }
       if (verbose) {
         log('Test run finished: ' + good.length + ' of ' + rows.length + ' would be delivered' + (bad.length ? ', ' + bad.length + ' would be left out' : '') + '.', bad.length ? 'warn' : 'ok');
         for (const b of bad.slice(0, 12)) log('  would skip ' + b.row.to + ': ' + b.why, 'warn');
         if (bad.length > 12) log('  … and ' + (bad.length - 12) + ' more', 'warn');
       }
-      return { ok: good.length > 0, willDeliver: good.length, willSkip: bad.length, good, bad, why: good.length ? '' : 'none of these transfers would go through' };
+      return { ok: good.length > 0, willDeliver: good.length, willSkip: bad.length, good, bad, list: ordered, why: good.length ? '' : 'none of these transfers would go through' };
     }
     let bulk;
-    try { bulk = new ethers.Contract(cfg().bulk, BULK_ABI, await new ethers.BrowserProvider(window.ethereum).getSigner()); }
+    try { bulk = new ethers.Contract(cfg().bulk, BULK_ABI, await new ethers.BrowserProvider(eth).getSigner()); }
     catch (e) { return { ok: false, why: 'could not reach the wallet: ' + String(e.shortMessage || e.message) }; }
     const bs = batchSize(); let willDeliver = 0, willSkip = 0;
     for (let i = 0; i < ordered.length; i += bs) {
@@ -521,10 +703,10 @@
       catch (e) { const why = explainCallError(e); log('Test run stopped at batch ' + (Math.floor(i / bs) + 1) + ': ' + why, 'bad'); return { ok: false, why }; }
     }
     if (verbose) {
-      log('Test run finished: ' + willDeliver + ' of ' + rows.length + ' would be delivered' + (willSkip ? ', ' + willSkip + ' skipped' : '') + '.', willSkip ? 'warn' : 'ok');
+      log('Test run finished: ' + willDeliver + ' of ' + ordered.length + ' would be delivered' + (willSkip ? ', ' + willSkip + ' skipped' : '') + '.', willSkip ? 'warn' : 'ok');
       if (willSkip) log('A skipped wallet is one the token itself refuses. Send, then download the skipped list and retry those in strict mode, where each transfer gets the whole transaction\'s gas.', 'warn');
     }
-    return { ok: true, willDeliver, willSkip };
+    return { ok: true, willDeliver, willSkip, list: ordered };
   }
 
   // ---- approve ----
@@ -553,18 +735,40 @@
 
   // ---- send ----
   $('send').addEventListener('click', async () => {
+    if (sending) return;                       // a second click during the slow preflight used to send the whole list twice
+    lockForm(true); $('send').disabled = true; $('preflight').disabled = true; $('approve').disabled = true;
+    try { await runSend(); } finally { lockForm(false); $('stop').disabled = true; plan(); }
+  });
+  async function runSend() {
     stopFlag = false; skippedRows = [];
     if (!(await onSelectedChain())) return;
-    const pre = await preflight(false);
+    {
+      const n = rows.length, bs = batchSize(), batches = Math.ceil(n / bs);
+      const path = deliveryPath();
+      const sigs = path === 'wallet' ? batches : batches + (std() === '20' ? 1 : 1);
+      const name = ($('tokenInfo').textContent || '').split('(')[0].trim().slice(0, 40) || 'this collection';
+      const lines = [
+        'Send ' + n + ' transfer' + (n === 1 ? '' : 's') + ' from ' + name + '?',
+        '',
+        'Network: ' + cfg().name + (chainId() === 4663 ? ' (REAL money)' : ' (test network, no real value)'),
+        'Recipients: ' + n + ' across ' + batches + ' transaction' + (batches === 1 ? '' : 's'),
+        'Sent by: ' + (path === 'wallet' ? 'your own wallet, no approval needed' : 'the BulkSend contract, which you approve first'),
+        'Estimated cost: ' + costLine(n),
+        'You will be asked to confirm in your wallet about ' + sigs + ' time' + (sigs === 1 ? '' : 's') + '.',
+      ];
+      if (!confirm(lines.join('\n'))) { log('Cancelled. Nothing was sent.', 'warn'); return; }
+    }
+    const base = workingList();
+    if (base.skippedBefore) log(base.skippedBefore + ' of these were already delivered from this browser by this account, so they are left out. "Forget what was delivered" sends them again.', 'warn');
+    if (!base.list.length) { log('Everything on this list has already been delivered.', 'ok'); return; }
+    log('Checking every transfer against the chain before anything is signed. This takes a moment on a long list.');
+    const pre = await preflight(false, base.list);
     if (!pre.ok) { log('Nothing was sent. ' + pre.why, 'bad'); return; }
     if (pre.willDeliver === 0) { log('The test run says none of these would be delivered, so nothing was sent.', 'bad'); return; }
     if (pre.willSkip) log('Test run: ' + pre.willDeliver + ' will be delivered, ' + pre.willSkip + ' skipped.', 'warn');
-
-    lockForm(true); $('send').disabled = true; $('preflight').disabled = true; $('approve').disabled = true; $('stop').disabled = false;
-    if (deliveryPath() === 'wallet') { await sendViaWallet(pre); lockForm(false); $('stop').disabled = true; plan(); return; }
-    let list = orderForDelivery(rows);   // snapshot, in delivery order: the loop must not see a list edited mid-flight
-    { const r = dropAlreadyDelivered(list); if (r.skippedBefore) log(r.skippedBefore + ' of these were already delivered from this browser earlier, so they are left out. Use "Start over" to send them again.', 'warn'); list = r.list; }
-    if (!list.length) { log('Everything on this list has already been delivered.', 'ok'); lockForm(false); $('stop').disabled = true; plan(); return; }
+    $('stop').disabled = false;
+    if (deliveryPath() === 'wallet') { await sendViaWallet(pre); return; }
+    const list = pre.list;   // exactly what the test run simulated, in the order it will go out
     if (std() !== '20' && list.length > 1 && String(list[0].id) !== String(rows[0].id)) log('Delivering in ascending token id order, which is much cheaper on lazily-minted collections. Everyone still gets the id you listed for them.');
     const bulkAddr = cfg().bulk, bulk = new ethers.Contract(bulkAddr, BULK_ABI, signer);
     const bs = batchSize(); let sent = 0, skipped = 0;
@@ -576,48 +780,69 @@
         const tx = await bulk[fn](...args);
         log('  sent, waiting …', '', tx.hash);
         const rc = await tx.wait();
-        let bSent = 0, bSkip = 0;
+        let bSent = 0, bSkip = 0; const skippedIdx = new Set();
         for (const l of rc.logs) {
           if (l.address.toLowerCase() !== bulkAddr.toLowerCase()) continue;   // only this contract's own events count
           let p; try { p = bulk.interface.parseLog(l); } catch { continue; }
           if (!p) continue;
           if (p.name === 'Skipped') { bSkip++;
-            const row = chunk.find(r => r.to.toLowerCase() === String(p.args.to).toLowerCase()) || { to: p.args.to, raw: '' };
-            skippedRows.push(row);
+            // Match on the id or amount too, and use each row once: a wallet may appear more than once in a
+            // batch, and recording the wrong row would both hide an unpaid one and invite a repeat payment.
+            const want = String(p.args.to).toLowerCase();
+            let idx = chunk.findIndex((r, i) => !skippedIdx.has(i) && r.to.toLowerCase() === want &&
+              (std() === '20' ? String(r.amount) === String(p.args.amount) : String(r.id) === String(p.args.id)));
+            if (idx < 0) idx = chunk.findIndex((r, i) => !skippedIdx.has(i) && r.to.toLowerCase() === want);
+            if (idx >= 0) { skippedIdx.add(idx); skippedRows.push(chunk[idx]); }
             log('  skipped ' + p.args.to + ': ' + decodeReason(p.args.reason), 'warn');
           } else if (p.name.startsWith('Airdrop')) { bSent = Number(p.args.sent); }
         }
         sent += bSent; skipped += bSkip;
-        if (bSent) markDelivered(chunk.filter(r => !skippedRows.includes(r)));
+        if (bSent) markDelivered(chunk.filter((r, i) => !skippedIdx.has(i)));
         log('  done: ' + bSent + ' delivered' + (bSkip ? ', ' + bSkip + ' skipped' : '') + ' · gas ' + rc.gasUsed, 'ok');
         if (stopFlag) { log('Stopped.', 'warn'); break; }
       }
       log('Finished. ' + sent + ' delivered' + (skipped ? ', ' + skipped + ' skipped' : '') + '.', 'ok');
       if (skipped) log('Download the skipped list to retry those wallets.', 'warn');
     } catch (e) { log('Stopped on error: ' + explainCallError(e), 'bad'); }
-    lockForm(false); $('stop').disabled = true; plan();
-  });
+  }
 
   // ---- the wallet-batch path: the wallet runs the transfers as itself, in one transaction per batch ----
   async function sendViaWallet(pre) {
-    const bs = batchSize(); let list = pre.good; let sent = 0;
+    const bs = batchSize(); const list = pre.good; let sent = 0;
     skippedRows = pre.bad.map(b => b.row);
-    { const r = dropAlreadyDelivered(list); if (r.skippedBefore) log(r.skippedBefore + ' of these were already delivered from this browser earlier, so they are left out. Use "Start over" to send them again.', 'warn'); list = r.list; }
-    if (!list.length) { log('Everything on this list has already been delivered.', 'ok'); return; }
     if (pre.bad.length) log(pre.bad.length + ' left out of the batch by the test run; download them to retry.', 'warn');
+    if (walletBatchReady) log('Your wallet will ask to upgrade this account so it can send several transfers at once. That is expected, it is how the no-approval path works, and it can be undone in your wallet.', 'warn');
     for (let i = 0; i < list.length; i += bs) {
       if (!(await onSelectedChain())) { log('Stopped: the wallet is no longer on the selected network.', 'bad'); break; }
       const chunk = list.slice(i, i + bs);
       log('Batch ' + (Math.floor(i / bs) + 1) + ' of ' + Math.ceil(list.length / bs) + ': ' + chunk.length + ' transfers, sent by your wallet as itself …');
       try {
-        const res = await window.ethereum.request({ method: 'wallet_sendCalls', params: [{
-          version: '2.0.0', chainId: hexChain(), from: me, atomicRequired: true, calls: chunk.map(directCall),
-        }] });
+        let res;
+        try {
+          res = await eth.request({ method: 'wallet_sendCalls', params: [{ version: '2.0.0', chainId: hexChain(), from: me, atomicRequired: true, calls: chunk.map(directCall) }] });
+        } catch (e1) {
+          const code = e1 && (e1.code ?? (e1.info && e1.info.error && e1.info.error.code));
+          if (code === 5740 && chunk.length > 2) {   // too large for this wallet: halve and carry on
+            const half = Math.max(2, Math.floor(chunk.length / 2));
+            log('  that batch was too large for your wallet, so it is being split into ' + half + ' at a time.', 'warn');
+            $('batch').value = String(half); return await sendViaWallet({ good: list.slice(i), bad: pre.bad, list: pre.list });
+          }
+          throw e1;
+        }
         const id = typeof res === 'string' ? res : (res && res.id);
+        if (!id) { log('  the wallet did not return a batch id, so this cannot be tracked. Check your wallet and the explorer before sending again.', 'bad'); break; }
         const rcpt = await waitForCalls(id);
-        if (rcpt.failed) { log('  the wallet reported this batch failed; nothing in it moved.', 'bad'); break; }
+        if (rcpt.state === 'failed') { log('  the wallet reported this batch failed; nothing in it moved.', 'bad'); break; }
+        if (rcpt.state !== 'confirmed') {
+          // Unknown or partial: something may or may not have moved. Recording a delivery here would either
+          // hide an unpaid wallet forever or invite a double payment, so record nothing and stop.
+          log(rcpt.state === 'partial'
+            ? '  the wallet says this batch only partly went through. Check the explorer to see what landed, then run the test run again before re-sending.'
+            : '  the wallet stopped reporting on this batch, so whether it landed is unknown. Check the explorer before sending again.', 'bad', rcpt.hash);
+          break;
+        }
         sent += chunk.length; markDelivered(chunk);
-        log('  done: ' + chunk.length + ' delivered' + (rcpt.hash ? '' : ''), 'ok', rcpt.hash);
+        log('  done: ' + chunk.length + ' delivered', 'ok', rcpt.hash);
       } catch (e) {
         log('  stopped: ' + explainCallError(e), 'bad'); break;
       }
@@ -625,21 +850,28 @@
     }
     log('Finished. ' + sent + ' delivered' + (skippedRows.length ? ', ' + skippedRows.length + ' left out' : '') + '.', 'ok');
   }
+  // EIP-5792 status: 100 pending, 200 confirmed, 400 offchain failure, 500 reverted entirely,
+  // 600 reverted partially. Anything we cannot read is 'unknown', never a success.
   async function waitForCalls(id) {
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 160; i++) {
       let st;
-      try { st = await window.ethereum.request({ method: 'wallet_getCallsStatus', params: [id] }); }
-      catch (e) { return { failed: false, hash: null }; }   // a wallet that does not report status: assume it went through
-      const code = st && (typeof st.status === 'number' ? st.status : st.status === 'CONFIRMED' ? 200 : st.status === 'PENDING' ? 100 : 100);
+      try { st = await eth.request({ method: 'wallet_getCallsStatus', params: [id] }); }
+      catch (e) { return { state: 'unknown', hash: null }; }
+      const raw = st && st.status;
+      const code = typeof raw === 'number' ? raw : raw === 'CONFIRMED' ? 200 : raw === 'PENDING' ? 100 : null;
       const receipts = (st && st.receipts) || [];
+      const hash = receipts.length ? receipts[receipts.length - 1].transactionHash : null;
+      if (code === null) return { state: 'unknown', hash };
+      if (code >= 600) return { state: 'partial', hash };
+      if (code >= 400) return { state: 'failed', hash };
       if (code >= 200) {
-        const hash = receipts.length ? receipts[receipts.length - 1].transactionHash : null;
-        const failed = code >= 400 || receipts.some(r => r.status === '0x0' || r.status === 0);
-        return { failed, hash };
+        if (!receipts.length) return { state: 'unknown', hash };
+        const anyFailed = receipts.some(r => r.status === '0x0' || r.status === 0);
+        return { state: anyFailed ? 'partial' : 'confirmed', hash };
       }
       await new Promise(r => setTimeout(r, 1500));
     }
-    return { failed: false, hash: null };
+    return { state: 'unknown', hash: null };
   }
 
   // ---- skipped list export, in the same format the page accepts ----
@@ -695,7 +927,19 @@
   }
   window.__decodeReason = decodeReason;   // used by the page's own checks
 
+  // a link to the verified source, so "trust me" is checkable
+  (function contractLink() {
+    const el = $('contractLine'); if (!el) return; el.textContent = '';
+    if (!bulkReady()) { el.textContent = 'BulkSend is not deployed on this network. '; return; }
+    el.appendChild(document.createTextNode('Contract '));
+    const a = document.createElement('a'); a.href = cfg().explorer + '/address/' + cfg().bulk; a.target = '_blank'; a.rel = 'noopener';
+    a.textContent = cfg().bulk; a.className = 'mono'; el.appendChild(a);
+    el.appendChild(document.createTextNode(', source verified on the explorer. '));
+  })();
   $('safeRow').style.display = 'flex';
+  // NFT-only controls make no sense for a plain token
+  function syncStdControls() { const nft = std() !== '20'; $('assign').parentElement.style.display = nft ? 'flex' : 'none'; $('rand').parentElement.style.display = nft ? 'flex' : 'none'; $('safeRow').style.display = std() === '721' ? 'flex' : 'none'; }
+  $('std').addEventListener('change', syncStdControls); syncStdControls();
   plan();
 })();
 </script>
