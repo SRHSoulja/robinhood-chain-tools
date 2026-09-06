@@ -7,7 +7,7 @@
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
-  :root{ --bg:#f6f7f4; --ink:#17201c; --mut:#5f6b64; --line:#d9ded9; --card:#ffffff; --acc:#1f7a4d; --acc2:#0f5f3a; --warn:#9a5b00; --bad:#a32d2d; --ok:#1f7a4d; --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; }
+  :root{ color-scheme: light dark; --bg:#f6f7f4; --ink:#17201c; --mut:#5f6b64; --line:#d9ded9; --card:#ffffff; --acc:#1f7a4d; --acc2:#0f5f3a; --warn:#9a5b00; --bad:#a32d2d; --ok:#1f7a4d; --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; }
   @media (prefers-color-scheme: dark){ :root{ --bg:#101412; --ink:#e8ede9; --mut:#9aa69f; --line:#27302b; --card:#171d19; --acc:#3fbf7f; --acc2:#6fd9a1; --warn:#e5ab5e; --bad:#f28b8b; --ok:#6fd9a1; }
     button{color:#0d1310} }
   *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
@@ -17,7 +17,8 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
   .card h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);margin:0 0 12px}
   label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
-  input[type=text],select,textarea{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:transparent;color:var(--ink);font:inherit}
+  input[type=text],input[type=number],select,textarea{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);font:inherit}
+  select option{background:var(--card);color:var(--ink)}
   textarea{font-family:var(--mono);font-size:12.5px;min-height:150px}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:12px} @media(max-width:640px){.row{grid-template-columns:1fr}}
   button{padding:10px 16px;border-radius:8px;border:1px solid var(--acc);background:var(--acc);color:#fff;font:inherit;font-weight:600;cursor:pointer}
@@ -60,7 +61,8 @@
     <h2>2 · Recipients</h2>
     <div class="row" style="margin-bottom:10px">
       <div><label>Build the list from a collection's holders</label><div style="display:flex;gap:8px"><input type="text" id="snapAddr" aria-label="Collection address to take a holder snapshot of" placeholder="holders of 0x… (snapshot)" spellcheck="false"><button class="secondary" id="snap">Fetch</button></div></div>
-      <div><label>Or let it use the token ids you hold</label><div style="display:flex;gap:8px"><button class="secondary" id="assign" style="flex:1">Assign my token ids</button><button class="secondary" id="shuffle">Shuffle</button></div>
+      <div><label for="each">How many each, from the ones you hold</label><div style="display:flex;gap:8px"><input type="number" id="each" value="1" min="1" max="1000" style="width:88px" aria-label="How many each wallet receives"><button class="secondary" id="assign" style="flex:1">Assign my token ids</button><button class="secondary" id="shuffle">Shuffle</button></div>
+      <div style="font-size:12px;color:var(--mut);margin-top:4px">To give one wallet more than the rest, write <span class="mono">x3</span> after its address.</div>
       <div class="check" style="margin:6px 0 0"><input type="checkbox" id="rand" checked><label for="rand" style="margin:0;font-size:12px">Random, so nobody can pick which NFT they get. Costs nothing: they still go out cheapest-first.</label></div></div>
     </div>
     <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV</label>
@@ -397,12 +399,13 @@
     // Bare wallets, no ids: that is how most people start. Offer to fill the ids in rather than flagging every line.
     if (s === '721') {
       const rowsIn = lines.map(l => l.trim()).filter(l => l && !/^(address|wallet|to)\b/i.test(l));
-      const bare = rowsIn.filter(l => ethers.isAddress(l.split(/[,\t; ]+/)[0]) && l.split(/[,\t; ]+/).filter(Boolean).length === 1);
+      const bareish = (l) => { const p = l.split(/[,\t; ]+/).filter(Boolean); return ethers.isAddress(p[0]) && (p.length === 1 || (p.length === 2 && /^x\d+$/i.test(p[1]))); };
+      const bare = rowsIn.filter(bareish);
       if (rowsIn.length && bare.length === rowsIn.length) {
         rows = [];
         setStat($('parseOut'), [['', bare.length + ' wallets, no token ids yet', 'warn']]);
         $('problems').style.display = 'block';
-        $('problems').textContent = 'These are wallets with no token ids. Press "Assign my token ids to these wallets" and the ids you hold are filled in for you, lowest first. Or write the id after each address yourself.';
+        $('problems').textContent = 'These are wallets with no token ids yet. Press "Assign my token ids" and the ones you hold are filled in for you. Set "How many each" to give everyone more than one, or write x3 after a single address to give that wallet more than the rest.';
         $('assign').style.borderColor = 'var(--warn)'; $('assign').style.color = 'var(--warn)';
         plan(); return;
       }
@@ -569,21 +572,39 @@
     const token = $('token').value.trim();
     if (!ethers.isAddress(token) || !me) { say('msgList', 'Connect a wallet and enter the token address first.', 'bad'); return; }
     if (std() === '20') { log('For a token, write the amount after each address; there are no ids to assign.', 'warn'); return; }
-    const wallets = $('list').value.split(/\r?\n/).map(l => l.trim().split(/[,\t; ]+/)[0]).filter(x => ethers.isAddress(x)).map(x => ethers.getAddress(x));
-    if (!wallets.length) { say('msgList', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
+    // Each line may carry its own quantity ("0xabc… x3"); the rest use the "how many each" field.
+    const perWallet = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
+    const wants = [];
+    for (const line of $('list').value.split(/\r?\n/)) {
+      const p = line.trim().split(/[,\t; ]+/).filter(Boolean);
+      if (!p.length || !ethers.isAddress(p[0])) continue;
+      const m = p.slice(1).find(x => /^x\d+$/i.test(x));
+      wants.push({ to: ethers.getAddress(p[0]), n: m ? Math.max(1, Math.min(1000, parseInt(m.slice(1)))) : perWallet });
+    }
+    if (!wants.length) { say('msgList', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
+    const wallets = wants.map(w => w.to);
+    const totalWanted = wants.reduce((a, w) => a + w.n, 0);
     $('assign').disabled = true;
     try {
-      const ids = await myTokenIds(token, wallets.length);
+      const ids = await myTokenIds(token, totalWanted);
       if (!ids.length) { say('msgList', 'Your wallet does not appear to hold anything in this collection.', 'bad'); $('assign').disabled = false; return; }
-      const n = Math.min(ids.length, wallets.length);
       const random = $('rand').checked;
-      if (ids.length < wallets.length) log('You hold ' + ids.length + ' of these, for ' + wallets.length + ' wallets. ' + (random ? n + ' wallets are picked at random; the rest get nothing.' : 'The first ' + n + ' wallets are matched; the rest are left out.'), 'warn');
-      const pickWallets = random ? shuffled(wallets).slice(0, n) : wallets.slice(0, n);
-      const pickIds = random ? shuffled(ids).slice(0, n) : ids.slice(0, n);
-      // ERC-1155 lines need an amount as well as an id, or the list will not parse
-      $('list').value = pickWallets.map((w, i) => w + ',' + pickIds[i] + (std() === '1155' ? ',1' : '')).join('\n');
-      log('Assigned ' + n + ' token ids' + (std() === '1155' ? ', one of each' : '') + (random ? ', paired at random. They still go out lowest id first, which is the cheapest order.' : ', lowest first.'), 'ok');
-      if (std() === '1155') log('Change the last number on any line to send more than one of that id.');
+      if (std() === '1155') {
+        // an edition is divisible, so "how many each" is just the amount on the line
+        const id = (random ? shuffled(ids) : ids)[0];
+        $('list').value = wants.map(w => w.to + ',' + id + ',' + w.n).join('\n');
+        say('msgList', 'Using id ' + id + '. Change the id or the amount on any line.', 'ok');
+      } else {
+        // an NFT cannot be divided, so a wallet getting more means more ids, one line each
+        const order = random ? shuffled(wants) : wants.slice();
+        const pool = random ? shuffled(ids) : ids.slice();
+        const lines = []; let k = 0;
+        for (const w of order) { for (let j = 0; j < w.n && k < pool.length; j++) lines.push(w.to + ',' + pool[k++]); }
+        if (k < totalWanted) log('The list asks for ' + totalWanted + ' but the wallet holds ' + ids.length + '. ' + lines.length + ' were assigned; the wallets after that get nothing.', 'warn');
+        $('list').value = lines.join('\n');
+      }
+      const n = $('list').value.split('\n').filter(Boolean).length;
+      log('Assigned ' + n + ' line' + (n === 1 ? '' : 's') + (random ? ', paired at random. They still go out lowest id first, which is the cheapest order.' : ', lowest id first.'), 'ok');
       parseList();
     } catch (e) { log('Could not read your token ids: ' + String(e.message || e).slice(0, 120), 'bad'); }
     $('assign').disabled = false;
