@@ -1,0 +1,904 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com https://cloudflareinsights.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Robinhood Chain Check · read it before you sign</title>
+<meta name="description" content="Paste a transaction, a contract, or the calldata your wallet is about to sign, and read what it actually does on Robinhood Chain: what moves, what the contract can do to you, and why something failed.">
+<style>
+  :root{ color-scheme: light dark; --bg:#f6f7f4; --ink:#17201c; --mut:#5f6b64; --line:#d9ded9; --card:#ffffff; --acc:#1f7a4d; --acc2:#0f5f3a; --warn:#9a5b00; --bad:#a32d2d; --ok:#1f7a4d; --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#101412; --ink:#e8ede9; --mut:#9aa69f; --line:#27302b; --card:#171d19; --acc:#3fbf7f; --acc2:#6fd9a1; --warn:#e5ab5e; --bad:#f28b8b; --ok:#6fd9a1; }
+    button{color:#0d1310} }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  h1{font-size:18px;margin:0;letter-spacing:.2px} h1 small{color:var(--mut);font-weight:400;margin-left:8px}
+  main{max-width:920px;margin:0 auto;padding:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+  .card h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);margin:0 0 12px}
+  label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
+  input[type=text],select,textarea{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);color:var(--ink);font:inherit}
+  select option{background:var(--card);color:var(--ink)}
+  textarea{font-family:var(--mono);font-size:12.5px;min-height:96px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px} @media(max-width:640px){.row{grid-template-columns:1fr}}
+  button{padding:10px 16px;border-radius:8px;border:1px solid var(--acc);background:var(--acc);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+  button.secondary{background:transparent;color:var(--acc)} button[disabled]{opacity:.45;cursor:not-allowed}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--mut);margin-right:6px}
+  .pill.ok{color:var(--ok);border-color:var(--ok)} .pill.bad{color:var(--bad);border-color:var(--bad)} .pill.warn{color:var(--warn);border-color:var(--warn)}
+  .mono{font-family:var(--mono);font-size:12.5px;word-break:break-all}
+  .msg{font-size:12.5px;margin-top:6px;min-height:1px}
+  .warn{color:var(--warn)} .bad{color:var(--bad)} .ok{color:var(--ok)} .mut{color:var(--mut)}
+  .hint{font-size:12.5px;color:var(--mut);margin-top:8px}
+  .lede{font-size:17px;line-height:1.45;margin:0 0 12px}
+  .kv{display:grid;grid-template-columns:170px 1fr;gap:6px 14px;font-size:13.5px;margin:10px 0}
+  @media(max-width:640px){ .kv{grid-template-columns:1fr} .kv dt{color:var(--mut);margin-top:8px} }
+  .kv dt{color:var(--mut)} .kv dd{margin:0;word-break:break-word}
+  .move{border-left:3px solid var(--line);padding:6px 0 6px 12px;margin:8px 0;font-size:13.5px}
+  .move.in{border-left-color:var(--ok)} .move.out{border-left-color:var(--warn)}
+  .note{border:1px solid var(--line);border-left-width:3px;border-radius:7px;padding:10px 12px;margin:8px 0;font-size:13.5px}
+  .note.bad{border-left-color:var(--bad)} .note.warn{border-left-color:var(--warn)} .note.ok{border-left-color:var(--ok)}
+  .note b{display:block;margin-bottom:2px}
+  ul.plain{margin:6px 0;padding-left:18px;font-size:13.5px} ul.plain li{margin:3px 0}
+  pre{font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-all;background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:10px;max-height:280px;overflow:auto}
+  footer{color:var(--mut);font-size:12.5px;padding:18px 22px;border-top:1px solid var(--line);max-width:920px;margin:0 auto}
+  a{color:var(--acc2)}
+  @media(max-width:640px){ input[type=text],select,textarea{font-size:16px} }
+  .ex{background:none;border:none;color:var(--acc2);font:inherit;font-size:12.5px;padding:0;cursor:pointer;text-decoration:underline}
+</style>
+</head>
+<body>
+<header>
+  <h1>Robinhood Chain Check <small>read it before you sign</small></h1>
+  <div><span class="pill" id="netPill">reading</span></div>
+</header>
+<main>
+  <div class="card">
+    <label for="input">Paste a transaction hash, a contract address, or the data your wallet is about to sign</label>
+    <textarea id="input" spellcheck="false" placeholder="0x74dc94af…  ·  0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74  ·  0x095ea7b3000000…  ·  or the whole {&quot;to&quot;:…,&quot;data&quot;:…} your wallet shows you"></textarea>
+    <div class="row" style="margin-top:10px">
+      <div>
+        <label for="net">Network</label>
+        <select id="net" aria-label="Network">
+          <option value="4663">Robinhood Chain</option>
+          <option value="46630" selected>Robinhood Chain Testnet</option>
+        </select>
+      </div>
+      <div>
+        <label for="from">Whose transaction is it (only needed to preview unsent data)</label>
+        <div style="display:flex;gap:8px"><input type="text" id="from" spellcheck="false" placeholder="0x… your wallet"><button class="secondary" id="useWallet">Use mine</button></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center">
+      <button id="go">Read it</button>
+      <span id="msg" class="msg" aria-live="polite"></span>
+    </div>
+    <div class="hint">
+      Nothing here is signed and nothing is sent. Try
+      <button class="ex" data-ex="tx">a real transaction</button>,
+      <button class="ex" data-ex="addr">a verified contract</button>, or
+      <button class="ex" data-ex="approve">an unlimited approval</button>.
+    </div>
+  </div>
+  <div id="out"></div>
+</main>
+<footer>
+  Everything on this page is read from the chain and from the block explorer, and nothing is written to either. A contract that is not verified can still be read: its code is public whether or not its source is.
+  This tells you what a transaction does and what powers a contract holds. It cannot tell you whether the people behind it are honest.
+  <span id="foot"></span>
+</footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js" integrity="sha384-6Zl0Pc8zjSz8KvmNeXRvUQgY4ryFb+BwDvKCmLYcBME0joAaru491tQgi9B7zsMM" crossorigin="anonymous"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  // Read-only on both networks: this page never signs, never sends, and never writes anything anywhere.
+  const CHAINS = {
+    4663:  { name: 'Robinhood Chain',         rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com' },
+    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com' },
+  };
+  const chainId = () => Number($('net').value);
+  const cfg = () => CHAINS[chainId()];
+  const api = (path) => cfg().explorer + '/api/v2' + path;
+  const rp = () => new ethers.JsonRpcProvider(cfg().rpc);
+  let ethUsd = null;
+
+  // ---------- building the page: text nodes only ----------
+  // Names, symbols, revert strings and error messages all come from contracts nobody here controls. They are
+  // written as text and never as markup, so a token called "<img onerror=…>" is a silly name and nothing more.
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === null || v === undefined || v === false) continue;
+      if (k === 'class') el.className = v;
+      else if (k === 'text') el.textContent = String(v);
+      else if (k === 'href') { el.href = v; el.target = '_blank'; el.rel = 'noopener'; }
+      else if (k === 'onclick') el.addEventListener('click', v);
+      else el.setAttribute(k, String(v));
+    }
+    for (const kid of kids.flat()) { if (kid === null || kid === undefined || kid === false) continue; el.appendChild(typeof kid === 'string' ? document.createTextNode(kid) : kid); }
+    return el;
+  }
+  const card = (title, ...kids) => h('div', { class: 'card' }, title ? h('h2', { text: title }) : null, ...kids);
+  const kv = (pairs) => h('dl', { class: 'kv' }, pairs.filter(Boolean).flatMap(([k, v]) => [h('dt', { text: k }), h('dd', {}, typeof v === 'string' ? document.createTextNode(v) : v)]));
+  const note = (cls, title, body) => h('div', { class: 'note ' + cls }, h('b', { text: title }), typeof body === 'string' ? document.createTextNode(body) : body);
+  const mono = (t) => h('span', { class: 'mono', text: t });
+  const link = (addrOrHash, label, kind) => h('a', { class: 'mono', href: cfg().explorer + '/' + (kind || 'address') + '/' + addrOrHash, text: label || addrOrHash });
+  const short = (a) => (a && a.length > 14 ? a.slice(0, 8) + '…' + a.slice(-6) : a || '');
+  const say = (m, cls) => { const el = $('msg'); el.textContent = m || ''; el.className = 'msg' + (cls ? ' ' + cls : ''); };
+
+  // ---------- what a call means, when nobody has published an ABI ----------
+  // Every one of these is a signature the chain sees constantly. Knowing them by heart is the difference
+  // between "0x095ea7b3…" and "you are about to let a stranger spend your entire balance".
+  const SIGS = [
+    'function transfer(address to, uint256 amount) returns (bool)',
+    'function transferFrom(address from, address to, uint256 idOrAmount) returns (bool)',
+    'function approve(address spender, uint256 idOrAmount) returns (bool)',
+    'function increaseAllowance(address spender, uint256 added) returns (bool)',
+    'function decreaseAllowance(address spender, uint256 removed) returns (bool)',
+    'function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s)',
+    'function safeTransferFrom(address from, address to, uint256 tokenId)',
+    'function safeTransferFrom(address from, address to, uint256 tokenId, bytes data)',
+    'function safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes data)',
+    'function safeBatchTransferFrom(address from, address to, uint256[] ids, uint256[] amounts, bytes data)',
+    'function setApprovalForAll(address operator, bool approved)',
+    'function mint(address to, uint256 amountOrId)',
+    'function mint(uint256 quantity)',
+    'function mint()',
+    'function safeMint(address to, uint256 tokenId)',
+    'function publicMint(uint256 quantity)',
+    'function burn(uint256 amountOrId)',
+    'function burnFrom(address from, uint256 amount)',
+    'function transferOwnership(address newOwner)',
+    'function renounceOwnership()',
+    'function acceptOwnership()',
+    'function grantRole(bytes32 role, address account)',
+    'function revokeRole(bytes32 role, address account)',
+    'function pause()',
+    'function unpause()',
+    'function setPaused(bool paused)',
+    'function upgradeTo(address implementation)',
+    'function upgradeToAndCall(address implementation, bytes data)',
+    'function setTransferValidator(address validator)',
+    'function withdraw()',
+    'function withdraw(uint256 amount)',
+    'function deposit()',
+    'function multicall(bytes[] data) returns (bytes[])',
+    'function execute(address target, uint256 value, bytes data) returns (bytes)',
+    'function setBaseURI(string uri)',
+    'function airdrop721(address token, address[] to, uint256[] ids, bool safe, bool lenient) returns (uint256,uint256)',
+    'function airdrop1155(address token, address[] to, uint256[] ids, uint256[] amounts, bool lenient) returns (uint256,uint256)',
+    'function airdrop20(address token, address[] to, uint256[] amounts, bool lenient) returns (uint256,uint256)',
+    'function airdrop721WithGas(address token, address[] to, uint256[] ids, bool safe, bool lenient, uint256 gasPerTransfer) returns (uint256,uint256)',
+    'function airdrop1155WithGas(address token, address[] to, uint256[] ids, uint256[] amounts, bool lenient, uint256 gasPerTransfer) returns (uint256,uint256)',
+    'function airdrop20WithGas(address token, address[] to, uint256[] amounts, bool lenient, uint256 gasPerTransfer) returns (uint256,uint256)',
+  ];
+  const KNOWN_IFACE = new ethers.Interface(SIGS);
+
+  // Read-only signatures worth spotting in bytecode, though nobody needs them translated.
+  const EXTRA_SELECTORS = {};
+  for (const s of [
+    'name()', 'symbol()', 'decimals()', 'totalSupply()', 'balanceOf(address)', 'ownerOf(uint256)', 'owner()',
+    'paused()', 'getTransferValidator()', 'supportsInterface(bytes4)', 'allowance(address,address)',
+    'isApprovedForAll(address,address)', 'tokenURI(uint256)', 'implementation()', 'proxiableUUID()',
+    'blacklist(address)', 'setBlacklist(address,bool)', 'isBlacklisted(address)', 'setFee(uint256)',
+    'setFees(uint256,uint256)', 'setTaxRate(uint256)', 'setMaxTransaction(uint256)', 'setMaxWallet(uint256)',
+    'freeze(address)', 'unfreeze(address)', 'setTradingEnabled(bool)', 'enableTrading()', 'setLimits(bool)',
+    'rescueTokens(address,uint256)', 'sweep(address)', 'emergencyWithdraw()', 'setRoyalties(address,uint96)',
+  ]) EXTRA_SELECTORS[ethers.id(s).slice(0, 10)] = s;
+
+  // What a contract can do to the people holding its tokens. Names are a convention rather than a standard,
+  // so this matches on the shape of the name and always says which function it saw.
+  const POWERS = [
+    [/^(mint|safeMint|airdropMint|issue|publicMint|ownerMint)/i, 'create new tokens out of nothing', 'warn'],
+    [/^(burnFrom|burnFor|adminBurn|forceBurn)/i, 'destroy tokens held by someone else', 'bad'],
+    [/^(pause|unpause|setPaused|setTradingEnabled|enableTrading|setLimits)/i, 'stop everyone from transferring', 'bad'],
+    [/(blacklist|blocklist|denylist|banned?|freeze|frozen)/i, 'block a chosen wallet from transferring', 'bad'],
+    [/^(setFee|setFees|setTax|setTaxRate|setRoyalt|setMarketing|setBuyTax|setSellTax)/i, 'change the fee taken out of transfers', 'warn'],
+    [/^(upgradeTo|setImplementation|upgrade)/i, 'replace this contract’s code entirely', 'bad'],
+    [/^(transferOwnership|setOwner|setAdmin|grantRole|renounceOwnership)/i, 'hand these powers to another address', 'warn'],
+    [/^(withdraw|sweep|rescue|claimTokens|emergencyWithdraw|drain)/i, 'move funds out of the contract', 'warn'],
+    [/^(setTransferValidator|setOperatorFilter|setApprovalRestriction)/i, 'restrict who is allowed to move tokens', 'warn'],
+    [/^(setBaseURI|setTokenURI|setContractURI)/i, 'change what the token shows as its art or metadata', 'mut'],
+    [/^(setMaxTransaction|setMaxWallet|setMax)/i, 'cap how much anyone may hold or move', 'warn'],
+  ];
+
+  // ---------- events, so a receipt says what moved rather than which topics it had ----------
+  const EV = {};
+  for (const sig of [
+    'Transfer(address,address,uint256)', 'TransferSingle(address,address,address,uint256,uint256)',
+    'TransferBatch(address,address,address,uint256[],uint256[])', 'Approval(address,address,uint256)',
+    'ApprovalForAll(address,address,bool)', 'OwnershipTransferred(address,address)', 'Paused(address)',
+    'Unpaused(address)', 'Upgraded(address)', 'RoleGranted(bytes32,address,address)',
+  ]) EV[ethers.id(sig)] = sig;
+
+  // ---------- revert reasons in words ----------
+  // Kept as signatures rather than bare selectors, so a refusal can say "that token id does not exist (12345)"
+  // instead of "reverted with 0x7e273289".
+  const ERR_SIGS = [
+    ['error ERC721NonexistentToken(uint256 tokenId)', 'that token id does not exist'],
+    ['error ERC721InsufficientApproval(address operator, uint256 tokenId)', 'that wallet has not approved this operator for the token'],
+    ['error ERC721IncorrectOwner(address sender, uint256 tokenId, address owner)', 'the token is not owned by the address it is being sent from'],
+    ['error ERC721InvalidReceiver(address receiver)', 'the recipient is a contract that cannot receive NFTs'],
+    ['error ERC721InvalidSender(address sender)', 'that sender cannot send this token'],
+    ['error ERC721InvalidOperator(address operator)', 'that operator is not allowed'],
+    ['error ERC20InsufficientAllowance(address spender, uint256 allowance, uint256 needed)', 'the allowance is too low for this amount'],
+    ['error ERC20InsufficientBalance(address sender, uint256 balance, uint256 needed)', 'the balance is too low for this amount'],
+    ['error ERC20InvalidReceiver(address receiver)', 'the recipient is not a valid address for this token'],
+    ['error ERC1155InsufficientBalance(address sender, uint256 balance, uint256 needed, uint256 id)', 'the balance of that id is too low'],
+    ['error ERC1155InvalidReceiver(address receiver)', 'the recipient is a contract that cannot receive ERC-1155'],
+    ['error OwnableUnauthorizedAccount(address account)', 'only the owner of the contract may do this'],
+    ['error EnforcedPause()', 'the token contract is paused'],
+    ['error TransferCallerNotOwnerNorApproved()', 'the caller is not the owner and has not been approved'],
+    ['error ApprovalCallerNotOwnerNorApproved()', 'the caller is not the owner and has not been approved'],
+    ['error TransferFromIncorrectOwner()', 'that id is not owned by the address it is being sent from'],
+    ['error TransferToNonERC721ReceiverImplementer()', 'the recipient is a contract that cannot receive NFTs'],
+    ['error OwnerQueryForNonexistentToken()', 'that token id does not exist'],
+    ['error TransferToZeroAddress()', 'the recipient is the zero address'],
+    ['error Unauthorized()', 'the caller is not authorised'],
+    ['error FailedCall()', 'a call inside this transaction failed'],
+    ['error LengthMismatch()', 'BulkSend: the lists are different lengths'],
+    ['error EmptyBatch()', 'BulkSend: the batch is empty'],
+    ['error NotAContract(address token)', 'BulkSend: that token address is not a contract'],
+    ['error DelegatedWallet(address token)', 'BulkSend: that address is a wallet running delegated code, not a token'],
+    ['error SelfRecipient(uint256 index)', 'BulkSend: one of the recipients is BulkSend itself, which could never give it back'],
+    ['error ZeroAmount(uint256 index)', 'BulkSend: one of the amounts is zero, which would deliver nothing'],
+    ['error AmbiguousResult(address to, uint256 index)', 'BulkSend: the token gave an answer that cannot be read as success or failure, so the whole batch was undone'],
+    ['error ZeroRecipient(uint256 index)', 'BulkSend: one of the recipients is the zero address'],
+    ['error OutOfGasForBatch(uint256 index)', 'BulkSend: this transaction cannot afford to give every recipient its gas allowance'],
+    ['error GasOutOfRange(uint256 given, uint256 min, uint256 max)', 'BulkSend: the gas allowance is outside the range the contract accepts'],
+    ['error GasIsForLenientOnly()', 'BulkSend: a gas allowance only applies when skipping is allowed'],
+    ['error TransferFailed(address to, uint256 id)', 'BulkSend: a transfer failed and the batch was refused'],
+  ];
+  const ERR_IFACE = new ethers.Interface(ERR_SIGS.map((e) => e[0]));
+  const ERR_WORDS = {};
+  for (const [sig, words] of ERR_SIGS) ERR_WORDS[sig.slice(6).split('(')[0]] = words;
+  // Selectors seen in the wild whose signature is not worth carrying.
+  const ERR_BY_SELECTOR = {
+    '0x1de5204e': 'this collection only allows transfers through operators its creator approved',
+    '0xe6c4247b': 'an address given to the contract is not valid',
+    '0x82b42900': 'the caller is not authorised',
+    '0x5274afe7': 'a transfer inside this call failed',
+  };
+
+  function decodeRevert(data, iface) {
+    if (!data || data === '0x') return 'no reason given';
+    const sel = data.slice(0, 10).toLowerCase();
+    try {
+      if (sel === '0x08c379a0') return '\u201c' + ethers.AbiCoder.defaultAbiCoder().decode(['string'], '0x' + data.slice(10))[0] + '\u201d';
+      if (sel === '0x4e487b71') {
+        const code = ethers.AbiCoder.defaultAbiCoder().decode(['uint256'], '0x' + data.slice(10))[0];
+        const panics = { 1: 'an assertion inside the contract failed', 17: 'a number overflowed', 18: 'a division by zero', 33: 'an invalid enum value', 50: 'an array index out of bounds' };
+        return panics[Number(code)] || ('a panic inside the contract (code ' + code + ')');
+      }
+    } catch (e) {}
+    const withArgs = (parsedErr, words) => {
+      const args = parsedErr.args.map((v) => String(v)).filter((v) => v !== '');
+      return words + (args.length ? ' (' + args.join(', ') + ')' : '');
+    };
+    try { const e = ERR_IFACE.parseError(data); if (e) return withArgs(e, ERR_WORDS[e.name] || e.name); } catch (err) {}
+    if (iface) { try { const e = iface.parseError(data); if (e) return withArgs(e, e.name.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()); } catch (err) {} }
+    return ERR_BY_SELECTOR[sel] || ('the contract refused with ' + sel + ', which is a custom error this page does not know');
+  }
+
+  // ---------- reading a contract ----------
+  const SLOTS = {
+    '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc': 'implementation (EIP-1967)',
+    '0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103': 'admin (EIP-1967)',
+    '0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50': 'beacon (EIP-1967)',
+    '0x7050c9e0f4ca769c69bd3a8ef740bc37934f8e2c036e5a723fd8ee048ed3f8c3': 'implementation (OpenZeppelin, older)',
+  };
+  const ERC165 = { '0x80ac58cd': 'ERC-721', '0xd9b67a26': 'ERC-1155', '0x5b5e139f': 'ERC-721 metadata', '0x780e9d63': 'ERC-721 enumerable', '0x2a55205a': 'ERC-2981 royalties' };
+
+  // The testnet explorer allows a browser to read it directly. The mainnet one does not send the header that
+  // permits that, so where this page is served by its own worker there is a read-only passthrough at /x/<chain>.
+  // Try direct, then the passthrough, and remember which one answered.
+  let explorerRoute = null;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Three outcomes, and the difference matters: it answered, it answered "no such thing", or it would not
+  // answer at all. Reporting the third as the second would tell someone a contract has no published source
+  // when the truth is that nobody could check.
+  async function explorerJson(path) {
+    let missing = false, reached = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      for (const route of (explorerRoute ? [explorerRoute] : ['direct', 'proxy'])) {
+        const url = route === 'direct' ? api(path) : '/x/' + chainId() + path;
+        try {
+          const r = await fetch(url, { headers: { accept: 'application/json' } });
+          if (r.status === 404) { explorerRoute = route; missing = true; reached = true; continue; }
+          if (!r.ok) continue;                       // 5xx: the explorer is up but unwell, try again
+          const ct = String(r.headers.get('content-type') || '');
+          if (!ct.includes('json')) continue;
+          const j = await r.json();
+          explorerRoute = route; reached = true;
+          return { ok: true, data: j };
+        } catch (e) { continue; }
+      }
+      if (missing) return { ok: true, data: null };
+      await wait(400 * (attempt + 1));
+    }
+    return { ok: reached, data: null };
+  }
+
+  // Everything worth knowing about one address, from the chain first and the explorer second. The chain
+  // always answers; the explorer sometimes does not, and a page that falls over when it does not is useless.
+  async function readAddress(addr) {
+    const p = rp();
+    const out = { address: ethers.getAddress(addr), code: '0x', verified: false, abi: null, name: null, proxy: null, token: null, standard: null, delegated: null };
+    out.code = await p.getCode(out.address).catch(() => '0x');
+    out.isContract = out.code !== '0x';
+    out.balance = await p.getBalance(out.address).catch(() => null);
+    out.nonce = await p.getTransactionCount(out.address).catch(() => null);
+
+    // An EIP-7702 wallet has code, but it is a wallet: 0xef0100 followed by the address it runs.
+    if (out.code.length === 2 + 23 * 2 && out.code.slice(0, 8).toLowerCase() === '0xef0100') {
+      out.delegated = ethers.getAddress('0x' + out.code.slice(8));
+      out.isContract = false;
+    }
+    if (!out.isContract) return out;
+
+    // A minimal proxy carries the address it forwards to in its own bytecode.
+    const m = out.code.toLowerCase().match(/^0x363d3d373d3d3d363d73([0-9a-f]{40})5af43d82803e903d91602b57fd5bf3/);
+    if (m) out.proxy = { kind: 'minimal proxy (EIP-1167)', target: ethers.getAddress('0x' + m[1]) };
+    if (!out.proxy) {
+      for (const [slot, kind] of Object.entries(SLOTS)) {
+        const v = await p.getStorage(out.address, slot).catch(() => null);
+        if (v && /[1-9a-f]/.test(v.slice(26))) {
+          const target = ethers.getAddress('0x' + v.slice(26));
+          if (kind.startsWith('implementation') || kind.startsWith('beacon')) out.proxy = { kind, target };
+          else out.admin = target;
+        }
+      }
+    }
+
+    const scRes = await explorerJson('/smart-contracts/' + out.address);
+    const sc = scRes.data;
+    if (!scRes.ok) { out.verified = null; out.explorerDown = true; }
+    else if (!sc) { out.verified = false; }
+    if (sc) {
+      out.verified = !!sc.is_verified;
+      out.name = sc.name || null;
+      out.abi = sc.abi || null;
+      out.compiler = sc.compiler_version || null;
+      out.optimized = sc.optimization_enabled;
+      out.evm = sc.evm_version || null;
+      out.verifiedAt = sc.verified_at || null;
+      out.partial = !!sc.is_partially_verified;
+      if (!out.proxy && sc.proxy_type && sc.implementations && sc.implementations.length) {
+        out.proxy = { kind: String(sc.proxy_type).replace(/_/g, ' '), target: ethers.getAddress(sc.implementations[0].address_hash || sc.implementations[0].address) };
+      }
+    }
+
+    // Behind a proxy, the ABI that matters belongs to the code being run, not to the forwarder.
+    if (out.proxy && out.proxy.target) {
+      const impl = (await explorerJson('/smart-contracts/' + out.proxy.target)).data;
+      if (impl) { out.proxy.verified = !!impl.is_verified; out.proxy.name = impl.name || null; if (impl.abi && !out.abi) out.abi = impl.abi; if (impl.abi) out.implAbi = impl.abi; }
+    }
+
+    // What standard it claims, and its token facts, read from the contract rather than from a label.
+    const c = new ethers.Contract(out.address, [
+      'function supportsInterface(bytes4) view returns (bool)', 'function name() view returns (string)',
+      'function symbol() view returns (string)', 'function decimals() view returns (uint8)',
+      'function totalSupply() view returns (uint256)', 'function owner() view returns (address)',
+      'function paused() view returns (bool)', 'function getTransferValidator() view returns (address)',
+    ], p);
+    for (const [id, label] of Object.entries(ERC165)) {
+      if (id !== '0x80ac58cd' && id !== '0xd9b67a26') continue;
+      try { if (await c.supportsInterface(id)) out.standard = label; } catch (e) {}
+    }
+    const [nm, sym, dec, sup, own, paused, validator] = await Promise.all([
+      c.name().catch(() => null), c.symbol().catch(() => null), c.decimals().catch(() => null),
+      c.totalSupply().catch(() => null), c.owner().catch(() => null), c.paused().catch(() => null),
+      c.getTransferValidator().catch(() => null),
+    ]);
+    if (!out.standard && dec !== null) out.standard = 'ERC-20';
+    out.token = { name: nm, symbol: sym, decimals: dec === null ? null : Number(dec), supply: sup };
+    out.owner = own; out.paused = paused;
+    out.validator = validator && validator !== ethers.ZeroAddress ? validator : null;
+    return out;
+  }
+
+  // Every 4-byte selector the bytecode compares against. Not proof a function exists, but nothing a contract
+  // can do is invisible here: unverified code still has to dispatch on the selectors it accepts.
+  function selectorsIn(code) {
+    const out = new Set();
+    const hex = code.slice(2).toLowerCase();
+    for (let i = 0; i + 10 <= hex.length; i += 2) {
+      if (hex.slice(i, i + 2) === '63') out.add('0x' + hex.slice(i + 2, i + 10));
+    }
+    return out;
+  }
+  function knownFunctions(o) {
+    const found = [];
+    if (o.abi) {
+      for (const f of o.abi) {
+        if (f.type !== 'function') continue;
+        const sig = f.name + '(' + (f.inputs || []).map((i) => i.type).join(',') + ')';
+        found.push({ sig, name: f.name, mutating: f.stateMutability !== 'view' && f.stateMutability !== 'pure' });
+      }
+      return { list: found, source: 'the published source', long: 'the published source' };
+    }
+    const sels = selectorsIn(o.code);
+    for (const s of sels) {
+      const extra = EXTRA_SELECTORS[s];
+      if (extra) { found.push({ sig: extra, name: extra.split('(')[0], mutating: true, guessed: true }); continue; }
+      let frag = null; try { frag = KNOWN_IFACE.getFunction(s); } catch (e) {}
+      if (frag) found.push({ sig: frag.format('sighash'), name: frag.name, mutating: frag.stateMutability !== 'view' && frag.stateMutability !== 'pure', guessed: true });
+    }
+    return { list: found, source: 'its bytecode', long: 'the contract’s own bytecode' };
+  }
+  function powersOf(fns) {
+    const out = [];
+    for (const f of fns) {
+      if (!f.mutating) continue;
+      for (const [re, what, cls] of POWERS) {
+        if (re.test(f.name)) { out.push({ what, cls, sig: f.sig }); break; }
+      }
+    }
+    const seen = new Set();
+    return out.filter((p) => { const k = p.what + p.sig; if (seen.has(k)) return false; seen.add(k); return true; });
+  }
+
+  // ---------- saying what a call does, in a sentence ----------
+  const UNLIMITED = (v) => { try { const n = BigInt(v); return n >= (1n << 200n); } catch (e) { return false; } };
+  function fmtAmount(v, token) {
+    if (UNLIMITED(v)) return 'an unlimited amount';
+    if (token && token.decimals !== null && token.decimals !== undefined) {
+      return ethers.formatUnits(v, token.decimals) + (token.symbol ? ' ' + token.symbol : '');
+    }
+    return String(v);
+  }
+  // ERC-20 and ERC-721 share transferFrom and approve. The number means completely different things in each,
+  // so the standard has to be settled before the sentence is written.
+  function describeCall(parsed, ctx) {
+    const t = ctx.target || {};
+    const nft = t.standard === 'ERC-721' || t.standard === 'ERC-1155';
+    const what = t.token && t.token.name ? t.token.name : (t.name || 'this contract');
+    const who = (a) => short(a);
+    const amt = (v) => fmtAmount(v, t.token);
+    const a = parsed.args;
+    switch (parsed.signature) {
+      case 'transfer(address,uint256)': return 'Send ' + amt(a[1]) + ' to ' + who(a[0]) + '.';
+      case 'transferFrom(address,address,uint256)':
+        return nft ? 'Move ' + what + ' #' + a[2] + ' from ' + who(a[0]) + ' to ' + who(a[1]) + '.'
+                   : 'Move ' + amt(a[2]) + ' from ' + who(a[0]) + ' to ' + who(a[1]) + '.';
+      case 'approve(address,uint256)':
+        return nft ? 'Let ' + who(a[0]) + ' move ' + what + ' #' + a[1] + '. It stays allowed until you take it back.'
+                   : 'Let ' + who(a[0]) + ' spend ' + amt(a[1]) + ' of your ' + what + ', now and at any time in the future, until you take it back.';
+      case 'increaseAllowance(address,uint256)': return 'Let ' + who(a[0]) + ' spend ' + amt(a[1]) + ' more of your ' + what + '.';
+      case 'decreaseAllowance(address,uint256)': return 'Reduce what ' + who(a[0]) + ' may spend of your ' + what + ' by ' + amt(a[1]) + '.';
+      case 'permit(address,address,uint256,uint256,uint8,bytes32,bytes32)':
+        return 'Use a signature from ' + who(a[0]) + ' to let ' + who(a[1]) + ' spend ' + amt(a[2]) + ' of their ' + what + '.';
+      case 'safeTransferFrom(address,address,uint256)':
+      case 'safeTransferFrom(address,address,uint256,bytes)':
+        return 'Move ' + what + ' #' + a[2] + ' from ' + who(a[0]) + ' to ' + who(a[1]) + ', refusing if the recipient cannot hold it.';
+      case 'safeTransferFrom(address,address,uint256,uint256,bytes)':
+        return 'Move ' + a[3] + ' of ' + what + ' id ' + a[2] + ' from ' + who(a[0]) + ' to ' + who(a[1]) + '.';
+      case 'safeBatchTransferFrom(address,address,uint256[],uint256[],bytes)':
+        return 'Move ' + a[2].length + ' different ids of ' + what + ' from ' + who(a[0]) + ' to ' + who(a[1]) + '.';
+      case 'setApprovalForAll(address,bool)':
+        return a[1] ? 'Let ' + who(a[0]) + ' move every ' + what + ' you own, including any you buy later, until you take it back.'
+                    : 'Stop ' + who(a[0]) + ' from moving your ' + what + '.';
+      case 'mint(address,uint256)': return nft ? 'Create ' + what + ' #' + a[1] + ' and give it to ' + who(a[0]) + '.' : 'Create ' + amt(a[1]) + ' and give it to ' + who(a[0]) + '.';
+      case 'mint(uint256)': case 'publicMint(uint256)': return 'Mint ' + a[0] + ' of ' + what + '.';
+      case 'mint()': return 'Mint one of ' + what + '.';
+      case 'safeMint(address,uint256)': return 'Create ' + what + ' #' + a[1] + ' for ' + who(a[0]) + '.';
+      case 'burn(uint256)': return nft ? 'Destroy ' + what + ' #' + a[0] + ' for good.' : 'Destroy ' + amt(a[0]) + ' for good.';
+      case 'burnFrom(address,uint256)': return 'Destroy ' + amt(a[1]) + ' held by ' + who(a[0]) + '.';
+      case 'transferOwnership(address)': return 'Hand control of ' + what + ' to ' + who(a[0]) + '.';
+      case 'renounceOwnership()': return 'Give up control of ' + what + ', permanently and with no way back.';
+      case 'grantRole(bytes32,address)': return 'Give ' + who(a[1]) + ' a privileged role on ' + what + '.';
+      case 'revokeRole(bytes32,address)': return 'Take a privileged role away from ' + who(a[1]) + '.';
+      case 'pause()': return 'Stop all transfers of ' + what + '.';
+      case 'unpause()': return 'Allow transfers of ' + what + ' again.';
+      case 'setPaused(bool)': return (a[0] ? 'Stop' : 'Allow') + ' transfers of ' + what + '.';
+      case 'upgradeTo(address)': case 'upgradeToAndCall(address,bytes)':
+        return 'Replace the code behind ' + what + ' with the code at ' + who(a[0]) + '.';
+      case 'setTransferValidator(address)': return 'Change who is allowed to move ' + what + ' to the rules at ' + who(a[0]) + '.';
+      case 'withdraw()': return 'Take the contract’s balance out.';
+      case 'withdraw(uint256)': return 'Take ' + ethers.formatEther(a[0]) + ' ETH out of the contract.';
+      case 'deposit()': return 'Put ETH into the contract.';
+      case 'multicall(bytes[])': return 'Run ' + a[0].length + ' separate calls on ' + what + ' in one transaction. Each one is listed below.';
+      case 'execute(address,uint256,bytes)': return 'Have ' + what + ' call ' + who(a[0]) + ' with ' + ethers.formatEther(a[1]) + ' ETH attached.';
+      case 'setBaseURI(string)': return 'Change where the art and metadata for ' + what + ' is served from.';
+      default: break;
+    }
+    if (parsed.name && parsed.name.startsWith('airdrop')) {
+      const n = Array.isArray(a[1]) ? a[1].length : 0;
+      const moved = (ctx.moved && (ctx.moved.name || ctx.moved.symbol)) || short(a[0]);
+      return 'Send ' + n + ' transfer' + (n === 1 ? '' : 's') + ' of ' + moved + ' to ' + n + ' address' + (n === 1 ? '' : 'es') + ' in one transaction.';
+    }
+    return null;
+  }
+
+  // ---------- decoding a piece of calldata against whatever ABI we can get ----------
+  function parseData(data, abi) {
+    if (!data || data === '0x') return { empty: true };
+    const tryWith = (iface, source) => {
+      try {
+        const tx = iface.parseTransaction({ data });
+        if (tx) return { name: tx.name, signature: tx.fragment.format('sighash'), args: tx.args, fragment: tx.fragment, source };
+      } catch (e) {}
+      return null;
+    };
+    if (abi) { const r = tryWith(new ethers.Interface(abi), 'the contract’s published source'); if (r) return r; }
+    const r = tryWith(KNOWN_IFACE, 'a standard this page recognises');
+    if (r) return r;
+    return { unknown: true, selector: data.slice(0, 10), rest: data.slice(10) };
+  }
+
+  // ---------- what a receipt or a simulation actually moved ----------
+  async function movements(logs, ctx) {
+    const out = [];
+    const cache = ctx.tokenCache || (ctx.tokenCache = new Map());
+    const tokenOf = async (addr) => {
+      const key = addr.toLowerCase();
+      if (cache.has(key)) return cache.get(key);
+      const c = new ethers.Contract(addr, ['function name() view returns (string)', 'function symbol() view returns (string)', 'function decimals() view returns (uint8)'], rp());
+      const [name, symbol, decimals] = await Promise.all([c.name().catch(() => null), c.symbol().catch(() => null), c.decimals().catch(() => null)]);
+      const t = { name, symbol, decimals: decimals === null ? null : Number(decimals) };
+      cache.set(key, t); return t;
+    };
+    const addr20 = (topic) => ethers.getAddress('0x' + String(topic).slice(26));
+    for (const l of logs) {
+      const t0 = (l.topics && l.topics[0]) || '';
+      const sig = EV[t0];
+      if (!sig) continue;
+      const where = ethers.getAddress(l.address);
+      // With traceTransfers on, plain ETH movements arrive as Transfer logs from the zero address.
+      const isEth = where === ethers.ZeroAddress;
+      const token = isEth ? { name: 'ETH', symbol: 'ETH', decimals: 18 } : await tokenOf(where);
+      if (sig.startsWith('Transfer(')) {
+        // Three indexed topics means a token id; two means an amount.
+        const nft = l.topics.length === 4;
+        const from = addr20(l.topics[1]), to = addr20(l.topics[2]);
+        const v = nft ? BigInt(l.topics[3]) : BigInt(l.data || '0x0');
+        out.push({ kind: nft ? 'nft' : 'amount', where, isEth, token, from, to, value: v });
+      } else if (sig.startsWith('TransferSingle')) {
+        const [, from, to] = [l.topics[1], l.topics[2], l.topics[3]];
+        const [id, amount] = ethers.AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256'], l.data);
+        out.push({ kind: 'edition', where, token, from: addr20(from), to: addr20(to), id, value: amount });
+      } else if (sig.startsWith('TransferBatch')) {
+        const [ids, amounts] = ethers.AbiCoder.defaultAbiCoder().decode(['uint256[]', 'uint256[]'], l.data);
+        for (let i = 0; i < ids.length; i++) out.push({ kind: 'edition', where, token, from: addr20(l.topics[2]), to: addr20(l.topics[3]), id: ids[i], value: amounts[i] });
+      } else if (sig.startsWith('Approval(')) {
+        const nft = l.topics.length === 4;
+        out.push({ kind: 'approval', where, token, from: addr20(l.topics[1]), to: addr20(l.topics[2]), value: nft ? BigInt(l.topics[3]) : BigInt(l.data || '0x0'), nft });
+      } else if (sig.startsWith('ApprovalForAll')) {
+        const on = BigInt(l.data || '0x0') !== 0n;
+        out.push({ kind: 'approvalAll', where, token, from: addr20(l.topics[1]), to: addr20(l.topics[2]), on });
+      } else {
+        out.push({ kind: 'event', where, token, sig: sig.split('(')[0] });
+      }
+    }
+    return out;
+  }
+
+  function renderMovements(moves, me, senderLabel) {
+    if (!moves.length) return h('p', { class: 'mut', text: 'No tokens and no ETH move.' });
+    const mine = (a) => me && a && a.toLowerCase() === me.toLowerCase();
+    const outWords = senderLabel ? '  — out of ' + senderLabel : '  — out of your wallet';
+    const inWords = senderLabel ? '  — into ' + senderLabel : '  — into your wallet';
+    return h('div', {}, moves.map((m) => {
+      const name = m.token.symbol || m.token.name || short(m.where);
+      let line;
+      if (m.kind === 'nft') line = name + ' #' + m.value + ' goes from ' + short(m.from) + ' to ' + short(m.to);
+      else if (m.kind === 'edition') line = String(m.value) + ' × ' + name + ' id ' + m.id + ' goes from ' + short(m.from) + ' to ' + short(m.to);
+      else if (m.kind === 'amount') line = fmtAmount(m.value, m.token) + (m.isEth ? '' : ' ' + (m.token.symbol ? '' : name)) + ' goes from ' + short(m.from) + ' to ' + short(m.to);
+      else if (m.kind === 'approval') line = short(m.from) + ' lets ' + short(m.to) + (m.nft ? ' move ' + name + ' #' + m.value : ' spend ' + fmtAmount(m.value, m.token) + ' of ' + name);
+      else if (m.kind === 'approvalAll') line = short(m.from) + (m.on ? ' lets ' : ' stops ') + short(m.to) + (m.on ? ' move every ' + name + ' they own' : ' moving their ' + name);
+      else line = name + ' emits ' + m.sig;
+      const dir = mine(m.from) ? 'out' : mine(m.to) ? 'in' : '';
+      return h('div', { class: 'move ' + dir }, document.createTextNode(line + (mine(m.from) ? outWords : mine(m.to) ? inWords : '')));
+    }));
+  }
+
+  // ---------- simulating a call that has not been sent ----------
+  // eth_simulateV1 runs the call against the current state and hands back the logs it would emit, so a preview
+  // can say what would actually move rather than what the function is named.
+  async function simulate(call) {
+    const params = [{
+      blockStateCalls: [{ calls: [{
+        from: call.from || ethers.ZeroAddress,
+        to: call.to,
+        data: call.data || '0x',
+        value: call.value ? ethers.toBeHex(BigInt(call.value)) : '0x0',
+      }] }],
+      traceTransfers: true,
+      validation: false,
+    }, 'latest'];
+    const res = await rp().send('eth_simulateV1', params);
+    const r = res && res[0] && res[0].calls && res[0].calls[0];
+    if (!r) throw new Error('the node returned nothing to read');
+    // A revert's reason arrives under error.data; returnData is empty for a failed call.
+    const reason = (r.error && r.error.data) || r.returnData || '0x';
+    return { ok: r.status === '0x1', gasUsed: BigInt(r.gasUsed || 0), logs: r.logs || [], returnData: r.returnData || '0x', reason, error: r.error || null };
+  }
+
+  // ---------- the three things this page can be asked ----------
+  const out = (...kids) => { const o = $('out'); o.textContent = ''; for (const k of kids) if (k) o.appendChild(k); };
+
+  async function showTransaction(hash, viewer) {
+    say('Reading that transaction…');
+    const p = rp();
+    const [tx, rc] = await Promise.all([p.getTransaction(hash).catch(() => null), p.getTransactionReceipt(hash).catch(() => null)]);
+    if (!tx && !rc) { say('No transaction with that hash on ' + cfg().name + '. It may be on the other network, or not mined yet.', 'bad'); out(); return; }
+    const target = tx && tx.to ? await readAddress(tx.to) : null;
+    const parsed = tx ? parseData(tx.data, target && target.abi) : { empty: true };
+    const ctx = { target };
+    // An airdrop moves a different contract than the one it calls, so read that one for its name.
+    if (parsed && parsed.args && parsed.name && parsed.name.startsWith('airdrop') && ethers.isAddress(String(parsed.args[0] || ''))) {
+      const moved = await readAddress(parsed.args[0]).catch(() => null);
+      if (moved) ctx.moved = moved.token && (moved.token.name || moved.token.symbol) ? moved.token : null;
+    }
+    const sentence = parsed && !parsed.unknown && !parsed.empty ? describeCall(parsed, ctx) : null;
+    const moves = rc ? await movements(rc.logs, ctx) : [];
+    const failed = rc && rc.status === 0;
+
+    // A receipt says a transaction failed but not why. Running it again against today's state usually does.
+    let why = null;
+    if (failed) {
+      const ex = (await explorerJson('/transactions/' + hash)).data;
+      if (ex && ex.revert_reason) why = typeof ex.revert_reason === 'string' ? ex.revert_reason : decodeRevert(ex.revert_reason.raw || '0x', target && target.abi ? new ethers.Interface(target.abi) : null);
+      if (!why) {
+        try { const s = await simulate({ from: tx.from, to: tx.to, data: tx.data, value: tx.value }); if (!s.ok) why = decodeRevert(s.reason, target && target.abi ? new ethers.Interface(target.abi) : null); }
+        catch (e) {}
+      }
+    }
+    const fee = rc ? rc.gasUsed * (rc.gasPrice ?? 0n) : null;
+    say('');
+    out(
+      card(null,
+        h('p', { class: 'lede', text: sentence || (parsed.empty ? 'A plain transfer of ETH, with no contract call.' : parsed.unknown ? 'A call this page cannot name: the contract has published no source and the function is not a standard one.' : parsed.signature) }),
+        h('div', {}, [
+          h('span', { class: 'pill ' + (failed ? 'bad' : 'ok'), text: failed ? 'failed' : rc ? 'succeeded' : 'not mined yet' }),
+          tx && tx.value > 0n ? h('span', { class: 'pill warn', text: ethers.formatEther(tx.value) + ' ETH attached' }) : null,
+          parsed.source ? h('span', { class: 'pill', text: 'decoded from ' + parsed.source }) : null,
+        ]),
+        failed && why ? note('bad', 'Why it failed', why) : null,
+        kv([
+          ['From', link(tx ? tx.from : rc.from, short(tx ? tx.from : rc.from))],
+          ['To', tx && tx.to ? h('span', {}, link(tx.to, short(tx.to)), document.createTextNode(' '), h('span', { class: 'mut', text: (target && (target.token && target.token.name || target.name)) || (target && target.isContract ? 'a contract' : 'a wallet') })) : 'a new contract'],
+          tx ? ['Function', mono(parsed.signature || (parsed.empty ? 'none' : parsed.selector))] : null,
+          rc ? ['Gas paid', ethers.formatEther(fee) + ' ETH' + (ethUsd ? '  (about $' + (Number(ethers.formatEther(fee)) * ethUsd).toFixed(4) + ')' : '')] : null,
+          rc ? ['Block', String(rc.blockNumber)] : null,
+          ['Hash', link(hash, short(hash), 'tx')],
+        ]),
+      ),
+      card('What moved', renderMovements(moves, viewer || (tx && tx.from), viewer ? null : 'the sender’s wallet')),
+      parsed && parsed.args && parsed.args.length ? card('Everything it was asked to do', renderArgs(parsed, target)) : null,
+      target ? contractCard(target, 'The contract it called') : null,
+    );
+  }
+
+  function renderArgs(parsed, target) {
+    const names = (parsed.fragment && parsed.fragment.inputs) || [];
+    const std = target && target.standard;
+    const relabel = (n) => n !== 'idOrAmount' ? n : (std === 'ERC-721' ? 'token id' : std === 'ERC-20' ? 'amount' : 'token id or amount');
+    return h('dl', { class: 'kv' }, parsed.args.flatMap((v, i) => {
+      const label = relabel((names[i] && names[i].name) || ('argument ' + (i + 1)));
+      const type = (names[i] && names[i].type) || '';
+      let shown;
+      if (Array.isArray(v)) shown = v.length > 12 ? v.slice(0, 12).map(String).join(', ') + ' … and ' + (v.length - 12) + ' more' : v.map(String).join(', ');
+      else if (type === 'bool') shown = v ? 'yes' : 'no';
+      else if (UNLIMITED(v) && type.startsWith('uint')) shown = String(v) + '  (effectively unlimited)';
+      else shown = String(v);
+      return [h('dt', { text: label + (type ? ' · ' + type : '') }), h('dd', { class: 'mono', text: shown })];
+    }));
+  }
+
+  function contractCard(o, title) {
+    if (!o.isContract) {
+      return card(title || 'This address', kv([
+        ['What it is', o.delegated ? 'a wallet running delegated code (EIP-7702)' : 'an ordinary wallet, with no code'],
+        o.delegated ? ['Runs the code at', link(o.delegated, short(o.delegated))] : null,
+        ['Balance', o.balance === null ? 'unknown' : ethers.formatEther(o.balance) + ' ETH'],
+        ['Transactions sent', o.nonce === null ? 'unknown' : String(o.nonce)],
+        ['Address', link(o.address, o.address)],
+      ]));
+    }
+    const fns = knownFunctions(o);
+    const powers = powersOf(fns.list);
+    return card(title || 'The contract', [
+      h('div', {}, [
+        h('span', { class: 'pill ' + (o.verified ? 'ok' : o.verified === null ? 'warn' : 'bad'),
+          text: o.verified ? (o.partial ? 'source published, partly matched' : 'source published and matched')
+              : o.verified === null ? 'could not check for a published source' : 'no source published' }),
+        o.standard ? h('span', { class: 'pill', text: o.standard }) : null,
+        o.proxy ? h('span', { class: 'pill warn', text: 'proxy: the code can be swapped' }) : null,
+        o.paused === true ? h('span', { class: 'pill bad', text: 'transfers are paused right now' }) : null,
+        o.validator ? h('span', { class: 'pill warn', text: 'transfers are gated by a validator' }) : null,
+        o.explorerDown ? h('span', { class: 'pill warn', text: 'the explorer would not answer' }) : null,
+      ]),
+      kv([
+        ['Name', (o.token && o.token.name) || o.name || 'not published'],
+        o.token && o.token.symbol ? ['Symbol', o.token.symbol] : null,
+        o.token && o.token.decimals !== null && o.token.decimals !== undefined ? ['Decimals', String(o.token.decimals)] : null,
+        o.token && o.token.supply !== null && o.token.supply !== undefined ? ['Total supply', o.token.decimals !== null && o.standard === 'ERC-20' ? ethers.formatUnits(o.token.supply, o.token.decimals) : String(o.token.supply)] : null,
+        o.owner ? ['Owner', o.owner === ethers.ZeroAddress ? 'nobody: ownership has been given up' : link(o.owner, short(o.owner))] : null,
+        o.proxy ? ['Proxy', h('span', {}, document.createTextNode(o.proxy.kind + ' → '), link(o.proxy.target, short(o.proxy.target)), document.createTextNode(o.proxy.verified === false ? '  (that code has no published source either)' : ''))] : null,
+        o.admin ? ['Proxy admin', link(o.admin, short(o.admin))] : null,
+        o.validator ? ['Transfer validator', link(o.validator, short(o.validator))] : null,
+        o.verified ? ['Compiled with', (o.compiler || '') + (o.optimized ? ', optimizer on' : '') + (o.evm ? ', ' + o.evm : '')] : null,
+        ['Code size', String((o.code.length - 2) / 2) + ' bytes'],
+        ['Address', link(o.address, o.address)],
+      ]),
+      o.validator ? note('warn', 'This collection controls who may move it',
+        'A creator transfer validator is set, so transfers only go through operators the creator has allowed. Marketplaces and bulk senders that are not on that list will be refused, and there is nothing a holder can do about it from their side.') : null,
+      powers.length
+        ? h('div', {}, [
+            h('p', { class: 'mut', text: 'What whoever controls this contract can do, read from ' + fns.long + ':' }),
+            h('ul', { class: 'plain' }, powers.map((p) => h('li', { class: p.cls === 'mut' ? '' : p.cls }, document.createTextNode(p.what + ' '), h('span', { class: 'mut mono', text: '(' + p.sig + ')' })))),
+            o.owner && o.owner !== ethers.ZeroAddress ? h('p', { class: 'mut', text: 'Those powers sit with ' + short(o.owner) + ' today, and can be handed on.' }) : null,
+            o.owner === ethers.ZeroAddress ? h('p', { class: 'ok', text: 'Ownership has been given up, so the owner-only ones can no longer be used by anybody.' }) : null,
+          ])
+        : h('p', { class: o.verified ? 'ok' : 'mut', text: 'Nothing in ' + fns.source + ' lets anyone mint, pause, block, retax or replace this contract.' + (o.verified ? '' : ' That is what the selectors in the code show, which is a floor rather than a ceiling.') }),
+      o.verified === false ? note('warn', 'No source has been published',
+        'The bytecode is public and this page has read it, but nobody has shown which source code produced it. Everything above about what it can do comes from the function selectors in the code itself, which is a floor and not a ceiling.') : null,
+      o.verified === null ? note('warn', 'Whether the source is published is unknown',
+        'The block explorer did not answer, so this page could not ask. Everything above was read from the chain itself, which always answers, but it cannot tell you whether the source code behind this contract has been published. Try again in a minute.') : null,
+    ]);
+  }
+
+  async function showAddress(addr) {
+    say('Reading that address…');
+    const o = await readAddress(addr);
+    say('');
+    out(contractCard(o, o.isContract ? 'This contract' : 'This address'));
+  }
+
+  async function showCall(to, data, from, value) {
+    say('Working out what that would do…');
+    const target = await readAddress(to);
+    const parsed = parseData(data, target.abi);
+    const ctx = { target };
+    const sentence = parsed.unknown || parsed.empty ? null : describeCall(parsed, ctx);
+    let sim = null, simErr = null;
+    try { sim = await simulate({ to, data, from, value }); } catch (e) { simErr = String(e.message || e).slice(0, 160); }
+    const moves = sim ? await movements(sim.logs, ctx) : [];
+    const iface = target.abi ? new ethers.Interface(target.abi) : null;
+    const warnings = [];
+    if (parsed.signature === 'approve(address,uint256)' && UNLIMITED(parsed.args[1]))
+      warnings.push(['bad', 'This is an unlimited approval', 'It lets ' + short(parsed.args[0]) + ' take that token out of your wallet at any point in the future, in any amount, without asking again. Approving only what you are spending right now costs the same gas.']);
+    if (parsed.signature === 'setApprovalForAll(address,bool)' && parsed.args[1])
+      warnings.push(['bad', 'This hands over the whole collection', 'Not one NFT: every one you hold now and every one you ever hold in this collection, until you revoke it.']);
+    if (parsed.signature && /^(transferOwnership|renounceOwnership|upgradeTo)/.test(parsed.signature))
+      warnings.push(['warn', 'This changes who controls the contract', 'Read the address it is being handed to before signing.']);
+    if (!target.isContract && !target.delegated)
+      warnings.push(['bad', 'There is no contract at that address', 'A call to an address with no code does nothing at all and still costs gas. Check the address.']);
+    if (target.isContract && target.verified === false)
+      warnings.push(['warn', 'The contract you are calling has published no source', 'You can still see what it did in the simulation below, but not what it will do under other conditions.']);
+    if (target.isContract && target.verified === null)
+      warnings.push(['warn', 'Nobody could check whether this contract’s source is published', 'The block explorer did not answer. What follows was read from the chain, which is enough to say what this call would do right now, and not enough to say what the contract is.']);
+    if (target.proxy)
+      warnings.push(['warn', 'This contract can be replaced', 'It forwards to ' + short(target.proxy.target) + ', and whoever controls it can point it somewhere else after you sign.']);
+    if (sim && !sim.ok)
+      warnings.push(['bad', 'This would fail right now', decodeRevert(sim.reason, iface)]);
+    if (!from)
+      warnings.push(['warn', 'Nobody was named as the sender', 'The preview ran as the zero address, so anything that depends on who is asking, an allowance, a balance, an owner check, may come out differently for you. Put your address in the box above.']);
+    say('');
+    out(
+      card(null,
+        h('p', { class: 'lede', text: sentence || (parsed.unknown ? 'A call this page cannot name: the contract has published no source and the function is not a standard one.' : parsed.empty ? 'No calldata: this is a plain transfer of ETH.' : parsed.signature) }),
+        h('div', {}, [
+          sim ? h('span', { class: 'pill ' + (sim.ok ? 'ok' : 'bad'), text: sim.ok ? 'would succeed' : 'would fail' }) : h('span', { class: 'pill', text: 'could not be simulated' }),
+          value && BigInt(value) > 0n ? h('span', { class: 'pill warn', text: ethers.formatEther(BigInt(value)) + ' ETH attached' }) : null,
+          sim ? h('span', { class: 'pill', text: 'about ' + sim.gasUsed.toString() + ' gas' }) : null,
+          parsed.source ? h('span', { class: 'pill', text: 'decoded from ' + parsed.source }) : null,
+        ]),
+        simErr ? note('warn', 'The node would not run the preview', simErr) : null,
+        warnings.map(([cls, title, body]) => note(cls, title, body)),
+      ),
+      sim ? card('What it would move', renderMovements(moves, from)) : null,
+      parsed.args && parsed.args.length ? card('Everything it is asking for', renderArgs(parsed, target)) : null,
+      parsed.unknown ? card('The raw call', [
+        kv([['Selector', mono(parsed.selector)], ['Length', String((data.length - 10) / 2) + ' bytes of arguments']]),
+        h('pre', { text: (parsed.rest.match(/.{1,64}/g) || []).join('\n') }),
+      ]) : null,
+      contractCard(target, 'The contract you would be calling'),
+    );
+  }
+
+  // ---------- working out what was pasted ----------
+  // People paste what they have: a hash from a wallet, an address from a tweet, or the whole JSON blob a
+  // wallet shows under "raw data". All three should just work.
+  function readInput(raw) {
+    const s = (raw || '').trim();
+    if (!s) return { kind: 'empty' };
+    if (s.startsWith('{') || s.startsWith('[')) {
+      try {
+        const j = JSON.parse(s); const o = Array.isArray(j) ? j[0] : (j.params ? j.params[0] : j);
+        if (o && (o.to || o.data)) return { kind: 'call', to: o.to, data: o.data || o.input || '0x', from: o.from, value: o.value };
+      } catch (e) { return { kind: 'bad', why: 'That looks like JSON but it will not parse.' }; }
+    }
+    const url = s.match(/(?:tx|address|token)\/(0x[0-9a-fA-F]{40,64})/);
+    const body = url ? url[1] : s.replace(/\s+/g, '');
+    if (/^0x[0-9a-fA-F]{64}$/.test(body)) return { kind: 'tx', hash: body };
+    if (/^0x[0-9a-fA-F]{40}$/.test(body)) return { kind: 'address', address: ethers.getAddress(body) };
+    if (/^0x[0-9a-fA-F]{8,}$/.test(body) && body.length % 2 === 0) return { kind: 'data', data: body };
+    return { kind: 'bad', why: 'That is not a transaction hash, an address, or calldata. Paste one of those.' };
+  }
+
+  async function go() {
+    const parsedInput = readInput($('input').value);
+    const fromRaw = $('from').value.trim();
+    const from = ethers.isAddress(fromRaw) ? ethers.getAddress(fromRaw) : null;
+    if (fromRaw && !from) { say('That sender address is not a valid address.', 'bad'); return; }
+    $('go').disabled = true;
+    try {
+      if (parsedInput.kind === 'empty') { say('Paste something first.', 'warn'); return; }
+      if (parsedInput.kind === 'bad') { say(parsedInput.why, 'bad'); return; }
+      if (parsedInput.kind === 'tx') return await showTransaction(parsedInput.hash, from);
+      if (parsedInput.kind === 'address') return await showAddress(parsedInput.address);
+      if (parsedInput.kind === 'call') {
+        if (!ethers.isAddress(parsedInput.to || '')) { say('That call has no valid "to" address in it.', 'bad'); return; }
+        return await showCall(ethers.getAddress(parsedInput.to), parsedInput.data, from || (ethers.isAddress(parsedInput.from || '') ? ethers.getAddress(parsedInput.from) : null), parsedInput.value);
+      }
+      if (parsedInput.kind === 'data') {
+        // Calldata alone says what is being asked for but not of whom, and the answer depends on both.
+        const to = prompt('Which contract is that call going to? Paste its address.\n\nThe same calldata means different things at different contracts.');
+        if (!to || !ethers.isAddress(to.trim())) { say('A preview needs the contract the call is going to. Paste it into the box as {"to":"0x…","data":"0x…"} if it is easier.', 'warn'); return; }
+        return await showCall(ethers.getAddress(to.trim()), parsedInput.data, from, null);
+      }
+    } catch (e) {
+      say('That did not work: ' + String(e && (e.shortMessage || e.message) || e).slice(0, 180), 'bad');
+    } finally { $('go').disabled = false; }
+  }
+
+  // ---------- the page ----------
+  $('go').addEventListener('click', go);
+  $('input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(); } });
+  $('net').addEventListener('change', () => { $('netPill').textContent = cfg().name; $('out').textContent = ''; say(''); refreshFoot(); });
+  $('useWallet').addEventListener('click', async () => {
+    const eth = window.ethereum;
+    if (!eth) { say('No wallet in this browser. Type or paste the address instead.', 'warn'); return; }
+    try {
+      const accts = await eth.request({ method: 'eth_requestAccounts' });
+      if (accts && accts[0]) { $('from').value = ethers.getAddress(accts[0]); say('Using ' + short(accts[0]) + '. Nothing is signed on this page.', 'ok'); }
+    } catch (e) { say('Your wallet did not share an address.', 'warn'); }
+  });
+
+  const EXAMPLES = {
+    tx: { 46630: '0x7861330adb005302c036e832029348fe259adebb88e9a7abd54fe771fdbf63bf', 4663: '' },
+    addr: { 46630: '0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74', 4663: '0xA000027A9B2802E1ddf7000061001e5c005A0000' },
+  };
+  for (const b of document.querySelectorAll('.ex')) {
+    b.addEventListener('click', () => {
+      const which = b.getAttribute('data-ex');
+      if (which === 'approve') {
+        const spender = '0x1111111111111111111111111111111111111111';
+        const data = new ethers.Interface(['function approve(address,uint256)']).encodeFunctionData('approve', [spender, ethers.MaxUint256]);
+        const token = chainId() === 46630 ? '0x3aea4d7cd57a1fc47bf42bfedf2ab3bdd00157b0' : '';
+        if (!token) { say('That example is on the testnet. Switch the network to try it.', 'warn'); return; }
+        $('input').value = JSON.stringify({ to: token, data });
+      } else {
+        const v = (EXAMPLES[which] || {})[chainId()];
+        if (!v) { say('That example is on the testnet. Switch the network to try it.', 'warn'); return; }
+        $('input').value = v;
+      }
+      go();
+    });
+  }
+
+  function refreshFoot() {
+    const f = $('foot'); f.textContent = '';
+    f.appendChild(document.createTextNode(' Reading ' + cfg().name + ' at '));
+    f.appendChild(h('span', { class: 'mono', text: cfg().rpc.replace('https://', '') }));
+    f.appendChild(document.createTextNode('. '));
+    f.appendChild(h('a', { href: 'https://rhairdrop.gmgnrepeat.com/', text: 'The airdrop tool is over here' }));
+    f.appendChild(document.createTextNode('.'));
+  }
+  $('netPill').textContent = cfg().name;
+  refreshFoot();
+  (async () => { try { const r = await fetch('https://api.coinbase.com/v2/prices/ETH-USD/spot'); ethUsd = Number((await r.json()).data.amount) || null; } catch (e) {} })();
+  // Deep link: /?q=0x… so a link can carry the thing to look at.
+  try {
+    const q = new URLSearchParams(location.search);
+    if (q.get('net') && CHAINS[Number(q.get('net'))]) $('net').value = q.get('net');
+    if (q.get('from')) $('from').value = q.get('from');
+    if (q.get('q')) { $('input').value = q.get('q'); $('netPill').textContent = cfg().name; go(); }
+  } catch (e) {}
+  window.__check = { readInput, parseData, describeCall, decodeRevert, selectorsIn, powersOf, knownFunctions };
+})();
+</script>
+</body>
+</html>

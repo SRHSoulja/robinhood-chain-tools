@@ -39,6 +39,27 @@ so you learn exactly how many would be delivered before anything is signed. Some
 transfer validator and only allow transfers through operators the creator approved; those cannot be moved by
 any bulk sender, and the test run says so instead of wasting a transaction.
 
+## The other half: Check
+
+`web/check.html` is a separate read-only page, live at
+[rhcheck.gmgnrepeat.com](https://rhcheck.gmgnrepeat.com/), built from the second request in the same
+community thread: human-readable transaction previews and better contract verification. Paste a transaction
+hash, a contract address, or the calldata a wallet is about to sign, and it says in a sentence what that does,
+what would move, whether it would fail and why, and what powers the contract holds over the people who own it.
+
+It signs nothing and writes nothing. Previews come from `eth_simulateV1`, which Robinhood Chain supports on
+both networks and which returns the logs a call *would* emit, so the preview is what actually moves rather
+than what the function is named. Where a contract has published no source, the powers are read from the
+function selectors in its own bytecode, which is a floor rather than a ceiling, and the page says so.
+
+The mainnet explorer answers browsers and challenges everything else, so the page's own Cloudflare Worker
+carries a small read-only passthrough at `/x/<chain id>/<api path>`. When the explorer will not answer at all,
+the page says the source status is unknown; it never reports "no source published" for a question it could
+not ask.
+
+    ./deploy-check.sh          # worker + origin copy, both verified
+    cd /mnt/c/GMGNRepeat/baby-bananza-grand-prix && node test/web/check.test.mjs
+
 ## Networks
 
 | | chain id | RPC | explorer |
