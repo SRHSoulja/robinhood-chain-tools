@@ -116,6 +116,29 @@
   const setStat = (el, parts) => { el.textContent = ''; for (const [label, value, cls] of parts) { const span = document.createElement('span'); if (cls) span.className = cls; if (label) span.appendChild(document.createTextNode(label + ' ')); const b = document.createElement('b'); b.textContent = value; span.appendChild(b); el.appendChild(span); } };
 
   let provider, signer, me, rows = [], stopFlag = false, decimals = null, tokenLoadedFor = null, skippedRows = [], sending = false;
+  let walletBatch = null;   // does the wallet run several calls as itself, in one transaction (EIP-5792)
+  let gatedBy = null;       // the collection's creator transfer validator, if it has one
+
+  // Calls the WALLET makes as itself, for the wallet-batch path. No operator, so no approval.
+  const DIRECT = new ethers.Interface([
+    'function transferFrom(address from,address to,uint256 id)',
+    'function safeTransferFrom(address from,address to,uint256 id)',
+    'function safeTransferFrom(address from,address to,uint256 id,uint256 amount,bytes data)',
+    'function transfer(address to,uint256 amount)',
+  ]);
+  function directCall(row) {
+    const token = $('token').value.trim();
+    if (std() === '721') return { to: token, value: '0x0', data: DIRECT.encodeFunctionData(safeMode() ? 'safeTransferFrom(address,address,uint256)' : 'transferFrom(address,address,uint256)', [me, row.to, row.id]) };
+    if (std() === '1155') return { to: token, value: '0x0', data: DIRECT.encodeFunctionData('safeTransferFrom(address,address,uint256,uint256,bytes)', [me, row.to, row.id, row.amount, '0x']) };
+    return { to: token, value: '0x0', data: DIRECT.encodeFunctionData('transfer(address,uint256)', [row.to, row.amount]) };
+  }
+  const hexChain = () => '0x' + chainId().toString(16);
+  // Which way this airdrop will go out.
+  function deliveryPath() {
+    if (walletBatch) return 'wallet';
+    if (gatedBy) return 'blocked';
+    return bulkReady() ? 'bulk' : 'none';
+  }
   const chainId = () => Number($('net').value); const cfg = () => CHAINS[chainId()];
   const std = () => $('std').value;
   const lenient = () => $('mode').value === 'lenient';
@@ -134,7 +157,20 @@
       window.ethereum.on('chainChanged', () => { if (sending) { stopFlag = true; log('The wallet changed network mid-airdrop. Stopping after this batch.', 'bad'); } });
       window.ethereum.on('accountsChanged', () => { if (sending) { stopFlag = true; log('The wallet changed account mid-airdrop. Stopping after this batch.', 'bad'); } });
     }
-    await switchChain(); plan();
+    await switchChain(); await detectWalletBatch(); plan();
+  }
+  // EIP-5792: ask the wallet whether it can run several calls as one atomic transaction. Wallets do this by
+  // temporarily running batch code as the account itself, so each transfer's sender is the owner, which is
+  // exactly what a creator transfer validator allows.
+  async function detectWalletBatch() {
+    walletBatch = false;
+    try {
+      const caps = await window.ethereum.request({ method: 'wallet_getCapabilities', params: [me, [hexChain()]] });
+      const c = caps && (caps[hexChain()] || caps[hexChain().toLowerCase()] || caps[chainId()]);
+      const a = c && (c.atomic || c.atomicBatch);
+      const st = a && (a.status !== undefined ? a.status : a.supported);
+      walletBatch = st === 'supported' || st === 'ready' || st === true;
+    } catch (e) { walletBatch = false; }
   }
   async function switchChain() {
     const id = chainId(), c = cfg(), hex = '0x' + id.toString(16);
@@ -156,7 +192,7 @@
     $('safeRow').style.display = std() === '721' ? 'flex' : 'none';
     rows = []; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); plan(); if ($('token').value.trim()) tokenInfo();
   });
-  $('net').addEventListener('change', () => { tokenLoadedFor = null; plan(); if (provider) switchChain(); });
+  $('net').addEventListener('change', async () => { tokenLoadedFor = null; gatedBy = null; plan(); if (provider) { await switchChain(); await detectWalletBatch(); plan(); } });
   $('mode').addEventListener('change', plan); $('safe').addEventListener('change', plan); $('batch').addEventListener('input', plan);
 
   async function tokenInfo() {
@@ -165,6 +201,9 @@
     const rp = new ethers.JsonRpcProvider(cfg().rpc); const code = await rp.getCode(addr).catch(() => '0x');
     if (code === '0x') { setStat(box, [['', 'No contract at that address on this network.', 'bad']]); plan(); return; }
     const clip = (v) => String(v).slice(0, 48);
+    // getTransferValidator(): a collection that answers with a real address only lets approved operators move it
+    gatedBy = null;
+    try { const gv = await rp.call({ to: addr, data: '0x098144d4' }); if (gv && gv !== '0x' && BigInt(gv) !== 0n) gatedBy = '0x' + gv.slice(-40); } catch (e) {}
     try {
       if (std() === '721') { const t = new ethers.Contract(addr, ERC721_ABI, rp); const [n, s] = await Promise.all([t.name().catch(() => '?'), t.symbol().catch(() => '?')]); const bal = me ? await t.balanceOf(me).catch(() => null) : null;
         const parts = [['', clip(n) + ' (' + clip(s) + ')']]; if (bal !== null) parts.push(['you hold', String(bal)]); setStat(box, parts); decimals = 0; }
@@ -173,6 +212,11 @@
         const parts = [['', clip(n) + ' (' + clip(s) + ') · ' + decimals + ' decimals']]; if (bal !== null) parts.push(['you hold', ethers.formatUnits(bal, decimals)]);
         parts.push(['', 'If this token takes a fee on transfer, each wallet receives less than the amount listed.', 'warn']); setStat(box, parts); }
       else { setStat(box, [['', 'ERC-1155 contract found.']]); decimals = 0; }
+      if (gatedBy) {
+        const parts = [['', 'This collection restricts transfers to operators its creator approved.', 'warn']];
+        parts.push(['', walletBatch ? 'Your wallet can batch as itself, so this works: no approval needed.' : 'A wallet that batches is needed. Yours does not, so these must go one at a time, or ask the collection to approve BulkSend.', walletBatch ? 'ok' : 'bad']);
+        for (const pp of parts) { const span = document.createElement('span'); if (pp[2]) span.className = pp[2]; span.textContent = pp[1]; box.appendChild(span); }
+      }
       tokenLoadedFor = addr.toLowerCase();
     } catch (e) { setStat(box, [['', 'Contract found, but it did not answer like a ' + std() + ' token.', 'warn']]); tokenLoadedFor = null; }
     plan();
@@ -217,14 +261,19 @@
   // ---- plan ----
   function plan() {
     const c = cfg(); const bs = batchSize(); const n = rows.length; const batches = Math.ceil(n / bs);
-    const ready = !!(provider && ethers.isAddress($('token').value.trim()) && n > 0 && bulkReady() && !sending);
+    const path = deliveryPath();
+    const ready = !!(provider && ethers.isAddress($('token').value.trim()) && n > 0 && !sending && (path === 'wallet' || path === 'bulk'));
+    const how = path === 'wallet' ? 'your wallet, as itself (no approval)'
+              : path === 'bulk' ? 'BulkSend ' + (bulkReady() ? c.bulk.slice(0, 8) + '…' : '')
+              : path === 'blocked' ? 'this collection needs a wallet that batches' : 'not deployed on this network yet';
     setStat($('plan'), [
       ['network', c.name],
-      ['BulkSend', bulkReady() ? c.bulk.slice(0, 8) + '…' : 'not deployed on this network yet'],
+      ['sent by', how],
       ['', n + ' recipients in ' + batches + ' transaction' + (batches === 1 ? '' : 's')],
       ['about', (n * gasPer()).toLocaleString() + 'k gas in total'],
     ]);
-    $('preflight').disabled = !ready; $('approve').disabled = !ready; $('send').disabled = !ready;
+    $('preflight').disabled = !ready; $('send').disabled = !ready;
+    $('approve').disabled = !(ready && path === 'bulk');
     $('export').disabled = skippedRows.length === 0;
   }
   function batchSize() { const v = parseInt($('batch').value); return Math.max(1, Math.min(maxBatch(), isNaN(v) ? 100 : v)); }
@@ -256,12 +305,28 @@
   // ---- preflight: run the whole airdrop against live chain state without signing anything ----
   $('preflight').addEventListener('click', () => preflight(true));
   async function preflight(verbose) {
+    const ordered = orderForDelivery(rows);
+    if (verbose) log('Test run: simulating every transfer against the live chain. Nothing is signed and nothing is spent.');
+    // Wallet-batch path: simulate each transfer exactly as the wallet would make it, one eth_call each.
+    // Anything that fails is left out of the batch, which gives the "skip the bad ones" behaviour without a contract.
+    if (deliveryPath() === 'wallet') {
+      const rp = new ethers.JsonRpcProvider(cfg().rpc); const good = [], bad = [];
+      for (const row of ordered) {
+        const c = directCall(row);
+        try { await rp.call({ from: me, to: c.to, data: c.data }); good.push(row); }
+        catch (e) { bad.push({ row, why: explainCallError(e) }); }
+      }
+      if (verbose) {
+        log('Test run finished: ' + good.length + ' of ' + rows.length + ' would be delivered' + (bad.length ? ', ' + bad.length + ' would be left out' : '') + '.', bad.length ? 'warn' : 'ok');
+        for (const b of bad.slice(0, 12)) log('  would skip ' + b.row.to + ': ' + b.why, 'warn');
+        if (bad.length > 12) log('  … and ' + (bad.length - 12) + ' more', 'warn');
+      }
+      return { ok: good.length > 0, willDeliver: good.length, willSkip: bad.length, good, bad, why: good.length ? '' : 'none of these transfers would go through' };
+    }
     let bulk;
     try { bulk = new ethers.Contract(cfg().bulk, BULK_ABI, await new ethers.BrowserProvider(window.ethereum).getSigner()); }
     catch (e) { return { ok: false, why: 'could not reach the wallet: ' + String(e.shortMessage || e.message) }; }
     const bs = batchSize(); let willDeliver = 0, willSkip = 0;
-    const ordered = orderForDelivery(rows);
-    if (verbose) log('Test run: simulating every batch against the live chain. Nothing is signed and nothing is spent.');
     for (let i = 0; i < ordered.length; i += bs) {
       const chunk = ordered.slice(i, i + bs); const [fn, args] = callArgs(chunk);
       try { const res = await bulk[fn].staticCall(...args); willDeliver += Number(res[0]); willSkip += Number(res[1]); }
@@ -308,6 +373,7 @@
     if (pre.willSkip) log('Test run: ' + pre.willDeliver + ' will be delivered, ' + pre.willSkip + ' skipped.', 'warn');
 
     lockForm(true); $('send').disabled = true; $('preflight').disabled = true; $('approve').disabled = true; $('stop').disabled = false;
+    if (deliveryPath() === 'wallet') { await sendViaWallet(pre); lockForm(false); $('stop').disabled = true; plan(); return; }
     const list = orderForDelivery(rows);   // snapshot, in delivery order: the loop must not see a list edited mid-flight
     if (std() !== '20' && list.length > 1 && String(list[0].id) !== String(rows[0].id)) log('Delivering in ascending token id order, which is much cheaper on lazily-minted collections. Everyone still gets the id you listed for them.');
     const bulkAddr = cfg().bulk, bulk = new ethers.Contract(bulkAddr, BULK_ABI, signer);
@@ -340,6 +406,48 @@
     } catch (e) { log('Stopped on error: ' + explainCallError(e), 'bad'); }
     lockForm(false); $('stop').disabled = true; plan();
   });
+
+  // ---- the wallet-batch path: the wallet runs the transfers as itself, in one transaction per batch ----
+  async function sendViaWallet(pre) {
+    const bs = batchSize(); const list = pre.good; let sent = 0;
+    skippedRows = pre.bad.map(b => b.row);
+    if (pre.bad.length) log(pre.bad.length + ' left out of the batch by the test run; download them to retry.', 'warn');
+    for (let i = 0; i < list.length; i += bs) {
+      if (!(await onSelectedChain())) { log('Stopped: the wallet is no longer on the selected network.', 'bad'); break; }
+      const chunk = list.slice(i, i + bs);
+      log('Batch ' + (Math.floor(i / bs) + 1) + ' of ' + Math.ceil(list.length / bs) + ': ' + chunk.length + ' transfers, sent by your wallet as itself …');
+      try {
+        const res = await window.ethereum.request({ method: 'wallet_sendCalls', params: [{
+          version: '2.0.0', chainId: hexChain(), from: me, atomicRequired: true, calls: chunk.map(directCall),
+        }] });
+        const id = typeof res === 'string' ? res : (res && res.id);
+        const rcpt = await waitForCalls(id);
+        if (rcpt.failed) { log('  the wallet reported this batch failed; nothing in it moved.', 'bad'); break; }
+        sent += chunk.length;
+        log('  done: ' + chunk.length + ' delivered' + (rcpt.hash ? '' : ''), 'ok', rcpt.hash);
+      } catch (e) {
+        log('  stopped: ' + explainCallError(e), 'bad'); break;
+      }
+      if (stopFlag) { log('Stopped.', 'warn'); break; }
+    }
+    log('Finished. ' + sent + ' delivered' + (skippedRows.length ? ', ' + skippedRows.length + ' left out' : '') + '.', 'ok');
+  }
+  async function waitForCalls(id) {
+    for (let i = 0; i < 120; i++) {
+      let st;
+      try { st = await window.ethereum.request({ method: 'wallet_getCallsStatus', params: [id] }); }
+      catch (e) { return { failed: false, hash: null }; }   // a wallet that does not report status: assume it went through
+      const code = st && (typeof st.status === 'number' ? st.status : st.status === 'CONFIRMED' ? 200 : st.status === 'PENDING' ? 100 : 100);
+      const receipts = (st && st.receipts) || [];
+      if (code >= 200) {
+        const hash = receipts.length ? receipts[receipts.length - 1].transactionHash : null;
+        const failed = code >= 400 || receipts.some(r => r.status === '0x0' || r.status === 0);
+        return { failed, hash };
+      }
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    return { failed: false, hash: null };
+  }
 
   // ---- skipped list export, in the same format the page accepts ----
   $('export').addEventListener('click', () => {
