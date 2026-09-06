@@ -20,7 +20,7 @@ One contract, three functions. It holds nothing: every transfer is `transferFrom
 only move what you approved, inside the transaction you signed. **No owner, no upgrade path, no fees, no
 pause.** If you want it to stop, stop calling it.
 
-Deployed at [`0x3159F3AbF0235eaCedfF866312Cb1BB335D6f80E`](https://explorer.testnet.chain.robinhood.com/address/0x3159F3AbF0235eaCedfF866312Cb1BB335D6f80E),
+Deployed at [`0x91949D7328387A3613b29E56f6979Ae893ccd23C`](https://explorer.testnet.chain.robinhood.com/address/0x91949D7328387A3613b29E56f6979Ae893ccd23C),
 verified, runtime bytecode byte-for-byte equal to what this repository builds.
 
 ### Modes
@@ -146,8 +146,8 @@ moved".
 ## Build, test, deploy
 
     forge build
-    forge test                 # 78 contract tests
-    npm install && npm test    # 97 browser tests, every answer mocked, no network
+    forge test                 # 82 contract tests
+    npm install && npm test    # 114 browser tests, every answer mocked, no network
     ./test.sh                  # all of it
 
 The browser tests drive the real pages in headless Chromium and answer every RPC, explorer and price request
@@ -185,9 +185,10 @@ what makes Check's previews real; `debug_traceCall` and `eth_createAccessList` a
 
 ## Reviews
 
-Six internal review passes and two external audits, each by a different model given the code and no other
-context. The first found 8 High, 4 Medium and 3 Low; the second, run against the fixes, found 6 High, 5 Medium
-and 1 Low. All are fixed, and both are published unedited in [`docs/`](docs/) — including the first audit's
+Six internal review passes and three external audits, each by a different model given the code and no other
+context. The first found 8 High, 4 Medium and 3 Low; the second, run against those fixes, found 6 High, 5
+Medium and 1 Low; the third found 4 High and 1 Medium. All are fixed, and all three are published unedited in
+[`docs/`](docs/) — including the first audit's
 finding that a bug I had dismissed in a code comment as deliberate was in fact a double-payment path, and the
 second's finding that the Check page was printing safety conclusions on the strength of function names.
 

@@ -130,7 +130,7 @@
 (() => {
   // ---- chain config; BulkSend addresses are filled in after each deploy ----
   const CHAINS = {
-    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '0x3159f3abf0235eacedff866312cb1bb335d6f80e' },
+    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '0x91949d7328387a3613b29e56f6979ae893ccd23c' },
     4663:  { name: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com', bulk: '{{BULKSEND_MAINNET}}' },
   };
   const BULK_ABI = [
@@ -1080,10 +1080,21 @@
   const BULK_IFACE = new ethers.Interface(BULK_ABI);
   function readBatchReceipt(rc, chunk, bulkAddr) {
     const skippedIdx = new Set(); const notes = []; let sent = 0, skipped = 0, ambiguous = false;
+    // A recipient's receive hook runs in the middle of the batch, and a hostile one used to be able to call
+    // BulkSend again and emit real events from the real address naming the row it was being paid for. The
+    // contract now refuses to run inside itself, and this reads the receipt as though it did not: every event
+    // has to be about this token, from this sender, and the numbers have to add up to the batch that was sent.
+    const token = String($('token').value.trim()).toLowerCase();
+    const mine = String(me || '').toLowerCase();
+    const wantSummary = std() === '721' ? 'Airdrop721' : std() === '1155' ? 'Airdrop1155' : 'Airdrop20';
+    let summaries = 0;
     for (const l of rc.logs) {
       if (String(l.address).toLowerCase() !== String(bulkAddr).toLowerCase()) continue;   // only this contract's own events count
       let p; try { p = BULK_IFACE.parseLog(l); } catch (e) { continue; }
       if (!p) continue;
+      const evToken = String(p.args.token || '').toLowerCase();
+      const evFrom = String(p.args.from || '').toLowerCase();
+      if (evToken !== token) { ambiguous = true; continue; }   // an event about some other token is not ours
       if (p.name === 'Skipped') {
         skipped++;
         // Match on the id or amount too, and use each row once: a wallet may appear more than once in a
@@ -1095,9 +1106,14 @@
         if (idx >= 0) skippedIdx.add(idx);
         else ambiguous = true;   // an event we cannot tie to a row: do not guess which one it was
         notes.push(['  skipped ' + p.args.to + ': ' + decodeReason(p.args.reason), 'warn']);
-      } else if (p.name.startsWith('Airdrop')) { sent = Number(p.args.sent); }
+      } else if (p.name.startsWith('Airdrop')) {
+        if (p.name !== wantSummary || (mine && evFrom !== mine)) { ambiguous = true; continue; }
+        summaries++; sent = Number(p.args.sent);
+      }
     }
     if (skippedIdx.size !== skipped) ambiguous = true;
+    if (summaries !== 1) ambiguous = true;                       // one batch, one summary
+    if (sent + skipped !== chunk.length) ambiguous = true;       // and it has to describe this batch
     return {
       sent, skipped, ambiguous, notes,
       delivered: chunk.filter((r, i) => !skippedIdx.has(i)),
@@ -1295,6 +1311,33 @@
     // Anything that fails is left out of the batch, which gives the "skip the bad ones" behaviour without a contract.
     if (deliveryPath() === 'wallet') {
       const rp = new ethers.JsonRpcProvider(cfg().rpc); const good = [], bad = [];
+      // The wallet sends a whole chunk as one atomic transaction, so the honest preview is the whole chunk
+      // run in sequence, not each call against the same untouched state. A token with a per-transaction
+      // rule, a cooldown, or a receiver that accepts once and then refuses, passes the isolated check and
+      // fails the real one. eth_simulateV1 runs them in order and reports where it stops.
+      const bs = batchSize();
+      try {
+        for (let i = 0; i < ordered.length; i += bs) {
+          const chunk = ordered.slice(i, i + bs);
+          const res = await rp.send('eth_simulateV1', [{
+            blockStateCalls: [{ calls: chunk.map(r => { const c = directCall(r); return { from: me, to: c.to, data: c.data, value: '0x0' }; }) }],
+            traceTransfers: false, validation: false,
+          }, 'latest']);
+          const calls = (res && res[0] && res[0].calls) || [];
+          const stopAt = calls.findIndex(c => c && c.status !== '0x1');
+          if (stopAt >= 0) {
+            const row = chunk[stopAt];
+            const why = decodeReason((calls[stopAt].error && calls[stopAt].error.data) || calls[stopAt].returnData || '0x');
+            const which = Math.floor(i / bs) + 1;
+            log('Run in order, as your wallet would send them, transaction ' + which + ' stops at ' + row.to + ': ' + why, 'bad');
+            log('Everything in that transaction is atomic, so none of it would land, including the transfers before this one. Remove that recipient, or lower the recipients per transaction so it is not in the same transaction as the others.', 'bad');
+            return { ok: false, why: 'transaction ' + which + ' would fail at ' + row.to + ': ' + why, willDeliver: 0, willSkip: 0, good: [], bad: [{ row, why }], list: ordered };
+          }
+        }
+        if (verbose) log('Run in order as one transaction per batch: every transfer holds.', 'ok');
+      } catch (e) {
+        if (verbose) log('This node would not run the whole batch in order (' + String(e.shortMessage || e.message).slice(0, 60) + '), so each transfer was checked on its own instead. A token whose behaviour depends on what happened earlier in the same transaction would not be caught by that.', 'warn');
+      }
       for (let i = 0; i < ordered.length; i++) {
         const row = ordered[i]; const c = directCall(row);
         if (verbose && ordered.length > 40 && i % 25 === 0 && i) log('  checked ' + i + ' of ' + ordered.length + ' …');
@@ -1429,6 +1472,7 @@
         base.skippedBefore ? 'Left out as already delivered: ' + base.skippedBefore : '',
         base.heldBack ? 'Held back until an earlier batch can be read: ' + base.heldBack : '',
         'Sent by: ' + (path === 'wallet' ? 'your own wallet, no approval needed' : 'the BulkSend contract you approved'),
+        batches > 1 ? 'Checked against the chain as it is now. Each transaction is checked again just before it goes out, because earlier ones change what comes after.' : '',
         'Order: ' + (std() === '20' ? 'as listed' : 'lowest token id first'),
         '',
         ...bounds.slice(0, 8),
@@ -1451,6 +1495,14 @@
       for (let i = 0; i < list.length; i += bs) {
         if (!(await onSelectedChain())) { log('Stopped: the wallet is no longer on the selected network.', 'bad'); break; }
         const chunk = list.slice(i, i + bs); const [fn, args] = callArgs(chunk);
+        // The test run measured the chain as it was before any of this. Earlier batches have changed it, and
+        // so has everyone else, so each batch is checked again against the state it will actually meet.
+        if (i > 0) {
+          try {
+            const res = await bulk[fn].staticCall(...args);
+            if (Number(res[0]) === 0) { log('Stopped before batch ' + (Math.floor(i / bs) + 1) + ': as the chain stands now, none of it would be delivered. Nothing further was sent.', 'bad'); break; }
+          } catch (e) { log('Stopped before batch ' + (Math.floor(i / bs) + 1) + ': ' + explainCallError(e) + '. The chain has changed since the test run, so nothing further was sent.', 'bad'); break; }
+        }
         log('Batch ' + (Math.floor(i / bs) + 1) + ' of ' + Math.ceil(list.length / bs) + ': ' + chunk.length + ' recipients …');
         const tx = await bulk[fn](...args);
         // Written down before the wait: if this tab closes now, the next visit reads the receipt instead of
@@ -1520,10 +1572,21 @@
           res = await eth.request({ method: 'wallet_sendCalls', params: [{ version: '2.0.0', chainId: hexChain(), from: me, atomicRequired: true, calls: chunk.map(directCall) }] });
         } catch (e1) {
           const code = e1 && (e1.code ?? (e1.info && e1.info.error && e1.info.error.code));
-          if (code === 5740 && chunk.length > 2) {   // too large for this wallet: halve and carry on
+          if (code === 5740 && !lenient()) {
+            // You agreed to one transaction where either everything lands or nothing does. Splitting it here
+            // would deliver half a list under a promise that said it would not, so nothing more is sent.
+            log('  your wallet says that batch is too large for it, and you chose "all or nothing", which only holds inside a single transaction. Nothing has been sent. Lower the recipients per transaction until the whole list fits in one, or choose "Keep going".', 'bad');
+            break;
+          }
+          if (code === 5740 && chunk.length > 2) {
+            // Changing the transaction boundaries changes what was agreed to: a different number of
+            // signatures, a different split, a different partial-run outcome. So the size is lowered and the
+            // run stops here, to be checked and confirmed again rather than quietly continuing under the old
+            // agreement. Restarting from inside the send would also deadlock on the lock this run holds.
             const half = Math.max(2, Math.floor(chunk.length / 2));
-            log('  that batch was too large for your wallet, so it is being split into ' + half + ' at a time.', 'warn');
-            $('batch').value = String(half); return await sendViaWallet({ good: list.slice(i), bad: pre.bad, list: pre.list });
+            $('batch').value = String(half);
+            log('  that batch was too large for your wallet, so nothing more was sent. The size is now ' + half + '. Press Send again and you will see a fresh check and confirmation for the new split.', 'warn');
+            break;
           }
           throw e1;
         }
@@ -1642,6 +1705,8 @@
     return msg.slice(0, 220);
   }
   window.__decodeReason = decodeReason;   // used by the page's own checks
+  window.__readBatchReceipt = readBatchReceipt;
+  window.ethers = window.ethers || ethers;
 
   // a link to the verified source, so "trust me" is checkable
   (function contractLink() {

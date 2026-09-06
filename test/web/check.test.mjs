@@ -336,6 +336,49 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   await page.close();
 }
 
+// ---- T-H-03: a batch is a batch, and the dangerous call is rarely the first -----
+{
+  const page = await open(browser, {});
+  const approval = '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + 'f'.repeat(64);
+  const t = await ask(page, JSON.stringify([
+    { to: NFT, data: '0x06fdde03' },
+    { to: TOK, data: approval },
+  ]), ME, 6000);
+  check('T-H-03 every call in a pasted batch is read, not just the first',
+    /Call 2 of 2/.test(t), t.slice(0, 300));
+  check('T-H-03 and the unlimited approval hiding in the second one is called out',
+    /unlimited approval/i.test(t), t.slice(0, 500));
+  check('T-H-03 with the batch itself named as a batch', /is 2 calls, not one/.test(t), t.slice(0, 200));
+  await page.close();
+}
+
+// ---- T-H-03: bytes nobody is shown -----------------------------------------------
+{
+  const page = await open(browser, {});
+  const approval = '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + word(5).slice(2);
+  const t = await ask(page, JSON.stringify({ to: TOK, data: approval + word(999).slice(2) }), ME, 6000);
+  check('T-H-03 trailing bytes beyond the decoded arguments are reported',
+    /32 bytes nobody is shown/.test(t), t.slice(0, 400));
+  check('T-H-03 and the raw call is always available', /raw call, exactly as it would be sent/.test(t), t.slice(0, 500));
+  await page.close();
+}
+
+// ---- T-H-03: calls carried inside calls ------------------------------------------
+{
+  const page = await open(browser, {});
+  const inner = await page.evaluate(([spender]) => {
+    const iface = new window.ethers.Interface(['function approve(address,uint256)', 'function multicall(bytes[])']);
+    const a = iface.encodeFunctionData('approve', [spender, (1n << 256n) - 1n]);
+    return iface.encodeFunctionData('multicall', [[a]]);
+  }, [A(0x1111)]);
+  const t = await ask(page, JSON.stringify({ to: TOK, data: inner }), ME, 6000);
+  check('T-H-03 a call carried inside a multicall is decoded, not shown as hex',
+    /Calls carried inside this one/.test(t), t.slice(0, 300));
+  check('T-H-03 and an unlimited approval one level down still gets its warning',
+    /inner call is an unlimited approval/.test(t), t.slice(0, 600));
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

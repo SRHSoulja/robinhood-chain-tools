@@ -1,0 +1,16 @@
+{
+  "name": "wc-bundle",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Bundles the WalletConnect provider into web/wc.js so the page loads it from its own origin.",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild entry.js --bundle --format=esm --minify --platform=browser --target=es2020 --outfile=../wc.js"
+  },
+  "dependencies": {
+    "@walletconnect/ethereum-provider": "2.24.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}

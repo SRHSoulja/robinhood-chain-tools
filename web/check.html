@@ -513,7 +513,7 @@
       case 'withdraw()': return 'Take the contract’s balance out.';
       case 'withdraw(uint256)': return 'Take ' + ethers.formatEther(a[0]) + ' ETH out of the contract.';
       case 'deposit()': return 'Put ETH into the contract.';
-      case 'multicall(bytes[])': return 'Run ' + a[0].length + ' separate calls on ' + what + ' in one transaction. Each one is listed below.';
+      case 'multicall(bytes[])': return 'Run ' + a[0].length + ' separate calls on ' + what + ' in one transaction.';
       case 'execute(address,uint256,bytes)': return 'Have ' + what + ' call ' + who(a[0]) + ' with ' + ethers.formatEther(a[1]) + ' ETH attached.';
       case 'setBaseURI(string)': return 'Change where the art and metadata for ' + what + ' is served from.';
       default: break;
@@ -532,7 +532,15 @@
     const tryWith = (iface, source) => {
       try {
         const tx = iface.parseTransaction({ data });
-        if (tx) return { name: tx.name, signature: tx.fragment.format('sighash'), args: tx.args, fragment: tx.fragment, source };
+        if (!tx) return null;
+        // Decoding ignores anything after the arguments it expected. A contract reading msg.data directly
+        // does not, so bytes nobody is shown are bytes that can carry meaning.
+        let extra = 0;
+        try {
+          const canonical = iface.encodeFunctionData(tx.fragment, tx.args);
+          if (data.length > canonical.length) extra = (data.length - canonical.length) / 2;
+        } catch (e) {}
+        return { name: tx.name, signature: tx.fragment.format('sighash'), args: tx.args, fragment: tx.fragment, source, extra };
       } catch (e) {}
       return null;
     };
@@ -540,6 +548,42 @@
     const r = tryWith(KNOWN_IFACE, 'a standard this page recognises');
     if (r) return r;
     return { unknown: true, selector: data.slice(0, 10), rest: data.slice(10) };
+  }
+
+  // ---------- calls carried inside other calls ----------
+  // multicall, execute and upgradeToAndCall carry whole calls in a bytes argument. Rendering that argument as
+  // a hex blob under a card titled "everything it is asking for" is how an unlimited approval travels
+  // unremarked. Decoded to a bounded depth, with the outer target carried down where the standard implies it.
+  function innerCalls(parsed, target) {
+    if (!parsed || !parsed.args) return [];
+    const out = [];
+    const push = (to, data, value) => { if (typeof data === 'string' && data.length >= 10) out.push({ to, data, value: value || 0n }); };
+    if (parsed.signature === 'multicall(bytes[])') for (const d of parsed.args[0]) push(target, d);
+    if (parsed.signature === 'execute(address,uint256,bytes)') push(parsed.args[0], parsed.args[2], parsed.args[1]);
+    if (parsed.signature === 'upgradeToAndCall(address,bytes)') push(parsed.args[0], parsed.args[1]);
+    return out;
+  }
+  // Renders each nested call the way the outer one is described, so a warning cannot hide one level down.
+  async function renderInner(parsed, target, depth) {
+    if ((depth || 0) > 3) return null;
+    const inner = innerCalls(parsed, target && target.address);
+    if (!inner.length) return null;
+    const rows = [];
+    for (const c of inner) {
+      const t = ethers.isAddress(String(c.to || '')) ? await readAddress(c.to).catch(() => null) : null;
+      const p = parseData(c.data, t && t.abi);
+      const sentence = p.unknown || p.empty ? null : describeCall(p, { target: t });
+      rows.push(h('div', { class: 'move' }, [
+        h('div', { text: sentence || (p.unknown ? 'A call this page cannot name: ' + p.selector : p.signature) }),
+        h('div', { class: 'mut mono', text: 'to ' + short(String(c.to || '?')) + (c.value ? '  with ' + ethers.formatEther(c.value) + ' ETH' : '') }),
+        (p.signature === 'approve(address,uint256)' && UNLIMITED(p.args[1]))
+          ? h('div', { class: 'bad', text: 'This inner call is an unlimited approval.' }) : null,
+        (p.signature === 'setApprovalForAll(address,bool)' && p.args[1])
+          ? h('div', { class: 'bad', text: 'This inner call hands over a whole collection.' }) : null,
+        await renderInner(p, t, (depth || 0) + 1),
+      ]));
+    }
+    return card('Calls carried inside this one', rows);
   }
 
   // ---------- what a receipt or a simulation actually moved ----------
@@ -694,7 +738,8 @@
       card(rc ? 'What it announced moving' : 'What moved',
         renderMovements(moves, viewer || (tx && tx.from), viewer ? null : 'the sender\u2019s wallet',
           rc ? null : 'This transaction has not been mined, so there is no receipt to read and no way to say what it moved. It may still be waiting, and it may still do everything it was asked to do.')),
-      parsed && parsed.args && parsed.args.length ? card('Everything it was asked to do', renderArgs(parsed, target)) : null,
+      parsed && parsed.args && parsed.args.length ? card('The arguments it was given', renderArgs(parsed, target)) : null,
+      await renderInner(parsed, target, 0),
       target ? contractCard(target, 'The contract it called') : null,
     );
   }
@@ -825,6 +870,11 @@
     if (sim && !sim.ok)
       warnings.push(['bad', 'This would fail right now', decodeRevert(sim.reason, iface)]);
     if (stale(seq)) return;
+    if (parsed.extra)
+      warnings.push(['bad', 'This call carries ' + parsed.extra + ' bytes nobody is shown',
+        'The arguments above account for all of it except those bytes. A contract that reads its own calldata directly can act on them, and no wallet or explorer will show them to you. Treat this as a call that means more than it says.']);
+    if (parsed.signature === 'multicall(bytes[])' || parsed.signature === 'execute(address,uint256,bytes)')
+      warnings.push(['warn', 'This call carries other calls inside it', 'They are listed below, decoded the same way. Read those, not just this one.']);
     if (!from)
       warnings.push(['warn', 'Nobody was named as the sender', 'The preview ran as the zero address, so anything that depends on who is asking, an allowance, a balance, an owner check, may come out differently for you. Put your address in the box above.']);
     say('');
@@ -841,11 +891,18 @@
         warnings.map(([cls, title, body]) => note(cls, title, body)),
       ),
       sim ? card('What it would announce moving', renderMovements(moves, from)) : null,
-      parsed.args && parsed.args.length ? card('Everything it is asking for', renderArgs(parsed, target)) : null,
-      parsed.unknown ? card('The raw call', [
-        kv([['Selector', mono(parsed.selector)], ['Length', String((data.length - 10) / 2) + ' bytes of arguments']]),
-        h('pre', { text: (parsed.rest.match(/.{1,64}/g) || []).join('\n') }),
-      ]) : null,
+      parsed.args && parsed.args.length ? card('The arguments it is asking for', renderArgs(parsed, target)) : null,
+      await renderInner(parsed, target, 0),
+      // Always available, decoded or not: a friendly sentence is a reading of the bytes, not a replacement.
+      card('The raw call, exactly as it would be sent', [
+        kv([
+          ['To', link(to, to)],
+          ['Selector', mono(String(data).slice(0, 10))],
+          ['Length', String(Math.max(0, (String(data).length - 2) / 2)) + ' bytes'],
+          parsed.extra ? ['Not accounted for', String(parsed.extra) + ' bytes beyond the arguments shown above'] : null,
+        ]),
+        h('pre', { text: (String(data).slice(2).match(/.{1,64}/g) || []).join('\n') }),
+      ]),
       contractCard(target, 'The contract you would be calling'),
     );
   }
@@ -858,8 +915,14 @@
     if (!s) return { kind: 'empty' };
     if (s.startsWith('{') || s.startsWith('[')) {
       try {
-        const j = JSON.parse(s); const o = Array.isArray(j) ? j[0] : (j.params ? j.params[0] : j);
-        if (o && (o.to || o.data)) return { kind: 'call', to: o.to, data: o.data || o.input || '0x', from: o.from, value: o.value };
+        const j = JSON.parse(s);
+        const list = Array.isArray(j) ? j : (Array.isArray(j.params) ? j.params : (Array.isArray(j.calls) ? j.calls : [j]));
+        const calls = list
+          .map((o) => (o && o.params && Array.isArray(o.params) ? o.params[0] : o))
+          .filter((o) => o && (o.to || o.data))
+          .map((o) => ({ to: o.to, data: o.data || o.input || '0x', from: o.from, value: o.value }));
+        if (calls.length === 1) return Object.assign({ kind: 'call' }, calls[0]);
+        if (calls.length > 1) return { kind: 'batch', calls };
       } catch (e) { return { kind: 'bad', why: 'That looks like JSON but it will not parse.' }; }
     }
     const url = s.match(/(?:tx|address|token)\/(0x[0-9a-fA-F]{40,64})/);
@@ -888,6 +951,40 @@
       if (parsedInput.kind === 'bad') { say(parsedInput.why, 'bad'); return; }
       if (parsedInput.kind === 'tx') return await showTransaction(parsedInput.hash, from, seq);
       if (parsedInput.kind === 'address') return await showAddress(parsedInput.address, seq);
+      if (parsedInput.kind === 'batch') {
+        say('Reading all ' + parsedInput.calls.length + ' calls…');
+        const cards = [note('warn', 'This is ' + parsedInput.calls.length + ' calls, not one',
+          'Everything below is part of the same request. A batch is only as safe as its most dangerous call, and that is rarely the first one.')];
+        for (let i = 0; i < parsedInput.calls.length && i < 20; i++) {
+          const c = parsedInput.calls[i];
+          if (!ethers.isAddress(String(c.to || ''))) { cards.push(note('bad', 'Call ' + (i + 1) + ' has no valid destination', String(c.to || '(none)'))); continue; }
+          const t = await readAddress(c.to).catch(() => null);
+          if (stale(seq)) return;
+          const p = parseData(c.data, t && t.abi);
+          let sim = null; try { sim = await simulate({ to: c.to, data: c.data, from: from || c.from, value: c.value }); } catch (e) {}
+          if (stale(seq)) return;
+          const sentence = p.unknown || p.empty ? null : describeCall(p, { target: t });
+          cards.push(card('Call ' + (i + 1) + ' of ' + parsedInput.calls.length, [
+            h('p', { class: 'lede', text: sentence || (p.empty ? 'A plain transfer of ETH.' : p.unknown ? 'A call this page cannot name: ' + p.selector : p.signature) }),
+            h('div', {}, [
+              sim ? h('span', { class: 'pill ' + (sim.ok ? 'ok' : 'bad'), text: sim.ok ? 'would succeed' : 'would fail' }) : null,
+              h('span', { class: 'pill', text: 'to ' + short(String(c.to)) }),
+              c.value && BigInt(c.value) > 0n ? h('span', { class: 'pill warn', text: ethers.formatEther(BigInt(c.value)) + ' ETH attached' }) : null,
+            ]),
+            (p.signature === 'approve(address,uint256)' && UNLIMITED(p.args[1]))
+              ? note('bad', 'This call is an unlimited approval', 'It lets ' + short(p.args[0]) + ' take that token at any point in future, in any amount.') : null,
+            (p.signature === 'setApprovalForAll(address,bool)' && p.args[1])
+              ? note('bad', 'This call hands over a whole collection', 'Every one you hold now and every one you ever hold.') : null,
+            p.extra ? note('bad', 'This call carries ' + p.extra + ' bytes nobody is shown', 'The arguments account for all of it except those bytes.') : null,
+            await renderInner(p, t, 0),
+          ]));
+        }
+        if (parsedInput.calls.length > 20) cards.push(note('warn', 'Only the first 20 calls are shown', 'There are ' + parsedInput.calls.length + ' in total.'));
+        if (stale(seq)) return;
+        say('');
+        out(...cards);
+        return;
+      }
       if (parsedInput.kind === 'call') {
         if (!ethers.isAddress(parsedInput.to || '')) { say('That call has no valid "to" address in it.', 'bad'); return; }
         return await showCall(ethers.getAddress(parsedInput.to), parsedInput.data, from || (ethers.isAddress(parsedInput.from || '') ? ethers.getAddress(parsedInput.from) : null), parsedInput.value, seq);
@@ -959,7 +1056,8 @@
     if (q.get('from')) $('from').value = q.get('from');
     if (q.get('q')) { $('input').value = q.get('q'); $('netPill').textContent = cfg().name; go(); }
   } catch (e) {}
-  window.__check = { readInput, parseData, describeCall, decodeRevert, selectorsIn, powersOf, knownFunctions };
+  window.__check = { readInput, parseData, describeCall, decodeRevert, selectorsIn, powersOf, knownFunctions, innerCalls };
+  window.ethers = window.ethers || ethers;
 })();
 </script>
 </body>

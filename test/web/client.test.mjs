@@ -47,7 +47,16 @@ function chainAnswer(O) {
       case 'eth_getBlockByNumber': return { number: '0x1000', hash: '0x' + '11'.repeat(32), parentHash: '0x' + '22'.repeat(32), timestamp: '0x1', gasLimit: '0x1', gasUsed: '0x0', miner: A(0), baseFeePerGas: '0x989680', transactions: [] };
       case 'wallet_getCapabilities': return O.walletBatch ? { '0xb626': { atomic: { status: 'supported' } } } : {};
       case 'wallet_switchEthereumChain': case 'wallet_addEthereumChain': return null;
-      case 'wallet_sendCalls': return { id: '0xbatch' };
+      case 'wallet_sendCalls': {
+        if (O.tooLarge) { const e = new Error('batch too large'); e.code = 5740; throw e; }
+        return { id: '0xbatch' };
+      }
+      case 'eth_simulateV1': {
+        const calls = params[0].blockStateCalls[0].calls || [];
+        return [{ calls: calls.map((c, i) => (O.sequenceFailsAt === i
+          ? { status: '0x0', gasUsed: '0x1', returnData: '0x', logs: [], error: { message: 'execution reverted', data: '0x7e273289' + (99).toString(16).padStart(64, '0') } }
+          : { status: '0x1', gasUsed: '0x1', returnData: '0x', logs: [] })) }];
+      }
       case 'wallet_getCallsStatus': return O.callsStatus || { status: 200, receipts: [{ transactionHash: '0x' + 'ab'.repeat(32), status: '0x1', logs: [] }] };
       case 'eth_sendTransaction': return '0x' + 'cd'.repeat(32);
       case 'eth_getTransactionReceipt': {
@@ -125,7 +134,7 @@ async function open(browser, opts = {}) {
     if (url.includes('rpc.') && req.method() === 'POST') {
       let body; try { body = JSON.parse(req.postData() || '{}'); } catch { body = {}; }
       const one = (r) => { try { const result = answer(r.method, r.params || []); return { jsonrpc: '2.0', id: r.id, result }; }
-                           catch (e) { return { jsonrpc: '2.0', id: r.id, error: { code: 3, message: 'execution reverted', data: e.revertData } }; } };
+                           catch (e) { return { jsonrpc: '2.0', id: r.id, error: { code: e.code || 3, message: String(e.message || 'execution reverted'), data: e.revertData } }; } };
       const out = Array.isArray(body) ? body.map(one) : one(body);
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify(out) });
     }
@@ -601,6 +610,67 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   await page.click('#preflight'); await page.waitForTimeout(5000);
   check('EIP-7702 an edition to an upgraded wallet is called impossible, not user error',
     /cannot receive one from anybody/.test(await text(page, '#log')), (await text(page, '#log')).slice(0, 400));
+  await page.close();
+}
+
+// ---- T-H-01: a receipt that does not add up is never acted on -------------------
+{
+  const page = await open(browser, { approved: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, ED, '1155');
+  const BULK = await bulkAddress(page);
+  const injected = await page.evaluate(([bulk, ed, me]) => {
+    // One row, and a receipt carrying a Skipped naming that row plus two summaries: exactly what a hostile
+    // receiver calling BulkSend from its own receive hook used to be able to produce.
+    const iface = new window.ethers.Interface([
+      'event Skipped(address indexed token, address indexed to, uint256 id, uint256 amount, bytes reason)',
+      'event Airdrop1155(address indexed token, address indexed from, uint256 sent, uint256 skipped)',
+    ]);
+    const to = '0x00000000000000000000000000000000000000c9';
+    const s1 = iface.encodeEventLog('Skipped', [ed, to, 7n, 3n, '0x']);
+    const inner = iface.encodeEventLog('Airdrop1155', [ed, me, 0n, 1n]);
+    const outer = iface.encodeEventLog('Airdrop1155', [ed, me, 1n, 0n]);
+    const rc = { logs: [
+      { address: bulk, topics: s1.topics, data: s1.data },
+      { address: bulk, topics: inner.topics, data: inner.data },
+      { address: bulk, topics: outer.topics, data: outer.data },
+    ] };
+    const chunk = [{ to, id: 7n, amount: 3n, k: 'x#1' }];
+    const r = window.__readBatchReceipt(rc, chunk, bulk);
+    return { ambiguous: r.ambiguous, sent: r.sent, skipped: r.skipped, delivered: r.delivered.length };
+  }, [BULK, ED, A(0xdead)]);
+  check('T-H-01 a receipt whose numbers do not describe the batch is refused',
+    injected && injected.ambiguous === true, JSON.stringify(injected));
+  await page.close();
+}
+
+// ---- T-H-02: all or nothing is not renegotiated after you agree to it -----------
+{
+  const page = await open(browser, { walletBatch: true, tooLarge: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, Array.from({ length: 4 }, (_, i) => A(0xc10 + i) + ',' + (i + 1)).join('\n'));
+  await page.selectOption('#mode', 'strict'); await page.fill('#batch', '50'); await page.waitForTimeout(400);
+  await page.click('#send'); await page.waitForTimeout(7000);
+  const sent = await page.evaluate(() => window.__sent.length);
+  check('T-H-02 a wallet that refuses the batch does not get a smaller one in strict mode', sent <= 1, 'requests: ' + sent);
+  check('T-H-02 and the reason names the promise being kept',
+    /all or nothing/i.test(await text(page, '#log')), (await text(page, '#log')).slice(-260));
+  await page.close();
+}
+
+// ---- T-M-01: the sequence is simulated, not each call against untouched state ----
+{
+  const page = await open(browser, { walletBatch: true, sequenceFailsAt: 2 });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, Array.from({ length: 4 }, (_, i) => A(0xd10 + i) + ',' + (i + 1)).join('\n'));
+  await page.click('#preflight'); await page.waitForTimeout(7000);
+  const logText = await text(page, '#log');
+  check('T-M-01 a transfer that only fails partway through the sequence is caught',
+    /Run in order/.test(logText) && /stops at/.test(logText), logText.slice(0, 300));
+  check('T-M-01 and the page says the whole transaction would be lost, not just that row',
+    /none of it would land/.test(logText), logText.slice(0, 400));
   await page.close();
 }
 

@@ -55,6 +55,30 @@ contract BulkSend {
     error OutOfGasForBatch(uint256 index);
     error GasOutOfRange(uint256 given, uint256 min, uint256 max);
     error GasIsForLenientOnly();
+    error Reentered();
+
+    /// @notice Refuses to run inside itself.
+    /// @dev Not to protect this contract's own state, which does not exist. A recipient's receive hook runs
+    ///      in the middle of a batch, and a hook that calls back in can emit real `Skipped` and `Airdrop*`
+    ///      events from this address, naming whatever row it likes. The client reads the receipt to decide who
+    ///      was paid, so a recipient able to write into that receipt can have itself recorded as skipped after
+    ///      being paid, and collect again on the retry. The lock costs about 100 gas and is transient: it is
+    ///      gone when the transaction ends, so this contract still stores nothing between transactions.
+    ///      A recipient whose hook legitimately calls back in is skipped in lenient mode rather than trusted.
+    /// keccak256("bulksend.reentrancy.v1") - 1, written out because inline assembly takes only literals.
+    uint256 private constant REENTRANCY_SLOT = 0x79981972fbb1dd6496d9a6ffdb7f04a877acc052e10223665ed2fec026626fca;
+
+    modifier nonReentrant() {
+        assembly ("memory-safe") {
+            if tload(REENTRANCY_SLOT) {
+                mstore(0x00, 0xb5dfd9e5)   // Reentered()
+                revert(0x1c, 0x04)
+            }
+            tstore(REENTRANCY_SLOT, 1)
+        }
+        _;
+        assembly ("memory-safe") { tstore(REENTRANCY_SLOT, 0) }
+    }
 
     /// @dev Carried as one memory pointer rather than three stack slots: with two calldata arrays, a mode,
     ///      a safety flag and a stipend, the legacy code generator runs out of stack inside the loop.
@@ -100,6 +124,7 @@ contract BulkSend {
     /// @notice Send one ERC-721 id to each recipient. `safe` uses safeTransferFrom (recipient contracts must accept).
     function airdrop721(address token, address[] calldata to, uint256[] calldata ids, bool safe, bool lenient)
         external
+        nonReentrant
         returns (uint256 sent, uint256 skipped)
     {
         return _airdrop721(token, to, ids, Opts(safe, lenient, DEFAULT_GAS));
@@ -113,7 +138,7 @@ contract BulkSend {
         bool safe,
         bool lenient,
         uint256 gasPerTransfer
-    ) external returns (uint256 sent, uint256 skipped) {
+    ) external nonReentrant returns (uint256 sent, uint256 skipped) {
         return _airdrop721(token, to, ids, Opts(safe, lenient, _checkGas(gasPerTransfer, lenient)));
     }
 
@@ -164,7 +189,7 @@ contract BulkSend {
         uint256[] calldata ids,
         uint256[] calldata amounts,
         bool lenient
-    ) external returns (uint256 sent, uint256 skipped) {
+    ) external nonReentrant returns (uint256 sent, uint256 skipped) {
         return _airdrop1155(token, to, ids, amounts, Opts(false, lenient, DEFAULT_GAS));
     }
 
@@ -176,7 +201,7 @@ contract BulkSend {
         uint256[] calldata amounts,
         bool lenient,
         uint256 gasPerTransfer
-    ) external returns (uint256 sent, uint256 skipped) {
+    ) external nonReentrant returns (uint256 sent, uint256 skipped) {
         return _airdrop1155(token, to, ids, amounts, Opts(false, lenient, _checkGas(gasPerTransfer, lenient)));
     }
 
@@ -225,6 +250,7 @@ contract BulkSend {
     ///      undoes whatever it did, in both modes.
     function airdrop20(address token, address[] calldata to, uint256[] calldata amounts, bool lenient)
         external
+        nonReentrant
         returns (uint256 sent, uint256 skipped)
     {
         return _airdrop20(token, to, amounts, Opts(false, lenient, DEFAULT_GAS));
@@ -237,7 +263,7 @@ contract BulkSend {
         uint256[] calldata amounts,
         bool lenient,
         uint256 gasPerTransfer
-    ) external returns (uint256 sent, uint256 skipped) {
+    ) external nonReentrant returns (uint256 sent, uint256 skipped) {
         return _airdrop20(token, to, amounts, Opts(false, lenient, _checkGas(gasPerTransfer, lenient)));
     }
 
