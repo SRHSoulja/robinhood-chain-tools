@@ -18,3 +18,4 @@
 {"label": "v2.oz1155.setApprovalForAll", "bulk": "v2", "tx": "0x97be0910406fafc56684520d6bc6a3fbba173269b232dba5d5dd7dccb030fabc", "status": "0x1", "gasUsed": 51983, "logs": 1}
 {"label": "v2.oz1155.airdrop1155.lenient.deaf+wallets", "bulk": "v2", "tx": "0xc3eea6c1e9c5c1670e6a7c0d4759f141dc258c3f8141a39dd70bf7bda39b69b0", "status": "0x1", "gasUsed": 154138, "logs": 4}
 {"label": "v2.oz721.setApprovalForAll", "bulk": "v2", "tx": "0xef5547ab1241aecfeef05802ed845a12ac29264f41e367fbf361b64fec098069", "status": "0x1", "gasUsed": 51931, "logs": 1}
+{"what":"BulkSend v7 deployed (caller-chosen bounded gas stipend)","address":"0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74","tx":"0x74dc94afeee449c4a02624d9ce0b60447adbfd59e6cd26c59ade9981027124f5","chain":46630,"verified":true,"bytecode_matches_local_build":true,"live_test_tx":"0x7861330adb005302c036e832029348fe259adebb88e9a7abd54fe771fdbf63bf","date":"2026-09-06"}

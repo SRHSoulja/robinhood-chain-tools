@@ -656,6 +656,111 @@ contract BulkSendRealTest is Test {
         assertFalse(ok);   // no receive/fallback: ether cannot be sent to it
         assertEq(address(bulk).balance, 0);
     }
+
+    // ============== the stipend is a caller's choice, inside bounds ==============
+
+    /// The whole point of the parameter: a receiver that honestly costs more than the default is not
+    /// unable to receive, it is expensive. The caller can pay for it instead of being told a lie.
+    function test_chosenGas_deliversARecipientTheDefaultWouldSkip() public {
+        OZ721 t = new OZ721(); t.mintMany(me, 1, 2);
+        HeavyAccepts h = new HeavyAccepts();
+        address[] memory to = new address[](1); to[0] = address(h);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+
+        (uint256 sent, uint256 skipped) = bulk.airdrop721(address(t), to, _range(1, 1), true, true);
+        assertEq(sent, 0); assertEq(skipped, 1); assertEq(t.ownerOf(1), me);   // default stipend: skipped
+
+        uint256[] memory second = new uint256[](1); second[0] = 2;
+        (uint256 sent2, uint256 skipped2) = bulk.airdrop721WithGas(address(t), to, second, true, true, 1_000_000);
+        vm.stopPrank();
+        assertEq(sent2, 1); assertEq(skipped2, 0); assertEq(t.ownerOf(2), address(h));   // paid for: delivered
+    }
+
+    /// Bounds, not a free-for-all. Too low turns an honest list into "skipped"; too high stops being lenient.
+    function test_chosenGas_refusesValuesOutsideTheBounds() public {
+        OZ721 t = new OZ721(); t.mintMany(me, 1, 1);
+        address[] memory to = _to(1, 77);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        uint256 lo = bulk.MIN_GAS(); uint256 hi = bulk.MAX_GAS();
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.GasOutOfRange.selector, 0, lo, hi));
+        bulk.airdrop721WithGas(address(t), to, _range(1, 1), true, true, 0);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.GasOutOfRange.selector, lo - 1, lo, hi));
+        bulk.airdrop721WithGas(address(t), to, _range(1, 1), true, true, lo - 1);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.GasOutOfRange.selector, hi + 1, lo, hi));
+        bulk.airdrop721WithGas(address(t), to, _range(1, 1), true, true, hi + 1);
+        vm.stopPrank();
+        assertEq(t.ownerOf(1), me);
+    }
+
+    /// Strict mode forwards everything and reverts the batch. Accepting a stipend there and ignoring it
+    /// would describe a transaction that does not exist.
+    function test_chosenGas_isRefusedInStrictMode() public {
+        OZ721 t = new OZ721(); t.mintMany(me, 1, 1);
+        OZ1155 m = new OZ1155(); m.mint(me, 1, 1);
+        OZ20 e = new OZ20(); e.mint(me, 1e18);
+        address[] memory to = _to(1, 78);
+        vm.startPrank(me);
+        vm.expectRevert(BulkSend.GasIsForLenientOnly.selector);
+        bulk.airdrop721WithGas(address(t), to, _range(1, 1), true, false, 500_000);
+        vm.expectRevert(BulkSend.GasIsForLenientOnly.selector);
+        bulk.airdrop1155WithGas(address(m), to, _fill(1, 1), _fill(1, 1), false, 500_000);
+        vm.expectRevert(BulkSend.GasIsForLenientOnly.selector);
+        bulk.airdrop20WithGas(address(e), to, _fill(1, 1e18), false, 500_000);
+        vm.stopPrank();
+    }
+
+    /// A bigger stipend must not cost the batch its liveness: the gas hog still gets exactly what it was
+    /// given and no more, and everyone after it is still delivered.
+    function test_chosenGas_stillContainsAGasHog() public {
+        OZ721 t = new OZ721(); t.mintMany(me, 1, 3);
+        address[] memory to = new address[](3);
+        to[0] = _to(1, 79)[0]; to[1] = address(new GasHog()); to[2] = _to(1, 80)[0];
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721WithGas{gas: 9_000_000}(address(t), to, _range(1, 3), true, true, 1_000_000);
+        vm.stopPrank();
+        assertEq(sent, 2); assertEq(skipped, 1);
+        assertEq(t.ownerOf(1), to[0]); assertEq(t.ownerOf(2), me); assertEq(t.ownerOf(3), to[2]);
+    }
+
+    /// The reserve: enough gas for the transfer is not enough gas for the transfer *and* the record of it.
+    /// Here the batch can afford the stipend itself and still stops, because what is left over would not
+    /// cover copying the result and emitting it. The recipient is an ordinary wallet that needs a fraction
+    /// of the stipend, so the stop is about this contract's accounting, not about the recipient.
+    function test_chosenGas_reservesEnoughToRecordTheOutcome() public {
+        OZ721 t = new OZ721(); t.mintMany(me, 1, 2);
+        address[] memory to = _to(1, 81);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.OutOfGasForBatch.selector, 0));
+        bulk.airdrop721WithGas{gas: 130_000}(address(t), to, _range(1, 1), true, true, 100_000);
+        assertEq(t.ownerOf(1), me);
+        uint256[] memory second = new uint256[](1); second[0] = 2;
+        (uint256 sent,) = bulk.airdrop721WithGas{gas: 400_000}(address(t), to, second, true, true, 100_000);
+        vm.stopPrank();
+        assertEq(sent, 1); assertEq(t.ownerOf(2), to[0]);   // the same stipend, with room to record it
+    }
+
+    /// The default entry points are unchanged and still documented by the same numbers.
+    function test_defaults_and_bounds_are_what_the_page_says() public view {
+        assertEq(bulk.DEFAULT_GAS(), 400_000);
+        assertEq(bulk.LENIENT_GAS(), bulk.DEFAULT_GAS());   // the original name still answers
+        assertEq(bulk.MIN_GAS(), 100_000);
+        assertEq(bulk.MAX_GAS(), 5_000_000);
+    }
+
+    /// The other two standards take the same parameter and deliver the same way.
+    function test_chosenGas_worksFor1155And20() public {
+        OZ1155 m = new OZ1155(); m.mint(me, 7, 100);
+        OZ20 e = new OZ20(); e.mint(me, 100e18);
+        address[] memory to = _to(3, 82);
+        vm.startPrank(me);
+        m.setApprovalForAll(address(bulk), true);
+        e.approve(address(bulk), type(uint256).max);
+        (uint256 s1, uint256 k1) = bulk.airdrop1155WithGas(address(m), to, _fill(3, 7), _fill(3, 5), true, 250_000);
+        (uint256 s2, uint256 k2) = bulk.airdrop20WithGas(address(e), to, _fill(3, 2e18), true, 250_000);
+        vm.stopPrank();
+        assertEq(s1, 3); assertEq(k1, 0); assertEq(m.balanceOf(to[2], 7), 5);
+        assertEq(s2, 3); assertEq(k2, 0); assertEq(e.balanceOf(to[2]), 2e18);
+    }
 }
 
 /// A recipient whose receive hook legitimately costs more than the lenient stipend.

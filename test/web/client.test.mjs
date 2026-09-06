@@ -13,6 +13,10 @@ const TOK = '0x2222222222222222222222222222222222222222';
 const ED  = '0x3333333333333333333333333333333333333333';
 const ME  = '0x00000000000000000000000000000000000000Me'.slice(0, 42);
 const A = (n) => '0x' + n.toString(16).padStart(40, '0');
+// the three airdrop entry points and their …WithGas twins, so the mock can answer a simulated batch
+const BULK_SELECTORS = ['0xb097e731', '0x97e763b3', '0xd00a888d', '0x45310558', '0xc0d13d4e', '0xeb0f0b68'];
+const BULK = '0xc6ae3189edae544ed60adf5ec057e338ce224f74';
+const RUN_ME = A(0xdead);
 
 let pass = 0, fail = 0;
 const results = [];
@@ -44,7 +48,17 @@ function chainAnswer(O) {
       case 'wallet_sendCalls': return { id: '0xbatch' };
       case 'wallet_getCallsStatus': return { status: 200, receipts: [{ transactionHash: '0x' + 'ab'.repeat(32), status: '0x1', logs: [] }] };
       case 'eth_sendTransaction': return '0x' + 'cd'.repeat(32);
-      case 'eth_getTransactionReceipt': return { status: '0x1', transactionHash: '0x' + 'cd'.repeat(32), blockNumber: '0x1000', logs: [], gasUsed: '0x1' };
+      case 'eth_getTransactionReceipt': {
+        if (O.noReceipt) return null;
+        const h = String(params[0] || '0x' + 'cd'.repeat(32));
+        // the whole shape ethers expects, so a receipt read back later parses the same as a live one
+        return {
+          status: '0x1', transactionHash: h, transactionIndex: '0x0', blockNumber: '0x1000',
+          blockHash: '0x' + '11'.repeat(32), from: me, to: BULK, contractAddress: null,
+          cumulativeGasUsed: '0x1', gasUsed: '0x1', effectiveGasPrice: '0x989680', type: '0x2',
+          logsBloom: '0x' + '00'.repeat(256), logs: O.receiptLogs || [],
+        };
+      }
       case 'eth_estimateGas': return '0x186a0';
       case 'eth_getCode': {
         const a = String(params[0] || '').toLowerCase();
@@ -65,6 +79,11 @@ function chainAnswer(O) {
         if (sel === '0x098144d4') return O.gated ? enc(BigInt('0xA000027A9B2802E1ddf7000061001e5c005A0000')) : null;
         if (sel === '0x5c975abb') return enc(0);
         if (sel === '0xe985e9c5') return enc(O.approved ? 1 : 0);
+        // BulkSend itself: its published bounds, and (sent, skipped) for a simulated batch
+        if (sel === '0x56c3e5e9' || sel === '0xdf1c9e47') return enc(400000);
+        if (sel === '0x20d2c951') return enc(100000);
+        if (sel === '0x5f2a9f41') return enc(5000000);
+        if (BULK_SELECTORS.includes(sel)) return enc(O.willDeliver ?? 1) + enc(0).slice(2);
         if (O.callFails) { const e = new Error('execution reverted'); e.revertData = '0x7e273289'; throw e; }
         return enc(1);
       }
@@ -262,6 +281,141 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   await page.waitForTimeout(6000);
   const sent = await page.evaluate(() => window.__sent.length);
   check('three clicks on Send produce one batch', sent <= 1, 'batches sent: ' + sent);
+  await page.close();
+}
+
+// ---- L-02: the gas allowance is the caller's, inside the contract's bounds -----
+{
+  const page = await open(browser, { approved: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x71) + ',1\n' + A(0x72) + ',2\n');
+  const shown = () => page.evaluate(() => document.querySelector('#gasRow').style.display !== 'none');
+  check('L-02 the gas allowance is offered where skipping is allowed', await shown());
+  check('L-02 and the contract\'s own bounds are what the page shows',
+    (await text(page, '#gasBounds')).includes('100,000') && (await text(page, '#gasBounds')).includes('5,000,000'),
+    await text(page, '#gasBounds'));
+  await page.selectOption('#mode', 'strict'); await page.waitForTimeout(300);
+  check('L-02 and is hidden for all-or-nothing, which forwards everything', !(await shown()));
+  await page.selectOption('#mode', 'lenient'); await page.waitForTimeout(300);
+
+  await page.fill('#gasPer', '50000'); await page.waitForTimeout(400);
+  check('L-02 an allowance under the contract minimum blocks the send',
+    await page.evaluate(() => document.querySelector('#send').disabled), 'send was enabled');
+  check('L-02 and says what the contract accepts', (await text(page, '#whyDisabled')).includes('100,000'), await text(page, '#whyDisabled'));
+
+  await page.fill('#gasPer', '900000'); await page.waitForTimeout(400);
+  check('L-02 a valid allowance unblocks the send', !(await page.evaluate(() => document.querySelector('#send').disabled)), await text(page, '#whyDisabled'));
+  await page.click('#send'); await page.waitForTimeout(5000);
+  const data = await page.evaluate(() => (window.__sent[0] || {}).data || '');
+  check('L-02 a chosen allowance goes out through the WithGas entry point', data.startsWith('0x45310558'), data.slice(0, 10));
+  check('L-02 carrying the number that was asked for', data.toLowerCase().includes((900000).toString(16).padStart(64, '0')), data.slice(-64));
+  await page.close();
+}
+
+// ---- L-02: the default is left alone when nothing is typed --------------------
+{
+  const page = await open(browser, { approved: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x73) + ',3\n');
+  await page.click('#send'); await page.waitForTimeout(5000);
+  const data = await page.evaluate(() => (window.__sent[0] || {}).data || '');
+  check('L-02 no allowance typed means the plain entry point and the contract default', data.startsWith('0xb097e731'), data.slice(0, 10));
+  await page.close();
+}
+
+// ---- L-01: a connection is a state you can leave ------------------------------
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(700);
+  const before = await page.evaluate(() => [...document.querySelectorAll('#walletBox button')].map((b) => b.textContent.trim()));
+  check('L-01 a connected page offers a way to change wallet', before.includes('Change wallet'), before.join(','));
+  await page.click('text=Change wallet'); await page.waitForTimeout(500);
+  const after = await page.evaluate(() => [...document.querySelectorAll('#walletBox button')].map((b) => b.textContent.trim()));
+  check('L-01 and leaving it puts the connect buttons back', after.includes('Connect wallet') && after.includes('Phone wallet'), after.join(','));
+  await page.close();
+}
+
+// ---- M-01: two identical rows are two payments --------------------------------
+{
+  const page = await open(browser, { approved: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, TOK, '20');
+  const dup = A(0x81) + ',1\n' + A(0x81) + ',1\n';
+  await setList(page, dup);
+  // the first of the two has been delivered before; the second has not
+  await page.evaluate(([acct, tok]) => {
+    const key = 'bulksend:46630:' + acct.toLowerCase() + ':' + tok.toLowerCase() + ':20';
+    const row = '0x0000000000000000000000000000000000000081::1000000000000000000#1';
+    localStorage.setItem(key, JSON.stringify([row]));
+  }, [RUN_ME, TOK]);
+  await page.click('#send'); await page.waitForTimeout(5000);
+  const logText = await text(page, '#log');
+  check('M-01 one of two identical rows counts as already delivered, not both',
+    logText.includes('1 of these were already delivered'), logText.slice(-200));
+  const sentCount = await page.evaluate(() => window.__sent.length);
+  check('M-01 and the other one is still sent', sentCount === 1, 'batches: ' + sentCount);
+  await page.close();
+}
+
+// ---- M-01: a batch this browser cannot account for holds its rows back --------
+{
+  const page = await open(browser, { approved: true, noReceipt: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, TOK, '20');
+  await setList(page, A(0x91) + ',1\n' + A(0x92) + ',2\n');
+  await page.evaluate(([acct, tok]) => {
+    const run = 'bulksend:46630:' + acct.toLowerCase() + ':' + tok.toLowerCase() + ':20';
+    localStorage.setItem('bulksend:pending', JSON.stringify([{
+      pid: 'p1', run, chain: 46630, bulk: '0xc6ae3189edae544ed60adf5ec057e338ce224f74',
+      hash: '0x' + 'ef'.repeat(32), at: Date.now() - 60000, via: 'bulk',
+      rows: [{ to: '0x0000000000000000000000000000000000000091', id: null, amount: '1000000000000000000', k: '0x0000000000000000000000000000000000000091::1000000000000000000#1' }],
+    }]));
+  }, [RUN_ME, TOK]);
+  await page.click('#send'); await page.waitForTimeout(6000);
+  const logText = await text(page, '#log');
+  check('M-01 an unread batch is reported rather than silently ignored', logText.includes('is not on the chain'), logText.slice(0, 220));
+  check('M-01 and its recipients are held back instead of being sent again', logText.includes('held back'), logText.slice(-260));
+  await page.close();
+}
+
+// ---- M-01: and is recorded once the chain can be read ------------------------
+{
+  const page = await open(browser, { approved: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await page.evaluate(([acct, tok]) => {
+    const run = 'bulksend:46630:' + acct.toLowerCase() + ':' + tok.toLowerCase() + ':20';
+    localStorage.setItem('bulksend:pending', JSON.stringify([{
+      pid: 'p2', run, chain: 46630, bulk: null, hash: '0x' + 'ab'.repeat(32), at: Date.now() - 60000, via: 'wallet',
+      rows: [{ to: '0x0000000000000000000000000000000000000093', id: null, amount: '1000000000000000000', k: '0x0000000000000000000000000000000000000093::1000000000000000000#1' }],
+    }]));
+  }, [RUN_ME, TOK]);
+  await useToken(page, TOK, '20');
+  await setList(page, A(0x93) + ',1\n' + A(0x94) + ',2\n');
+  await page.click('#send'); await page.waitForTimeout(6000);
+  const logText = await text(page, '#log');
+  check('M-01 a batch that did land is caught up and recorded', logText.includes('Caught up'), logText.slice(0, 240));
+  check('M-01 so its recipients are not paid twice', logText.includes('already delivered'), logText.slice(-240));
+  await page.close();
+}
+
+// ---- L-03: the exact list, and where the transactions divide it ---------------
+{
+  const page = await open(browser, { approved: true, willDeliver: 6 });
+  const dialogs = [];
+  page.on('dialog', (d) => dialogs.push(d.message()));
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, Array.from({ length: 6 }, (_, i) => A(0xa1 + i) + ',' + (i + 1)).join('\n'));
+  await page.fill('#batch', '2'); await page.waitForTimeout(300);
+  await page.click('#send'); await page.waitForTimeout(6000);
+  const logText = await text(page, '#log');
+  check('L-03 every transaction boundary is shown before anything is signed',
+    logText.includes('transaction 1:') && logText.includes('transaction 3:'), logText.slice(0, 300));
+  const msg = dialogs.join(' ');
+  check('L-03 and the confirmation says who a partial run favours', /lower token ids are the ones that were paid/.test(msg), msg.slice(0, 300));
+  check('L-03 the exact list can be downloaded', !(await page.evaluate(() => document.querySelector('#manifest').disabled)));
   await page.close();
 }
 

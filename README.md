@@ -11,12 +11,19 @@ the caller approved, inside the transaction the caller signed. No owner, no upgr
   bubbles up, and each transfer gets the whole transaction's gas, so a recipient with a heavy receive hook works.
 - lenient (`lenient=true`): a recipient that cannot receive (a contract with no receiver hook, an id you
   no longer own, a paused token) is skipped and logged with a `Skipped` event; the rest is delivered.
-  The call returns `(sent, skipped)`. Each transfer gets at most `LENIENT_GAS` (400,000) and at most 128 bytes
-  of its revert data is kept, so no single recipient can starve the batch or inflate its cost.
+  The call returns `(sent, skipped)`. Each transfer gets at most a gas stipend and at most 128 bytes of its
+  revert data is kept, so no single recipient can starve the batch or inflate its cost. The stipend is
+  `DEFAULT_GAS` (400,000) through `airdrop721` / `airdrop1155` / `airdrop20`, or a number you choose between
+  `MIN_GAS` (100,000) and `MAX_GAS` (5,000,000) through `airdrop721WithGas` / `airdrop1155WithGas` /
+  `airdrop20WithGas`. There is no constant that separates an honest receiver from a hostile one, so the
+  default is a measured guess and the parameter is there for callers who know their recipients better.
+  A stipend is refused in strict mode, which forwards everything: accepting it and ignoring it would
+  describe a transaction that does not exist.
 - safe (721 only): use `safeTransferFrom`, so contract recipients must implement `onERC721Received`.
 
-A wallet skipped in lenient mode with "cannot receive" may simply need more than the stipend. Send that one
-on its own in strict mode, where the whole transaction's gas is available to it.
+A wallet skipped in lenient mode with an empty reason has either failed or run past the stipend; the two look
+identical from outside. Raise the stipend, or send that one on its own in strict mode, where the whole
+transaction's gas is available to it.
 
 If a batch cannot afford to give every recipient its full stipend, the contract reverts `OutOfGasForBatch`
 rather than silently skipping the last wallets and blaming them. That also keeps `eth_estimateGas` honest,
@@ -71,9 +78,13 @@ Testnet first, always. Rehearse on a local fork with no funds:
 
 ## Reviews
 
-Two independent reviewer agents audited this: a security audit and a second pass on the fixes. Findings and
-what changed are recorded in the project's wiki page in the brain. Nothing here has been reviewed by a human
-audit team.
+Six internal reviews and one external audit run by a different model with no knowledge of how this was
+built. The external audit returned 8 High, 4 Medium and 3 Low; all fifteen are fixed, and the tests name the
+finding each one guards. Findings and what changed are recorded in the project's wiki page in the brain.
+Nothing here has been reviewed by a human audit team.
+
+Deployed on testnet 46630 at `0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74`, source verified, runtime bytecode
+byte-for-byte equal to a local build. Mainnet is deliberately not deployed.
 
 ## Keys
 
