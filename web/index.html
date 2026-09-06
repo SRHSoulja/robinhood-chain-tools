@@ -65,7 +65,7 @@
       <div style="font-size:12px;color:var(--mut);margin-top:4px">To give one wallet more than the rest, write <span class="mono">x3</span> after its address.</div>
       <div class="check" style="margin:6px 0 0"><input type="checkbox" id="rand" checked><label for="rand" style="margin:0;font-size:12px">Random, so nobody can pick which NFT they get. Costs nothing: they still go out cheapest-first.</label></div></div>
     </div>
-    <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV</label>
+    <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV. A file with named columns works too, in any order: <span class="mono">address</span>, <span class="mono">tokenId</span>, <span class="mono">quantity</span>.</label>
     <textarea id="list" aria-label="Recipient list" placeholder="0xabc…, 12&#10;0xdef…, 13"></textarea>
     <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
       <input type="file" id="csv" aria-label="Upload a CSV of recipients" accept=".csv,.txt,text/csv">
@@ -388,6 +388,25 @@
     plan();
   }
 
+  // ---- CSV headers ----
+  // Other airdrop tools export a header row and read columns by name, so the order varies and "quantity"
+  // means how many, not which id. Reading positionally would take a quantity column for a token id.
+  const COLS = {
+    to:  ['address', 'wallet', 'recipient', 'recipients', 'to', 'holder', 'owner', 'account', 'addr', 'walletaddress'],
+    id:  ['tokenid', 'token_id', 'token id', 'id', 'nftid', 'nft_id', 'tokenids', 'token'],
+    qty: ['amount', 'quantity', 'qty', 'value', 'count', 'tokens', 'number', 'num'],
+  };
+  const splitRow = (line) => line.split(/[,\t;]|\s{2,}| (?=0x)/).map(x => x.trim().replace(/^"|"$/g, '')).filter(x => x !== '');
+  function readHeader(line) {
+    const cells = splitRow(line).map(c => c.toLowerCase().replace(/[\s_-]/g, ''));
+    if (!cells.length || cells.some(c => ethers.isAddress(c))) return null;   // a row of data, not a header
+    const map = {};
+    cells.forEach((c, i) => {
+      for (const key of Object.keys(COLS)) if (COLS[key].some(n => n.replace(/[\s_-]/g, '') === c)) { if (map[key] === undefined) map[key] = i; }
+    });
+    return map.to !== undefined ? map : null;
+  }
+
   // ---- list parsing ----
   $('csv').addEventListener('change', (ev) => { const f = ev.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { $('list').value = r.result; parseList(); }; r.readAsText(f); });
   $('parse').addEventListener('click', parseList);
@@ -396,6 +415,50 @@
     if (s === '20' && tokenLoadedFor !== $('token').value.trim().toLowerCase()) { setStat($('parseOut'), [['', 'Enter the token address first: the amounts depend on how many decimals it uses.', 'bad']]); rows = []; plan(); return; }
     const want = s === '1155' ? 3 : 2;   // fields per line; more than this means a stray separator, such as a thousands comma
     const lines = $('list').value.split(/\r?\n/); const out = [], problems = []; const seenId = new Set(); let headers = 0;
+    // If the file names its columns, follow the names rather than the order.
+    let colMap = null;
+    for (const l of lines) { const t = l.trim(); if (!t) continue; colMap = readHeader(t); break; }
+    if (colMap) {
+      headers = 1;
+      const named = [];
+      lines.forEach((line, i) => {
+        const t = line.trim(); if (!t) return;
+        const cells = splitRow(t);
+        if (i === lines.findIndex(x => x.trim())) return;   // the header itself
+        const addr = cells[colMap.to];
+        if (!addr || !ethers.isAddress(addr)) { problems.push('line ' + (i + 1) + ': no wallet address in the "' + Object.keys(COLS).find(k => COLS[k]) + '" column'); return; }
+        const a = ethers.getAddress(addr);
+        if (a === ethers.ZeroAddress) { problems.push('line ' + (i + 1) + ': the zero address would burn the token; not allowed'); return; }
+        const idCell = colMap.id !== undefined ? cells[colMap.id] : null;
+        const qtyCell = colMap.qty !== undefined ? cells[colMap.qty] : null;
+        named.push({ a, idCell, qtyCell, line: i + 1 });
+      });
+      // In the wider ecosystem an NFT file with a quantity column but no id column means "how many of yours",
+      // which is the same thing this page calls x3. Rewrite it into that form and let Assign fill the ids in.
+      if (s === '721' && colMap.id === undefined && colMap.qty !== undefined) {
+        $('list').value = named.map(r => r.a + (Number(r.qtyCell) > 1 ? ' x' + parseInt(r.qtyCell) : '')).join('\n');
+        say('msgList', 'That file has a quantity column and no token ids, which means how many each wallet gets. Press "Assign my token ids" to choose which of yours they receive.', 'warn');
+        rows = []; plan(); return;
+      }
+      for (const r of named) {
+        try {
+          if (s === '721') {
+            if (!/^\d+$/.test(r.idCell || '')) { problems.push('line ' + r.line + ': no token id'); continue; }
+            const idKey = BigInt(r.idCell).toString();
+            if (seenId.has(idKey)) { problems.push('line ' + r.line + ': token id ' + r.idCell + ' is listed twice'); continue; }
+            seenId.add(idKey); out.push({ to: r.a, id: BigInt(r.idCell), raw: r.idCell });
+          } else if (s === '1155') {
+            if (!/^\d+$/.test(r.idCell || '') || !/^\d+$/.test(r.qtyCell || '')) { problems.push('line ' + r.line + ': need a token id and a whole amount'); continue; }
+            out.push({ to: r.a, id: BigInt(r.idCell), amount: BigInt(r.qtyCell), raw: r.qtyCell });
+          } else {
+            if (!/^\d+(\.\d+)?$/.test(r.qtyCell || '')) { problems.push('line ' + r.line + ': no amount'); continue; }
+            out.push({ to: r.a, amount: ethers.parseUnits(r.qtyCell, decimals), raw: r.qtyCell });
+          }
+        } catch (err) { problems.push('line ' + r.line + ': ' + String(err.shortMessage || err.message).slice(0, 90)); }
+      }
+      const usedCols = 'Read your file by its column names: wallet' + (colMap.id !== undefined ? ', token id' : '') + (colMap.qty !== undefined ? ', amount' : '') + '.';
+      finishParse(out, problems, headers, usedCols); return;
+    }
     // Bare wallets, no ids: that is how most people start. Offer to fill the ids in rather than flagging every line.
     if (s === '721') {
       const rowsIn = lines.map(l => l.trim()).filter(l => l && !/^(address|wallet|to)\b/i.test(l));
@@ -436,6 +499,9 @@
           out.push({ to: a, amount: ethers.parseUnits(amt, decimals), raw: amt }); }
       } catch (err) { problems.push('line ' + (i + 1) + ': ' + String(err.shortMessage || err.message).slice(0, 90)); }
     });
+    finishParse(out, problems, headers, '');
+  }
+  function finishParse(out, problems, headers, note) {
     rows = out;
     const seen = new Set(); let dupes = 0, selfSends = 0, repeatWallets = 0; const wallets = new Set();
     for (const r of out) {
@@ -448,12 +514,12 @@
     if (dupes) parts.push(['', dupes + ' identical lines (each one sends again)', 'warn']);
     else if (repeatWallets) parts.push(['', repeatWallets + ' wallets appear more than once', 'warn']);
     if (selfSends) parts.push(['', selfSends + ' of these are your own wallet', 'warn']);
-    if (headers) parts.push(['', headers + ' line' + (headers === 1 ? '' : 's') + ' skipped as a heading', 'warn']);
+    if (headers && !note) parts.push(['', headers + ' line' + (headers === 1 ? '' : 's') + ' skipped as a heading', 'warn']);
     setStat($('parseOut'), parts);
     $('problems').style.display = problems.length ? 'block' : 'none'; $('problems').textContent = problems.join('\n');
     badLines = problems.length; badLinesOk = false;
-    if (problems.length) say('msgList', problems.length + ' line' + (problems.length === 1 ? '' : 's') + ' could not be read and will not be sent. Fix them, or tick the box below to go ahead without them.', 'bad');
-    else say('msgList', '');
+    if (problems.length) say('msgList', (note ? note + ' ' : '') + problems.length + ' line' + (problems.length === 1 ? '' : 's') + ' could not be read and will not be sent. Fix them, or tick the box below to go ahead without them.', 'bad');
+    else say('msgList', note || '', note ? 'ok' : '');
     $('ackRow').style.display = problems.length ? 'flex' : 'none'; $('ack').checked = false;
     plan(); refreshRevoke();
   }
