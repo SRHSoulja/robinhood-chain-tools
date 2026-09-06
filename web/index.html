@@ -52,7 +52,8 @@
     <h2>2 · Recipients</h2>
     <div class="row" style="margin-bottom:10px">
       <div><label>Build the list from a collection's holders</label><div style="display:flex;gap:8px"><input type="text" id="snapAddr" placeholder="holders of 0x… (snapshot)" spellcheck="false"><button class="secondary" id="snap">Fetch</button></div></div>
-      <div><label>Or let it use the token ids you hold</label><button class="secondary" id="assign" style="width:100%">Assign my token ids to these wallets</button><div style="font-size:12px;color:var(--mut);margin-top:4px">Paste wallets on their own and this fills in which NFT each one gets.</div></div>
+      <div><label>Or let it use the token ids you hold</label><div style="display:flex;gap:8px"><button class="secondary" id="assign" style="flex:1">Assign my token ids</button><button class="secondary" id="shuffle">Shuffle</button></div>
+      <div class="check" style="margin:6px 0 0"><input type="checkbox" id="rand" checked><label for="rand" style="margin:0;font-size:12px">Random, so nobody can pick which NFT they get. Costs nothing: they still go out cheapest-first.</label></div></div>
     </div>
     <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV</label>
     <textarea id="list" placeholder="0xabc…, 12&#10;0xdef…, 13"></textarea>
@@ -344,6 +345,31 @@
     $('snap').disabled = false;
   });
 
+  // Fair shuffle, from the browser's cryptographic random source rather than Math.random, so the result is not
+  // predictable by whoever is watching the list get built.
+  function shuffled(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const r = new Uint32Array(1); crypto.getRandomValues(r);
+      const j = r[0] % (i + 1);
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  // ---- re-pair an existing list: same wallets, same ids, different pairing ----
+  $('shuffle').addEventListener('click', () => {
+    const s = std();
+    const lines = $('list').value.split(/\r?\n/).map(l => l.trim()).filter(l => l && !/^(address|wallet|to)\b/i.test(l));
+    const parsed = lines.map(l => l.split(/[,\t; ]+/).filter(Boolean)).filter(p => ethers.isAddress(p[0]) && p.length > 1);
+    if (parsed.length < 2) { log('Put at least two lines with an id or amount in the box first.', 'bad'); return; }
+    const wallets = parsed.map(p => ethers.getAddress(p[0]));
+    const rest = shuffled(parsed.map(p => p.slice(1)));
+    $('list').value = wallets.map((w, i) => [w, ...rest[i]].join(',')).join('\n');
+    log('Shuffled: the same wallets and the same ' + (s === '20' ? 'amounts' : 'ids') + ', paired at random.', 'ok');
+    parseList();
+  });
+
   // ---- assign the ids you hold to a list of bare addresses ----
   $('assign').addEventListener('click', async () => {
     const token = $('token').value.trim();
@@ -356,9 +382,12 @@
       const ids = await myTokenIds(token, wallets.length);
       if (!ids.length) { log('Could not find any token ids held by your wallet in this collection.', 'bad'); $('assign').disabled = false; return; }
       const n = Math.min(ids.length, wallets.length);
-      if (ids.length < wallets.length) log('You hold ' + ids.length + ' of these, for ' + wallets.length + ' wallets. The first ' + n + ' wallets are matched; the rest are left out.', 'warn');
-      $('list').value = wallets.slice(0, n).map((w, i) => w + ',' + ids[i]).join('\n');
-      log('Assigned ' + n + ' token ids, lowest first.', 'ok');
+      const random = $('rand').checked;
+      if (ids.length < wallets.length) log('You hold ' + ids.length + ' of these, for ' + wallets.length + ' wallets. ' + (random ? n + ' wallets are picked at random; the rest get nothing.' : 'The first ' + n + ' wallets are matched; the rest are left out.'), 'warn');
+      const pickWallets = random ? shuffled(wallets).slice(0, n) : wallets.slice(0, n);
+      const pickIds = random ? shuffled(ids).slice(0, n) : ids.slice(0, n);
+      $('list').value = pickWallets.map((w, i) => w + ',' + pickIds[i]).join('\n');
+      log('Assigned ' + n + ' token ids' + (random ? ', paired at random. They still go out lowest id first, which is the cheapest order.' : ', lowest first.'), 'ok');
       parseList();
     } catch (e) { log('Could not read your token ids: ' + String(e.message || e).slice(0, 120), 'bad'); }
     $('assign').disabled = false;
