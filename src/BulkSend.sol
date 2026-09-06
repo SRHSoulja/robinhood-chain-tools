@@ -30,6 +30,13 @@ contract BulkSend {
     error LengthMismatch();
     error EmptyBatch();
     error TransferFailed(address to, uint256 id);
+    error NotAContract(address token);
+
+    /// @dev A low-level call to an address with no code "succeeds" with empty return data, which is also what
+    ///      USDT-style tokens return on success. So the token must be a contract before any batch runs.
+    function _mustBeContract(address token) internal view {
+        if (token.code.length == 0) revert NotAContract(token);
+    }
 
     /// @notice Send one ERC-721 id to each recipient. `safe` uses safeTransferFrom (recipient contracts must accept).
     function airdrop721(address token, address[] calldata to, uint256[] calldata ids, bool safe, bool lenient)
@@ -39,6 +46,7 @@ contract BulkSend {
         uint256 n = to.length;
         if (n != ids.length) revert LengthMismatch();
         if (n == 0) revert EmptyBatch();
+        _mustBeContract(token);
         for (uint256 i; i < n;) {
             if (lenient) {
                 bool ok = _try721(token, to[i], ids[i], safe);
@@ -64,6 +72,7 @@ contract BulkSend {
         uint256 n = to.length;
         if (n != ids.length || n != amounts.length) revert LengthMismatch();
         if (n == 0) revert EmptyBatch();
+        _mustBeContract(token);
         for (uint256 i; i < n;) {
             if (lenient) {
                 try IERC1155Like(token).safeTransferFrom(msg.sender, to[i], ids[i], amounts[i], "") {
@@ -89,6 +98,7 @@ contract BulkSend {
         uint256 n = to.length;
         if (n != amounts.length) revert LengthMismatch();
         if (n == 0) revert EmptyBatch();
+        _mustBeContract(token);
         for (uint256 i; i < n;) {
             (bool ok, bytes memory ret) =
                 token.call(abi.encodeWithSelector(IERC20Like.transferFrom.selector, msg.sender, to[i], amounts[i]));
