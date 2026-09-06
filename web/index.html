@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BulkSend · Robinhood Chain airdrops</title>
+<meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
+<style>
+  :root{ --bg:#f6f7f4; --ink:#17201c; --mut:#5f6b64; --line:#d9ded9; --card:#ffffff; --acc:#1f7a4d; --acc2:#0f5f3a; --warn:#9a5b00; --bad:#a32d2d; --ok:#1f7a4d; --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#101412; --ink:#e8ede9; --mut:#9aa69f; --line:#27302b; --card:#171d19; --acc:#3fbf7f; --acc2:#6fd9a1; } }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid var(--line)}
+  h1{font-size:18px;margin:0;letter-spacing:.2px} h1 small{color:var(--mut);font-weight:400;margin-left:8px}
+  main{max-width:920px;margin:0 auto;padding:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+  .card h2{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);margin:0 0 12px}
+  label{display:block;font-size:13px;color:var(--mut);margin:10px 0 4px}
+  input[type=text],select,textarea{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:transparent;color:var(--ink);font:inherit}
+  textarea{font-family:var(--mono);font-size:12.5px;min-height:150px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px} @media(max-width:640px){.row{grid-template-columns:1fr}}
+  button{padding:10px 16px;border-radius:8px;border:1px solid var(--acc);background:var(--acc);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+  button.secondary{background:transparent;color:var(--acc)} button[disabled]{opacity:.45;cursor:not-allowed}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--mut)}
+  .pill.ok{color:var(--ok);border-color:var(--ok)} .pill.bad{color:var(--bad);border-color:var(--bad)}
+  .mono{font-family:var(--mono);font-size:12.5px}
+  .log{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;max-height:280px;overflow:auto;border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
+  .stat{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--mut)} .stat b{color:var(--ink)}
+  .warn{color:var(--warn)} .bad{color:var(--bad)} .ok{color:var(--ok)}
+  .check{display:flex;gap:8px;align-items:center;font-size:13px;margin:8px 0}
+  footer{color:var(--mut);font-size:12.5px;padding:18px 22px;border-top:1px solid var(--line);max-width:920px;margin:0 auto}
+  a{color:var(--acc2)}
+</style>
+</head>
+<body>
+<header>
+  <h1>BulkSend <small>airdrops on Robinhood Chain</small></h1>
+  <div id="walletBox"><button id="connect">Connect wallet</button></div>
+</header>
+<main>
+  <div class="card">
+    <h2>1 · Network and token</h2>
+    <div class="row">
+      <div><label>Network</label><select id="net"><option value="46630">Robinhood Chain testnet (46630)</option><option value="4663">Robinhood Chain mainnet (4663)</option></select></div>
+      <div><label>Token standard</label><select id="std"><option value="721">ERC-721 (one id per wallet)</option><option value="1155">ERC-1155 (id + amount per wallet)</option><option value="20">ERC-20 (amount per wallet)</option></select></div>
+    </div>
+    <label>Token contract address</label><input type="text" id="token" placeholder="0x…" spellcheck="false">
+    <div id="tokenInfo" class="stat" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Recipients</h2>
+    <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · commas, tabs, or spaces · paste from a sheet or upload a CSV</label>
+    <textarea id="list" placeholder="0xabc…, 12&#10;0xdef…, 13"></textarea>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
+      <input type="file" id="csv" accept=".csv,.txt,text/csv">
+      <button class="secondary" id="parse">Check list</button>
+      <span id="parseOut" class="stat"></span>
+    </div>
+    <div id="problems" class="log" style="display:none"></div>
+  </div>
+
+  <div class="card">
+    <h2>3 · Options</h2>
+    <div class="row">
+      <div><label>Batch size (recipients per transaction)</label><input type="text" id="batch" value="150"></div>
+      <div><label>Mode</label><select id="mode"><option value="lenient">Lenient: skip wallets that cannot receive, deliver the rest</option><option value="strict">Strict: any failure reverts the whole batch</option></select></div>
+    </div>
+    <div class="check" id="safeRow"><input type="checkbox" id="safe"><label for="safe" style="margin:0">Use safeTransferFrom (contract recipients must accept ERC-721)</label></div>
+  </div>
+
+  <div class="card">
+    <h2>4 · Approve and send</h2>
+    <div class="stat" id="plan"></div>
+    <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+      <button id="approve" disabled>Approve BulkSend</button>
+      <button id="send" disabled>Send airdrop</button>
+      <button class="secondary" id="stop" disabled>Stop after this batch</button>
+    </div>
+    <div class="log" id="log"></div>
+  </div>
+</main>
+<footer>
+  BulkSend holds nothing. Every transfer is <span class="mono">transferFrom(you, recipient, …)</span>, so it can only move what you approved, inside the transaction you sign. Revoke the approval any time from your wallet or the explorer. Contract source is verified on the explorer. Nothing here is financial advice.
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<script>
+(() => {
+  // ---- chain config; BulkSend addresses are filled in after each deploy ----
+  const CHAINS = {
+    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '{{BULKSEND_TESTNET}}' },
+    4663:  { name: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com', bulk: '{{BULKSEND_MAINNET}}' },
+  };
+  const BULK_ABI = [
+    'function airdrop721(address token,address[] to,uint256[] ids,bool safe,bool lenient) returns (uint256 sent,uint256 skipped)',
+    'function airdrop1155(address token,address[] to,uint256[] ids,uint256[] amounts,bool lenient) returns (uint256 sent,uint256 skipped)',
+    'function airdrop20(address token,address[] to,uint256[] amounts,bool lenient) returns (uint256 sent,uint256 skipped)',
+    'event Skipped(address indexed token,address indexed to,uint256 id,uint256 amount,bytes reason)',
+    'event Airdrop721(address indexed token,address indexed from,uint256 sent,uint256 skipped)',
+    'event Airdrop1155(address indexed token,address indexed from,uint256 sent,uint256 skipped)',
+    'event Airdrop20(address indexed token,address indexed from,uint256 sent,uint256 skipped)',
+  ];
+  const ERC721_ABI = ['function name() view returns (string)','function symbol() view returns (string)','function balanceOf(address) view returns (uint256)','function ownerOf(uint256) view returns (address)','function isApprovedForAll(address,address) view returns (bool)','function setApprovalForAll(address,bool)','function supportsInterface(bytes4) view returns (bool)'];
+  const ERC1155_ABI = ['function balanceOf(address,uint256) view returns (uint256)','function isApprovedForAll(address,address) view returns (bool)','function setApprovalForAll(address,bool)'];
+  const ERC20_ABI = ['function name() view returns (string)','function symbol() view returns (string)','function decimals() view returns (uint8)','function balanceOf(address) view returns (uint256)','function allowance(address,address) view returns (uint256)','function approve(address,uint256) returns (bool)'];
+
+  const $ = (id) => document.getElementById(id);
+  const log = (msg, cls) => { const el = $('log'); const line = document.createElement('div'); if (cls) line.className = cls; line.innerHTML = msg; el.appendChild(line); el.scrollTop = el.scrollHeight; };
+  let provider, signer, me, rows = [], stopFlag = false, decimals = 18;
+  const chainId = () => Number($('net').value); const cfg = () => CHAINS[chainId()];
+  const std = () => $('std').value;
+  const explorerTx = (h) => `<a href="${cfg().explorer}/tx/${h}" target="_blank" rel="noopener">${h.slice(0, 10)}…</a>`;
+
+  $('std').addEventListener('change', () => { $('fmt').textContent = std() === '721' ? 'address, tokenId' : std() === '1155' ? 'address, tokenId, amount' : 'address, amount'; $('safeRow').style.display = std() === '721' ? 'flex' : 'none'; rows = []; $('parseOut').textContent = ''; plan(); });
+  $('net').addEventListener('change', () => { plan(); if (provider) switchChain(); });
+
+  async function connect() {
+    if (!window.ethereum) { log('No wallet found. Install a browser wallet, then reload.', 'bad'); return; }
+    provider = new ethers.BrowserProvider(window.ethereum); await provider.send('eth_requestAccounts', []); signer = await provider.getSigner(); me = await signer.getAddress();
+    $('walletBox').innerHTML = `<span class="pill ok mono">${me.slice(0, 6)}…${me.slice(-4)}</span>`; await switchChain(); plan();
+  }
+  async function switchChain() {
+    const id = chainId(), c = cfg(), hex = '0x' + id.toString(16);
+    try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }); }
+    catch (e) { if (e.code === 4902 || /unrecognized|not added/i.test(e.message || '')) { await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: hex, chainName: c.name, rpcUrls: [c.rpc], nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, blockExplorerUrls: [c.explorer] }] }); } else { log('Could not switch network: ' + (e.message || e), 'bad'); } }
+    provider = new ethers.BrowserProvider(window.ethereum); signer = await provider.getSigner();
+  }
+  $('connect').addEventListener('click', connect);
+
+  // ---- token lookup ----
+  $('token').addEventListener('change', tokenInfo);
+  async function tokenInfo() {
+    const addr = $('token').value.trim(); const box = $('tokenInfo'); box.textContent = '';
+    if (!ethers.isAddress(addr)) { box.innerHTML = '<span class="bad">That is not an address.</span>'; return; }
+    const rp = new ethers.JsonRpcProvider(cfg().rpc); const code = await rp.getCode(addr);
+    if (code === '0x') { box.innerHTML = '<span class="bad">No contract at that address on this network.</span>'; return; }
+    try {
+      if (std() === '721') { const t = new ethers.Contract(addr, ERC721_ABI, rp); const [n, s] = await Promise.all([t.name().catch(() => '?'), t.symbol().catch(() => '?')]); const bal = me ? await t.balanceOf(me).catch(() => null) : null; box.innerHTML = `<span><b>${n}</b> (${s})</span>` + (bal !== null ? `<span>you hold <b>${bal}</b></span>` : ''); }
+      else if (std() === '20') { const t = new ethers.Contract(addr, ERC20_ABI, rp); const [n, s, d] = await Promise.all([t.name().catch(() => '?'), t.symbol().catch(() => '?'), t.decimals().catch(() => 18)]); decimals = Number(d); const bal = me ? await t.balanceOf(me).catch(() => null) : null; box.innerHTML = `<span><b>${n}</b> (${s}) · ${decimals} decimals</span>` + (bal !== null ? `<span>you hold <b>${ethers.formatUnits(bal, decimals)}</b></span>` : ''); }
+      else { box.innerHTML = '<span>ERC-1155 contract found.</span>'; }
+    } catch (e) { box.innerHTML = '<span class="warn">Contract found, but it did not answer like a ' + std() + ' token.</span>'; }
+    plan();
+  }
+
+  // ---- list parsing ----
+  $('csv').addEventListener('change', (ev) => { const f = ev.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { $('list').value = r.result; parseList(); }; r.readAsText(f); });
+  $('parse').addEventListener('click', parseList);
+  function parseList() {
+    const s = std(); const lines = $('list').value.split(/\r?\n/); const out = [], problems = []; const seen = new Map();
+    lines.forEach((line, i) => { const t = line.trim(); if (!t || /^(address|wallet|to)\b/i.test(t)) return; const parts = t.split(/[,\t; ]+/).filter(Boolean);
+      const addr = parts[0]; if (!ethers.isAddress(addr)) { problems.push(`line ${i + 1}: bad address "${addr}"`); return; }
+      const a = ethers.getAddress(addr);
+      if (s === '721') { const id = parts[1]; if (!/^\d+$/.test(id || '')) { problems.push(`line ${i + 1}: missing token id`); return; } if (seen.has('id' + id)) { problems.push(`line ${i + 1}: token id ${id} listed twice`); return; } seen.set('id' + id, 1); out.push({ to: a, id: BigInt(id) }); }
+      else if (s === '1155') { const id = parts[1], amt = parts[2] || '1'; if (!/^\d+$/.test(id || '') || !/^\d+$/.test(amt)) { problems.push(`line ${i + 1}: need id and amount`); return; } out.push({ to: a, id: BigInt(id), amount: BigInt(amt) }); }
+      else { const amt = parts[1]; if (!/^\d+(\.\d+)?$/.test(amt || '')) { problems.push(`line ${i + 1}: missing amount`); return; } out.push({ to: a, amount: ethers.parseUnits(amt, decimals) }); }
+    });
+    rows = out; const dup = new Set(); const dupes = out.filter(r => { const k = r.to + ':' + (r.id ?? ''); if (dup.has(k)) return true; dup.add(k); return false; }).length;
+    $('parseOut').innerHTML = `<span><b>${out.length}</b> recipients</span>` + (problems.length ? `<span class="bad">${problems.length} problem lines skipped</span>` : '') + (dupes ? `<span class="warn">${dupes} duplicate wallet entries (they will each receive)</span>` : '');
+    $('problems').style.display = problems.length ? 'block' : 'none'; $('problems').textContent = problems.join('\n'); plan();
+  }
+
+  // ---- plan and buttons ----
+  function plan() {
+    const c = cfg(); const bs = Math.max(1, Math.min(400, parseInt($('batch').value) || 150)); const n = rows.length; const batches = Math.ceil(n / bs);
+    const ready = !!(provider && ethers.isAddress($('token').value.trim()) && n > 0 && ethers.isAddress(c.bulk || ''));
+    $('plan').innerHTML = `<span>network <b>${c.name}</b></span><span>BulkSend <b class="mono">${ethers.isAddress(c.bulk || '') ? c.bulk.slice(0, 8) + '…' : 'not deployed on this network yet'}</b></span><span><b>${n}</b> recipients in <b>${batches}</b> transaction${batches === 1 ? '' : 's'}</span><span>about <b>${Math.round(n * 0.037)}k</b> gas total</span>`;
+    $('approve').disabled = !ready; $('send').disabled = !ready;
+  }
+  $('batch').addEventListener('input', plan);
+
+  $('approve').addEventListener('click', async () => {
+    try { const token = $('token').value.trim(), bulk = cfg().bulk;
+      if (std() === '20') { const t = new ethers.Contract(token, ERC20_ABI, signer); const total = rows.reduce((a, r) => a + r.amount, 0n); const tx = await t.approve(bulk, total); log(`Approving ${ethers.formatUnits(total, decimals)} … ${explorerTx(tx.hash)}`); await tx.wait(); log('Approved.', 'ok'); }
+      else { const t = new ethers.Contract(token, ERC721_ABI, signer); if (await t.isApprovedForAll(me, bulk)) { log('Already approved for all.', 'ok'); return; } const tx = await t.setApprovalForAll(bulk, true); log(`Approving BulkSend as operator … ${explorerTx(tx.hash)}`); await tx.wait(); log('Approved. You can revoke this from your wallet at any time.', 'ok'); }
+    } catch (e) { log('Approval failed: ' + (e.shortMessage || e.message), 'bad'); }
+  });
+
+  $('stop').addEventListener('click', () => { stopFlag = true; log('Will stop after the current batch.', 'warn'); });
+
+  $('send').addEventListener('click', async () => {
+    stopFlag = false; $('send').disabled = true; $('stop').disabled = false;
+    const token = $('token').value.trim(), bulk = new ethers.Contract(cfg().bulk, BULK_ABI, signer), lenient = $('mode').value === 'lenient', safe = $('safe').checked;
+    const bs = Math.max(1, Math.min(400, parseInt($('batch').value) || 150)); let sent = 0, skipped = 0;
+    try {
+      for (let i = 0; i < rows.length; i += bs) {
+        const chunk = rows.slice(i, i + bs); const to = chunk.map(r => r.to); let tx;
+        log(`Batch ${Math.floor(i / bs) + 1}: ${chunk.length} recipients …`);
+        if (std() === '721') tx = await bulk.airdrop721(token, to, chunk.map(r => r.id), safe, lenient);
+        else if (std() === '1155') tx = await bulk.airdrop1155(token, to, chunk.map(r => r.id), chunk.map(r => r.amount), lenient);
+        else tx = await bulk.airdrop20(token, to, chunk.map(r => r.amount), lenient);
+        log(`  sent ${explorerTx(tx.hash)}, waiting …`); const rc = await tx.wait();
+        let bSent = 0, bSkip = 0; for (const l of rc.logs) { try { const p = bulk.interface.parseLog(l); if (!p) continue; if (p.name === 'Skipped') { bSkip++; log(`  skipped ${p.args.to} (id ${p.args.id}): ${decodeReason(p.args.reason)}`, 'warn'); } else if (p.name.startsWith('Airdrop')) { bSent = Number(p.args.sent); } } catch {} }
+        sent += bSent; skipped += bSkip; log(`  done: ${bSent} delivered${bSkip ? ', ' + bSkip + ' skipped' : ''} · gas ${rc.gasUsed}`, 'ok');
+        if (stopFlag) { log('Stopped.', 'warn'); break; }
+      }
+      log(`Finished. ${sent} delivered, ${skipped} skipped.`, 'ok');
+    } catch (e) { log('Stopped on error: ' + (e.shortMessage || e.message), 'bad'); }
+    $('send').disabled = false; $('stop').disabled = true;
+  });
+  function decodeReason(b) { try { if (b.length > 10 && b.slice(0, 10) === '0x08c379a0') return ethers.AbiCoder.defaultAbiCoder().decode(['string'], '0x' + b.slice(10))[0]; } catch {} return b === '0x' ? 'no reason given (recipient cannot receive)' : b.slice(0, 20); }
+  plan();
+})();
+</script>
+</body>
+</html>
