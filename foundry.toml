@@ -7,7 +7,12 @@ solc_version = "0.8.36"
 # Robinhood Chain testnet and mainnet both run nitro v3.11 at ArbOS 61 (checked 2026-09-06), which supports Cancun.
 evm_version = "cancun"
 optimizer = true
-optimizer_runs = 200
+# 10,000 runs: measured -90 gas/recipient on 721 strict, -98 lenient, -99 on ERC-20, for 1,088 extra runtime
+# bytes (about 218k gas once at deploy). Break-even at 2,422 recipients. 1,000,000 runs buys 0-7 more.
+optimizer_runs = 10000
+# Legacy codegen. via-IR is -236 gas/recipient on the 721 lenient path but +84 on 721 strict unsafe, the
+# mode this contract is used in most, and it would change the pipeline that produced every byte rehearsed
+# on the live chain. Not worth 0.4% either way.
 via_ir = false
 
 [fuzz]

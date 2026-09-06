@@ -46,7 +46,16 @@ Gas token is ETH. Testnet faucet: https://faucet.testnet.chain.robinhood.com/ (b
     forge build
     forge test -vv
 
-Gas: about 37k per recipient for a plain ERC-721 transfer, 54 to 57k when a receive hook runs (safe or lenient mode). Measured on the live testnet, not estimated.
+Gas, measured on the live testnet rather than estimated: about 35k per recipient for a plain ERC-721
+transfer, 38k with a receive hook, 32k for ERC-1155, 28k for ERC-20. BulkSend's own share of that is 2.0k to
+2.9k, roughly 6 to 9%; the rest is the token's own transfer, which no batch sender can avoid.
+
+**Delivery order matters more than any of that.** Collections built on ERC721A store ownership lazily, so
+moving a token scans backwards through unwritten slots and charges the sender for it. The page therefore
+delivers in ascending token id order, which makes each scan trivial. Measured on the live chain with the same
+20 ids: descending 65,358 gas per recipient, ascending 54,615. On a freshly minted 200-token collection the
+gap is wider still, and in lenient mode a descending list can push honest recipients past the per-transfer
+allowance so they are skipped. Everyone still receives exactly the id listed for them; only the order changes.
 
 ## Deploy
 

@@ -88,15 +88,17 @@ contract BulkSendRealTest is Test {
         assertEq(skips, 3);
     }
 
-    function testOZ721_zero_recipient_is_refused_in_both_modes() public {
-        // burning an NFT is irreversible, so a zero address in the list is a data error the contract refuses outright
+    /// A zero address is never sent to: some tokens treat it as a burn, and burning an NFT because of a stray
+    /// spreadsheet line is not recoverable. Strict refuses the batch; lenient skips that one and delivers the rest.
+    function testOZ721_zero_recipient_strict_reverts_lenient_skips_and_never_burns() public {
         OZ721 t = new OZ721(); t.mint(me, 1); t.mint(me, 2);
         address[] memory to = new address[](2); to[0] = address(0xB1); to[1] = address(0);
         vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
         vm.expectRevert(abi.encodeWithSelector(BulkSend.ZeroRecipient.selector, 1)); bulk.airdrop721(address(t), to, _range(1, 2), false, false);
-        vm.expectRevert(abi.encodeWithSelector(BulkSend.ZeroRecipient.selector, 1)); bulk.airdrop721(address(t), to, _range(1, 2), false, true);
-        vm.stopPrank();
         assertEq(t.balanceOf(me), 2);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721(address(t), to, _range(1, 2), false, true);
+        vm.stopPrank();
+        assertEq(sent, 1); assertEq(skipped, 1); assertEq(t.ownerOf(1), address(0xB1)); assertEq(t.ownerOf(2), me);
     }
 
     function testOZ721_unsafe_lenient_skips_unowned() public {
@@ -362,14 +364,39 @@ contract BulkSendRealTest is Test {
         assertEq(sent, 2); assertEq(skipped, 1); assertEq(t.balanceOf(to[2]), 0); assertEq(t.balanceOf(me), 80e18);
     }
 
-    function testOZ20_zero_address_recipient_refused_in_both_modes() public {
+    function testOZ20_zero_address_strict_reverts_lenient_skips() public {
         OZ20 t = new OZ20(); t.mint(me, 10e18);
         address[] memory to = new address[](2); to[0] = address(0); to[1] = address(0xB1);
         vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
         vm.expectRevert(abi.encodeWithSelector(BulkSend.ZeroRecipient.selector, 0)); bulk.airdrop20(address(t), to, _fill(2, 1e18), false);
-        vm.expectRevert(abi.encodeWithSelector(BulkSend.ZeroRecipient.selector, 0)); bulk.airdrop20(address(t), to, _fill(2, 1e18), true);
-        vm.stopPrank();
         assertEq(t.balanceOf(me), 10e18);
+        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, _fill(2, 1e18), true);
+        vm.stopPrank();
+        assertEq(sent, 1); assertEq(skipped, 1); assertEq(t.balanceOf(address(0)), 0); assertEq(t.balanceOf(address(0xB1)), 1e18);
+    }
+
+    /// A permissive token that would happily burn to the zero address must still never be asked to.
+    function testNoReturn20_zero_address_is_never_burned_even_though_the_token_allows_it() public {
+        NoReturn20 t = new NoReturn20(); t.mint(me, 1000);
+        address[] memory to = new address[](2); to[0] = address(0); to[1] = address(0xB1);
+        vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
+        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, _fill(2, 10), true);
+        vm.stopPrank();
+        assertEq(sent, 1); assertEq(skipped, 1); assertEq(t.balanceOf(address(0)), 0); assertEq(t.balanceOf(me), 990);
+    }
+
+    /// The strict-mode counter is set after the loop; it must still equal the batch size.
+    function testStrict_sent_count_equals_batch_size() public {
+        OZ721 t = new OZ721(); t.mintMany(me, 1, 25);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721(address(t), _to(25, 55), _range(1, 25), false, false);
+        vm.stopPrank();
+        assertEq(sent, 25); assertEq(skipped, 0);
+        OZ1155 m = new OZ1155(); m.mint(me, 1, 100);
+        vm.startPrank(me); m.setApprovalForAll(address(bulk), true);
+        (uint256 s2,) = bulk.airdrop1155(address(m), _to(10, 56), _fill(10, 1), _fill(10, 2), false);
+        vm.stopPrank();
+        assertEq(s2, 10);
     }
 
     function testNoReturn20_usdt_style_delivers() public {

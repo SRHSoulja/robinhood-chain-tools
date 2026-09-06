@@ -49,6 +49,11 @@ contract BulkSend {
     ///      crossing an uninitialized ownership slot, smart-contract wallets) land well under this.
     uint256 public constant LENIENT_GAS = 400_000;
 
+    /// @dev Reason emitted when a lenient batch is asked to send to the zero address. The transfer is skipped
+    ///      rather than attempted: some tokens treat the zero address as a burn, and burning someone's NFT
+    ///      because of a stray line in a spreadsheet is not a recoverable mistake. Strict mode reverts instead.
+    bytes internal constant ZERO_REASON = hex"9fabe1c1";
+
     /// @notice Bytes of a failed transfer's revert data kept for the `Skipped` event.
     /// @dev A hostile recipient can revert with megabytes; copying and emitting all of it is a gas amplifier.
     ///      128 bytes holds any custom error with a few arguments and the front of an `Error(string)`.
@@ -65,8 +70,8 @@ contract BulkSend {
         _mustBeContract(token);
         for (uint256 i; i < n;) {
             address dst = to[i];
-            if (dst == address(0)) revert ZeroRecipient(i);
             if (lenient) {
+                if (dst == address(0)) { ++skipped; emit Skipped(token, dst, ids[i], 1, ZERO_REASON); unchecked { ++i; } continue; }
                 bytes memory data = safe
                     ? abi.encodeCall(IERC721Like.safeTransferFrom, (msg.sender, dst, ids[i]))
                     : abi.encodeCall(IERC721Like.transferFrom, (msg.sender, dst, ids[i]));
@@ -78,12 +83,13 @@ contract BulkSend {
                     emit Skipped(token, dst, ids[i], 1, reason);
                 }
             } else {
+                if (dst == address(0)) revert ZeroRecipient(i);
                 if (safe) IERC721Like(token).safeTransferFrom(msg.sender, dst, ids[i]);
                 else IERC721Like(token).transferFrom(msg.sender, dst, ids[i]);
-                ++sent;
             }
             unchecked { ++i; }
         }
+        if (!lenient) sent = n;   // strict mode delivers every entry or reverts, so counting in the loop is wasted gas
         emit Airdrop721(token, msg.sender, sent, skipped);
     }
 
@@ -101,8 +107,8 @@ contract BulkSend {
         _mustBeContract(token);
         for (uint256 i; i < n;) {
             address dst = to[i];
-            if (dst == address(0)) revert ZeroRecipient(i);
             if (lenient) {
+                if (dst == address(0)) { ++skipped; emit Skipped(token, dst, ids[i], amounts[i], ZERO_REASON); unchecked { ++i; } continue; }
                 (bool ok, bytes memory reason) =
                     _tryCall(token, abi.encodeCall(IERC1155Like.safeTransferFrom, (msg.sender, dst, ids[i], amounts[i], "")), i);
                 if (ok) {
@@ -112,11 +118,12 @@ contract BulkSend {
                     emit Skipped(token, dst, ids[i], amounts[i], reason);
                 }
             } else {
+                if (dst == address(0)) revert ZeroRecipient(i);
                 IERC1155Like(token).safeTransferFrom(msg.sender, dst, ids[i], amounts[i], "");
-                ++sent;
             }
             unchecked { ++i; }
         }
+        if (!lenient) sent = n;
         emit Airdrop1155(token, msg.sender, sent, skipped);
     }
 
@@ -134,7 +141,10 @@ contract BulkSend {
         _mustBeContract(token);
         for (uint256 i; i < n;) {
             address dst = to[i];
-            if (dst == address(0)) revert ZeroRecipient(i);
+            if (dst == address(0)) {
+                if (!lenient) revert ZeroRecipient(i);
+                ++skipped; emit Skipped(token, dst, 0, amounts[i], ZERO_REASON); unchecked { ++i; } continue;
+            }
             bytes memory data = abi.encodeCall(IERC20Like.transferFrom, (msg.sender, dst, amounts[i]));
             bool ok;
             bytes memory ret;

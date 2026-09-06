@@ -91,7 +91,7 @@
 (() => {
   // ---- chain config; BulkSend addresses are filled in after each deploy ----
   const CHAINS = {
-    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '0x0e6e6d592091fd5a43259cb33b67279c4f28fbfa' },
+    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '0xd013c00eec3e7f1b93223a75eaf50f77b863853f' },
     4663:  { name: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com', bulk: '{{BULKSEND_MAINNET}}' },
   };
   const BULK_ABI = [
@@ -233,6 +233,18 @@
   const FORM = ['net', 'std', 'token', 'list', 'csv', 'parse', 'batch', 'mode', 'safe', 'connect'];
   function lockForm(on) { sending = on; for (const id of FORM) { const el = $(id); if (el) el.disabled = on; } }
 
+  // ---- delivery order ----
+  // Some collections (anything built on ERC721A) store ownership lazily: moving a token scans backwards
+  // through unwritten slots until it finds the owner, and that scan is charged to the sender. Delivering in
+  // ascending token id order makes each scan trivial, because the transfer before it wrote the slot next door.
+  // Measured on a 200-token mint: ascending 52,489 gas per recipient, descending 158,109, and in lenient mode
+  // 54 of 200 honest recipients were skipped for running out of the per-transfer allowance. Every recipient
+  // still receives exactly the id it was given; only the order of delivery changes.
+  function orderForDelivery(list) {
+    if (std() === '20') return list.slice();
+    return list.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  }
+
   // ---- the call for one chunk ----
   function callArgs(chunk) {
     const token = $('token').value.trim(), to = chunk.map(r => r.to);
@@ -248,15 +260,16 @@
     try { bulk = new ethers.Contract(cfg().bulk, BULK_ABI, await new ethers.BrowserProvider(window.ethereum).getSigner()); }
     catch (e) { return { ok: false, why: 'could not reach the wallet: ' + String(e.shortMessage || e.message) }; }
     const bs = batchSize(); let willDeliver = 0, willSkip = 0;
+    const ordered = orderForDelivery(rows);
     if (verbose) log('Test run: simulating every batch against the live chain. Nothing is signed and nothing is spent.');
-    for (let i = 0; i < rows.length; i += bs) {
-      const chunk = rows.slice(i, i + bs); const [fn, args] = callArgs(chunk);
+    for (let i = 0; i < ordered.length; i += bs) {
+      const chunk = ordered.slice(i, i + bs); const [fn, args] = callArgs(chunk);
       try { const res = await bulk[fn].staticCall(...args); willDeliver += Number(res[0]); willSkip += Number(res[1]); }
       catch (e) { const why = explainCallError(e); log('Test run stopped at batch ' + (Math.floor(i / bs) + 1) + ': ' + why, 'bad'); return { ok: false, why }; }
     }
     if (verbose) {
       log('Test run finished: ' + willDeliver + ' of ' + rows.length + ' would be delivered' + (willSkip ? ', ' + willSkip + ' skipped' : '') + '.', willSkip ? 'warn' : 'ok');
-      if (willSkip) log('A skipped wallet is one the token itself refuses. Send, then download the skipped list to retry those.', 'warn');
+      if (willSkip) log('A skipped wallet is one the token itself refuses. Send, then download the skipped list and retry those in strict mode, where each transfer gets the whole transaction\'s gas.', 'warn');
     }
     return { ok: true, willDeliver, willSkip };
   }
@@ -295,7 +308,8 @@
     if (pre.willSkip) log('Test run: ' + pre.willDeliver + ' will be delivered, ' + pre.willSkip + ' skipped.', 'warn');
 
     lockForm(true); $('send').disabled = true; $('preflight').disabled = true; $('approve').disabled = true; $('stop').disabled = false;
-    const list = rows.slice();   // snapshot: the loop must not see a list edited mid-flight
+    const list = orderForDelivery(rows);   // snapshot, in delivery order: the loop must not see a list edited mid-flight
+    if (std() !== '20' && list.length > 1 && String(list[0].id) !== String(rows[0].id)) log('Delivering in ascending token id order, which is much cheaper on lazily-minted collections. Everyone still gets the id you listed for them.');
     const bulkAddr = cfg().bulk, bulk = new ethers.Contract(bulkAddr, BULK_ABI, signer);
     const bs = batchSize(); let sent = 0, skipped = 0;
     try {
