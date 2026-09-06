@@ -357,7 +357,8 @@ contract BulkSendRealTest is Test {
         OZ20 t = new OZ20(); t.mint(me, 100e18);
         address[] memory to = _to(3, 8); uint256[] memory amt = new uint256[](3); amt[0] = 10e18; amt[1] = 10e18; amt[2] = 10e18;
         vm.startPrank(me); t.approve(address(bulk), 25e18);
-        vm.expectRevert(abi.encodeWithSelector(BulkSend.TransferFailed.selector, to[2], 0)); bulk.airdrop20(address(t), to, amt, false);
+        // the token's own error reaches the caller now, so the page can say "allowance too low"
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(bulk), 5e18, 10e18)); bulk.airdrop20(address(t), to, amt, false);
         assertEq(t.balanceOf(me), 100e18);
         (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, amt, true);
         vm.stopPrank();
@@ -412,7 +413,7 @@ contract BulkSendRealTest is Test {
         False20 t = new False20(); t.mint(me, 100);
         address[] memory to = _to(2, 12); uint256[] memory amt = new uint256[](2); amt[0] = 60; amt[1] = 60;   // second one fails: balance short
         vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
-        vm.expectRevert(abi.encodeWithSelector(BulkSend.TransferFailed.selector, to[1], 0)); bulk.airdrop20(address(t), to, amt, false);
+        vm.expectRevert(); bulk.airdrop20(address(t), to, amt, false);   // False20 returns false with no reason, so TransferFailed still stands
         (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, amt, true);
         vm.stopPrank();
         assertEq(sent, 1); assertEq(skipped, 1); assertEq(t.balanceOf(to[0]), 60); assertEq(t.balanceOf(to[1]), 0);
@@ -556,6 +557,28 @@ contract BulkSendRealTest is Test {
         (uint256 sent2,) = bulk.airdrop721(address(t), to, second, true, false);
         vm.stopPrank();
         assertEq(sent2, 1); assertEq(t.ownerOf(2), address(h));
+    }
+
+
+    /// A wallet running delegated code under EIP-7702 has code but is not a token. Calling it as one is how a
+    /// mistyped address could be counted as a successful delivery, so it is refused up front.
+    function test_delegatedWalletIsNotMistakenForAToken() public {
+        address wallet = address(0xBEEF7702);
+        vm.etch(wallet, abi.encodePacked(hex"ef0100", address(new OZ20())));
+        address[] memory to = _to(1, 99);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.DelegatedWallet.selector, wallet)); bulk.airdrop20(wallet, to, _fill(1, 1), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.DelegatedWallet.selector, wallet)); bulk.airdrop721(wallet, to, _fill(1, 1), false, false);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.DelegatedWallet.selector, wallet)); bulk.airdrop1155(wallet, to, _fill(1, 1), _fill(1, 1), true);
+    }
+
+    /// Strict mode should tell the user what the token said, not just that something failed.
+    function testStrict20_bubblesTheTokensOwnError() public {
+        OZ20 t = new OZ20(); t.mint(me, 10e18);
+        address[] memory to = _to(2, 98);
+        vm.startPrank(me); t.approve(address(bulk), 1e18);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(bulk), 1e18, 5e18));
+        bulk.airdrop20(address(t), to, _fill(2, 5e18), false);
+        vm.stopPrank();
     }
 
     // ======================= the contract itself =======================

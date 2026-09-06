@@ -39,6 +39,7 @@ contract BulkSend {
     error EmptyBatch();
     error TransferFailed(address to, uint256 id);
     error NotAContract(address token);
+    error DelegatedWallet(address token);
     error ZeroRecipient(uint256 index);
     error OutOfGasForBatch(uint256 index);
 
@@ -160,6 +161,9 @@ contract BulkSend {
                 ++skipped;
                 emit Skipped(token, dst, 0, amounts[i], ret);
             } else {
+                if (!ok && ret.length > 0) {
+                    assembly ("memory-safe") { revert(add(ret, 32), mload(ret)) }   // the token said why; pass it on
+                }
                 revert TransferFailed(dst, 0);
             }
             unchecked { ++i; }
@@ -203,7 +207,19 @@ contract BulkSend {
 
     /// @dev A low-level call to an address with no code "succeeds" with empty return data, which is also what
     ///      USDT-style tokens return on success. So the token must be a contract before any batch runs.
+    ///      An EIP-7702 wallet carries a 23-byte delegation designator (0xef0100 + address), which is code but
+    ///      is not a token; treated as a mistyped address rather than something to call.
     function _mustBeContract(address token) internal view {
-        if (token.code.length == 0) revert NotAContract(token);
+        uint256 len = token.code.length;
+        if (len == 0) revert NotAContract(token);
+        if (len == 23) {
+            bytes3 prefix;
+            assembly ("memory-safe") {
+                let ptr := mload(0x40)
+                extcodecopy(token, ptr, 0, 3)
+                prefix := mload(ptr)
+            }
+            if (prefix == 0xef0100) revert DelegatedWallet(token);
+        }
     }
 }

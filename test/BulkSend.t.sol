@@ -149,7 +149,8 @@ contract BulkSendTest is Test {
         erc20.mint(sender, 5e18);
         address[] memory to = _recipients(2); uint256[] memory amt = new uint256[](2); amt[0] = 4e18; amt[1] = 4e18;
         vm.startPrank(sender); erc20.approve(address(bulk), type(uint256).max);
-        vm.expectRevert(abi.encodeWithSelector(BulkSend.TransferFailed.selector, to[1], 0));
+        // strict mode now passes the token's own reason through instead of replacing it
+        vm.expectRevert(bytes("BALANCE"));
         bulk.airdrop20(address(erc20), to, amt, false);
         (uint256 sent, uint256 skipped) = bulk.airdrop20(address(erc20), to, amt, true);
         vm.stopPrank();
