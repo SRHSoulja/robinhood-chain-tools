@@ -5,9 +5,17 @@ pragma solidity ^0.8.24;
 /// @notice Holds nothing. Every transfer is `transferFrom(msg.sender, ...)`, so the contract can only
 ///         move what the caller approved, inside the transaction the caller signed. No owner, no
 ///         upgrade path, no fees, no pause. If you want it to stop, stop calling it.
-/// @dev    `lenient` mode wraps each transfer in try/catch and emits `Skipped` instead of reverting the
-///         whole batch when one recipient cannot receive (a contract without a receiver hook, a burned
-///         id, a paused token). Strict mode reverts on the first failure.
+///
+/// Two modes:
+///  - strict  (`lenient = false`): the token's own revert bubbles up and the whole batch reverts. Full gas
+///            is forwarded to each transfer, so a recipient with a heavy receive hook still works here.
+///  - lenient (`lenient = true`): a recipient that cannot receive is skipped, logged with `Skipped`, and the
+///            rest is delivered. Each transfer gets at most `LENIENT_GAS`, so one recipient that burns gas
+///            cannot starve the batch, and at most `REASON_CAP` bytes of its revert data are kept, so one
+///            recipient returning megabytes cannot inflate the batch's memory cost.
+///
+/// A recipient skipped in lenient mode with "cannot receive" may simply need more than `LENIENT_GAS`.
+/// Send that one on its own in strict mode, where the whole transaction's gas is available to it.
 interface IERC721Like {
     function transferFrom(address from, address to, uint256 tokenId) external;
     function safeTransferFrom(address from, address to, uint256 tokenId) external;
@@ -31,20 +39,20 @@ contract BulkSend {
     error EmptyBatch();
     error TransferFailed(address to, uint256 id);
     error NotAContract(address token);
+    error ZeroRecipient(uint256 index);
+    error OutOfGasForBatch(uint256 index);
 
-    /// @dev Gas handed to one safe transfer in LENIENT mode (the transfer itself plus the recipient's receive hook).
-    ///      Without a cap, one recipient whose hook burns everything it is given leaves the loop with 1/64 of its
-    ///      gas (EIP-150) and the rest of the batch runs dry and reverts, which is exactly what lenient mode promises
-    ///      not to do. 400k covers any honest transfer with any honest hook by a wide margin; a hook that needs more
-    ///      is skipped and logged, never able to sink the batch. Strict mode forwards all gas, since any failure there
-    ///      reverts the whole batch by design.
-    uint256 internal constant LENIENT_GAS = 400_000;
+    /// @notice Gas given to one transfer (and its recipient's receive hook) in lenient mode.
+    /// @dev Without a cap, EIP-150 hands a callee 63/64 of the remaining gas, so one recipient whose hook
+    ///      burns everything leaves the loop with 1/64 and the rest of the batch runs dry: exactly what
+    ///      lenient mode promises not to do. Measured honest recipients (OpenZeppelin ERC-721/1155, ERC721A
+    ///      crossing an uninitialized ownership slot, smart-contract wallets) land well under this.
+    uint256 public constant LENIENT_GAS = 400_000;
 
-    /// @dev A low-level call to an address with no code "succeeds" with empty return data, which is also what
-    ///      USDT-style tokens return on success. So the token must be a contract before any batch runs.
-    function _mustBeContract(address token) internal view {
-        if (token.code.length == 0) revert NotAContract(token);
-    }
+    /// @notice Bytes of a failed transfer's revert data kept for the `Skipped` event.
+    /// @dev A hostile recipient can revert with megabytes; copying and emitting all of it is a gas amplifier.
+    ///      128 bytes holds any custom error with a few arguments and the front of an `Error(string)`.
+    uint256 internal constant REASON_CAP = 128;
 
     /// @notice Send one ERC-721 id to each recipient. `safe` uses safeTransferFrom (recipient contracts must accept).
     function airdrop721(address token, address[] calldata to, uint256[] calldata ids, bool safe, bool lenient)
@@ -56,12 +64,22 @@ contract BulkSend {
         if (n == 0) revert EmptyBatch();
         _mustBeContract(token);
         for (uint256 i; i < n;) {
+            address dst = to[i];
+            if (dst == address(0)) revert ZeroRecipient(i);
             if (lenient) {
-                bool ok = _try721(token, to[i], ids[i], safe);
-                if (ok) ++sent; else ++skipped;
+                bytes memory data = safe
+                    ? abi.encodeCall(IERC721Like.safeTransferFrom, (msg.sender, dst, ids[i]))
+                    : abi.encodeCall(IERC721Like.transferFrom, (msg.sender, dst, ids[i]));
+                (bool ok, bytes memory reason) = _tryCall(token, data, i);
+                if (ok) {
+                    ++sent;
+                } else {
+                    ++skipped;
+                    emit Skipped(token, dst, ids[i], 1, reason);
+                }
             } else {
-                if (safe) IERC721Like(token).safeTransferFrom(msg.sender, to[i], ids[i]);
-                else IERC721Like(token).transferFrom(msg.sender, to[i], ids[i]);
+                if (safe) IERC721Like(token).safeTransferFrom(msg.sender, dst, ids[i]);
+                else IERC721Like(token).transferFrom(msg.sender, dst, ids[i]);
                 ++sent;
             }
             unchecked { ++i; }
@@ -82,15 +100,19 @@ contract BulkSend {
         if (n == 0) revert EmptyBatch();
         _mustBeContract(token);
         for (uint256 i; i < n;) {
+            address dst = to[i];
+            if (dst == address(0)) revert ZeroRecipient(i);
             if (lenient) {
-                try IERC1155Like(token).safeTransferFrom{gas: LENIENT_GAS}(msg.sender, to[i], ids[i], amounts[i], "") {
+                (bool ok, bytes memory reason) =
+                    _tryCall(token, abi.encodeCall(IERC1155Like.safeTransferFrom, (msg.sender, dst, ids[i], amounts[i], "")), i);
+                if (ok) {
                     ++sent;
-                } catch (bytes memory reason) {
+                } else {
                     ++skipped;
-                    emit Skipped(token, to[i], ids[i], amounts[i], reason);
+                    emit Skipped(token, dst, ids[i], amounts[i], reason);
                 }
             } else {
-                IERC1155Like(token).safeTransferFrom(msg.sender, to[i], ids[i], amounts[i], "");
+                IERC1155Like(token).safeTransferFrom(msg.sender, dst, ids[i], amounts[i], "");
                 ++sent;
             }
             unchecked { ++i; }
@@ -99,6 +121,9 @@ contract BulkSend {
     }
 
     /// @notice Send `amounts[i]` of an ERC-20 to each recipient. Tolerates tokens that return nothing.
+    /// @dev A token that moves the balance and then returns data that is not exactly `true` is counted as a
+    ///      failure. That is deliberate (fail closed), so the skip report reflects the token's answer, not a
+    ///      balance check; re-sending to a skipped wallet on such a token could pay it twice.
     function airdrop20(address token, address[] calldata to, uint256[] calldata amounts, bool lenient)
         external
         returns (uint256 sent, uint256 skipped)
@@ -108,32 +133,67 @@ contract BulkSend {
         if (n == 0) revert EmptyBatch();
         _mustBeContract(token);
         for (uint256 i; i < n;) {
-            (bool ok, bytes memory ret) =
-                token.call(abi.encodeWithSelector(IERC20Like.transferFrom.selector, msg.sender, to[i], amounts[i]));
-            // success = call succeeded AND (no return data, USDT-style) OR (at least one word whose value is exactly 1).
-            // Decoded as uint256, not bool, so odd return data (short, or a word that is neither 0 nor 1) is a plain
-            // failure instead of a Panic that would escape the lenient path and revert the whole batch.
+            address dst = to[i];
+            if (dst == address(0)) revert ZeroRecipient(i);
+            bytes memory data = abi.encodeCall(IERC20Like.transferFrom, (msg.sender, dst, amounts[i]));
+            bool ok;
+            bytes memory ret;
+            if (lenient) {
+                (ok, ret) = _tryCall(token, data, i);
+            } else {
+                (ok, ret) = _callAll(token, data);
+            }
             bool good = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (uint256)) == 1));
             if (good) {
                 ++sent;
             } else if (lenient) {
                 ++skipped;
-                emit Skipped(token, to[i], 0, amounts[i], ret);
+                emit Skipped(token, dst, 0, amounts[i], ret);
             } else {
-                revert TransferFailed(to[i], 0);
+                revert TransferFailed(dst, 0);
             }
             unchecked { ++i; }
         }
         emit Airdrop20(token, msg.sender, sent, skipped);
     }
 
-    function _try721(address token, address to, uint256 id, bool safe) internal returns (bool) {
-        if (safe) {
-            try IERC721Like(token).safeTransferFrom{gas: LENIENT_GAS}(msg.sender, to, id) { return true; }
-            catch (bytes memory reason) { emit Skipped(token, to, id, 1, reason); return false; }
-        } else {
-            try IERC721Like(token).transferFrom{gas: LENIENT_GAS}(msg.sender, to, id) { return true; }
-            catch (bytes memory reason) { emit Skipped(token, to, id, 1, reason); return false; }
+    /// @dev Lenient-mode call: capped gas, capped returndata, and a hard stop if this transaction cannot
+    ///      actually afford the stipend. Without that stop, EIP-150 silently clamps the stipend to 63/64 of
+    ///      what is left, an honest recipient fails for lack of gas, and the batch reports it as the
+    ///      recipient's fault. It would also make `eth_estimateGas` settle on a limit that skips recipients
+    ///      rather than delivering to them, since skipping is cheaper. Reverting keeps the estimate honest.
+    function _tryCall(address token, bytes memory data, uint256 index) internal returns (bool ok, bytes memory ret) {
+        uint256 g = gasleft();
+        if (g - g / 64 < LENIENT_GAS) revert OutOfGasForBatch(index);
+        uint256 cap = REASON_CAP;
+        assembly ("memory-safe") {
+            ok := call(LENIENT_GAS, token, 0, add(data, 32), mload(data), 0, 0)
+            let size := returndatasize()
+            if gt(size, cap) { size := cap }
+            ret := mload(0x40)
+            mstore(ret, size)
+            returndatacopy(add(ret, 32), 0, size)
+            mstore(0x40, add(add(ret, 32), and(add(size, 31), not(31))))
         }
+    }
+
+    /// @dev Strict-mode ERC-20 call: all remaining gas, returndata capped anyway (it is only read, never bubbled).
+    function _callAll(address token, bytes memory data) internal returns (bool ok, bytes memory ret) {
+        uint256 cap = REASON_CAP;
+        assembly ("memory-safe") {
+            ok := call(gas(), token, 0, add(data, 32), mload(data), 0, 0)
+            let size := returndatasize()
+            if gt(size, cap) { size := cap }
+            ret := mload(0x40)
+            mstore(ret, size)
+            returndatacopy(add(ret, 32), 0, size)
+            mstore(0x40, add(add(ret, 32), and(add(size, 31), not(31))))
+        }
+    }
+
+    /// @dev A low-level call to an address with no code "succeeds" with empty return data, which is also what
+    ///      USDT-style tokens return on success. So the token must be a contract before any batch runs.
+    function _mustBeContract(address token) internal view {
+        if (token.code.length == 0) revert NotAContract(token);
     }
 }

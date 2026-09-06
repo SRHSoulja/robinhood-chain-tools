@@ -7,11 +7,30 @@ the caller approved, inside the transaction the caller signed. No owner, no upgr
 
 ## Modes
 
-- strict (`lenient=false`): one bad recipient reverts the whole batch, nothing moves.
+- strict (`lenient=false`): one bad recipient reverts the whole batch, nothing moves. The token's own error
+  bubbles up, and each transfer gets the whole transaction's gas, so a recipient with a heavy receive hook works.
 - lenient (`lenient=true`): a recipient that cannot receive (a contract with no receiver hook, an id you
   no longer own, a paused token) is skipped and logged with a `Skipped` event; the rest is delivered.
-  The call returns `(sent, skipped)`.
+  The call returns `(sent, skipped)`. Each transfer gets at most `LENIENT_GAS` (400,000) and at most 128 bytes
+  of its revert data is kept, so no single recipient can starve the batch or inflate its cost.
 - safe (721 only): use `safeTransferFrom`, so contract recipients must implement `onERC721Received`.
+
+A wallet skipped in lenient mode with "cannot receive" may simply need more than the stipend. Send that one
+on its own in strict mode, where the whole transaction's gas is available to it.
+
+If a batch cannot afford to give every recipient its full stipend, the contract reverts `OutOfGasForBatch`
+rather than silently skipping the last wallets and blaming them. That also keeps `eth_estimateGas` honest,
+since "skip everyone" is no longer a cheaper way to succeed.
+
+The zero address is refused as a recipient in both modes: burning a token is not something a bulk sender
+should do by accident.
+
+## Before you send
+
+The page runs a free test run first: it simulates every batch against live chain state with `eth_call`,
+so you learn exactly how many would be delivered before anything is signed. Some collections use a creator
+transfer validator and only allow transfers through operators the creator approved; those cannot be moved by
+any bulk sender, and the test run says so instead of wasting a transaction.
 
 ## Networks
 
@@ -27,7 +46,7 @@ Gas token is ETH. Testnet faucet: https://faucet.testnet.chain.robinhood.com/ (b
     forge build
     forge test -vv
 
-Gas: about 37k per recipient for ERC-721 in a batch of 200.
+Gas: about 37k per recipient for a plain ERC-721 transfer, 54 to 57k when a receive hook runs (safe or lenient mode). Measured on the live testnet, not estimated.
 
 ## Deploy
 
@@ -40,6 +59,12 @@ Testnet first, always. Rehearse on a local fork with no funds:
 
     anvil --fork-url $RH_RPC --port 8555
     cast rpc --rpc-url http://127.0.0.1:8555 anvil_setBalance <deployer> 0x8AC7230489E80000
+
+## Reviews
+
+Two independent reviewer agents audited this: a security audit and a second pass on the fixes. Findings and
+what changed are recorded in the project's wiki page in the brain. Nothing here has been reviewed by a human
+audit team.
 
 ## Keys
 

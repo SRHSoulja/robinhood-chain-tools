@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import {BulkSend} from "../src/BulkSend.sol";
-import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20} from "./RealTokens.sol";
+import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20, Callback20, Erc20GasHog} from "./RealTokens.sol";
 import {IERC721Errors, IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 /// Every airdrop method, against real token implementations, in every mode, with every awkward recipient.
@@ -88,13 +88,24 @@ contract BulkSendRealTest is Test {
         assertEq(skips, 3);
     }
 
-    function testOZ721_unsafe_lenient_skips_zero_address_and_unowned() public {
-        OZ721 t = new OZ721(); t.mint(me, 1); t.mint(other, 2); t.mint(me, 3);
-        address[] memory to = new address[](3); to[0] = address(0); to[1] = address(0xB1); to[2] = address(0xB2);
+    function testOZ721_zero_recipient_is_refused_in_both_modes() public {
+        // burning an NFT is irreversible, so a zero address in the list is a data error the contract refuses outright
+        OZ721 t = new OZ721(); t.mint(me, 1); t.mint(me, 2);
+        address[] memory to = new address[](2); to[0] = address(0xB1); to[1] = address(0);
         vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
-        (uint256 sent, uint256 skipped) = bulk.airdrop721(address(t), to, _range(1, 3), false, true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.ZeroRecipient.selector, 1)); bulk.airdrop721(address(t), to, _range(1, 2), false, false);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.ZeroRecipient.selector, 1)); bulk.airdrop721(address(t), to, _range(1, 2), false, true);
         vm.stopPrank();
-        assertEq(sent, 1); assertEq(skipped, 2); assertEq(t.ownerOf(1), me); assertEq(t.ownerOf(2), other); assertEq(t.ownerOf(3), address(0xB2));
+        assertEq(t.balanceOf(me), 2);
+    }
+
+    function testOZ721_unsafe_lenient_skips_unowned() public {
+        OZ721 t = new OZ721(); t.mint(other, 1); t.mint(me, 2);
+        address[] memory to = new address[](2); to[0] = address(0xB1); to[1] = address(0xB2);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721(address(t), to, _range(1, 2), false, true);
+        vm.stopPrank();
+        assertEq(sent, 1); assertEq(skipped, 1); assertEq(t.ownerOf(1), other); assertEq(t.ownerOf(2), address(0xB2));
     }
 
     function testOZ721_unsafe_strict_reverts_on_unowned_with_oz_error() public {
@@ -351,14 +362,14 @@ contract BulkSendRealTest is Test {
         assertEq(sent, 2); assertEq(skipped, 1); assertEq(t.balanceOf(to[2]), 0); assertEq(t.balanceOf(me), 80e18);
     }
 
-    function testOZ20_zero_address_recipient_strict_reverts_lenient_skips() public {
+    function testOZ20_zero_address_recipient_refused_in_both_modes() public {
         OZ20 t = new OZ20(); t.mint(me, 10e18);
         address[] memory to = new address[](2); to[0] = address(0); to[1] = address(0xB1);
         vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
-        vm.expectRevert(); bulk.airdrop20(address(t), to, _fill(2, 1e18), false);
-        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, _fill(2, 1e18), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.ZeroRecipient.selector, 0)); bulk.airdrop20(address(t), to, _fill(2, 1e18), false);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.ZeroRecipient.selector, 0)); bulk.airdrop20(address(t), to, _fill(2, 1e18), true);
         vm.stopPrank();
-        assertEq(sent, 1); assertEq(skipped, 1); assertEq(t.balanceOf(address(0xB1)), 1e18);
+        assertEq(t.balanceOf(me), 10e18);
     }
 
     function testNoReturn20_usdt_style_delivers() public {
@@ -431,11 +442,109 @@ contract BulkSendRealTest is Test {
         assertEq(sent, n); assertEq(t.balanceOf(me), 0); uint256 sum; for (uint256 i; i < n; i++) sum += t.balanceOf(to[i]); assertEq(sum, per * n); assertEq(t.balanceOf(address(bulk)), 0);
     }
 
+
+    // ======================= second-audit findings =======================
+
+    /// N1: a lenient batch that cannot afford the full stipend must revert, not skip an honest recipient and
+    /// blame it. Also what keeps eth_estimateGas honest: the cheap "skip everyone" outcome is no longer valid.
+    function testLenient_underfunded_batch_reverts_instead_of_blaming_a_recipient() public {
+        uint256 n = 6;
+        OZ721 t = new OZ721(); t.mintMany(me, 1, n);
+        address[] memory to = _to(n, 91);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        vm.expectRevert();   // OutOfGasForBatch at whichever index runs dry
+        bulk.airdrop721{gas: 500_000}(address(t), to, _range(1, n), true, true);
+        vm.stopPrank();
+        assertEq(t.balanceOf(me), n);   // nothing moved
+    }
+
+    function testLenient_fully_funded_batch_delivers_everyone() public {
+        uint256 n = 6;
+        OZ721 t = new OZ721(); t.mintMany(me, 1, n);
+        address[] memory to = _to(n, 92);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721{gas: 4_000_000}(address(t), to, _range(1, n), true, true);
+        vm.stopPrank();
+        assertEq(sent, n); assertEq(skipped, 0);
+    }
+
+    /// N2: the ERC-20 path now carries the same stipend, so a hostile recipient reached through a token
+    /// callback cannot sink the batch.
+    function testERC20_gas_hog_recipient_cannot_sink_a_lenient_batch() public {
+        uint256 n = 40;
+        Callback20 t = new Callback20(); t.mint(me, 1000);
+        address[] memory to = _to(n, 93); to[1] = address(new Erc20GasHog());
+        vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
+        (uint256 sent, uint256 skipped) = bulk.airdrop20{gas: 20_000_000}(address(t), to, _fill(n, 1), true);
+        vm.stopPrank();
+        assertEq(sent, n - 1); assertEq(skipped, 1); assertEq(t.balanceOf(to[0]), 1);
+    }
+
+    /// N3: a recipient that reverts with a huge payload can no longer amplify the batch's cost. The revert
+    /// data kept is capped, so a bomb costs about what an ordinary failure costs.
+    function testReturnBomb_costs_no_more_than_an_ordinary_failure() public {
+        OZ721 a = new OZ721(); a.mint(me, 1);
+        address[] memory bombTo = new address[](1); bombTo[0] = address(new Bomb());
+        vm.startPrank(me); a.setApprovalForAll(address(bulk), true);
+        uint256 g0 = gasleft(); bulk.airdrop721(address(a), bombTo, _range(1, 1), true, true); uint256 bombGas = g0 - gasleft();
+        vm.stopPrank();
+        OZ721 b = new OZ721(); b.mint(me, 1);
+        address[] memory deafTo = new address[](1); deafTo[0] = address(new Deaf());
+        vm.startPrank(me); b.setApprovalForAll(address(bulk), true);
+        uint256 g1 = gasleft(); bulk.airdrop721(address(b), deafTo, _range(1, 1), true, true); uint256 deafGas = g1 - gasleft();
+        vm.stopPrank();
+        emit log_named_uint("gas, 200KB return bomb", bombGas);
+        emit log_named_uint("gas, plain deaf recipient", deafGas);
+        // Before the cap a single bomb cost ~2.8M. Now the worst a recipient can do is burn its own stipend,
+        // so the bound is one stipend over an ordinary failure, and no amount of returndata changes that.
+        assertLt(bombGas, deafGas + bulk.LENIENT_GAS() + 20_000);
+        assertLt(bombGas, 600_000);
+    }
+
+    function testSkippedReason_is_truncated() public {
+        OZ721 t = new OZ721(); t.mint(me, 1);
+        address[] memory to = new address[](1); to[0] = address(new Bomb());
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        vm.recordLogs();
+        bulk.airdrop721(address(t), to, _range(1, 1), true, true);
+        vm.stopPrank();
+        Vm.Log[] memory logs = vm.getRecordedLogs(); bool checked;
+        for (uint256 i; i < logs.length; i++) if (logs[i].topics[0] == keccak256("Skipped(address,address,uint256,uint256,bytes)")) {
+            (,, bytes memory reason) = abi.decode(logs[i].data, (uint256, uint256, bytes));
+            assertLe(reason.length, 128); checked = true;
+        }
+        assertTrue(checked);
+    }
+
+    /// N14: the documented escape hatch. A recipient whose honest hook needs more than the lenient stipend is
+    /// skipped in lenient mode and delivered in strict mode, where the whole transaction's gas is available.
+    function testHeavyHonestHook_skipped_when_lenient_delivered_when_strict() public {
+        OZ721 t = new OZ721(); t.mint(me, 1); t.mint(me, 2);
+        HeavyAccepts h = new HeavyAccepts();
+        address[] memory to = new address[](1); to[0] = address(h);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721(address(t), to, _range(1, 1), true, true);
+        assertEq(sent, 0); assertEq(skipped, 1); assertEq(t.ownerOf(1), me);
+        uint256[] memory second = new uint256[](1); second[0] = 2;
+        (uint256 sent2,) = bulk.airdrop721(address(t), to, second, true, false);
+        vm.stopPrank();
+        assertEq(sent2, 1); assertEq(t.ownerOf(2), address(h));
+    }
+
     // ======================= the contract itself =======================
 
     function test_bulk_has_no_owner_no_ether_path_no_state() public {
         (bool ok,) = address(bulk).call{value: 1 ether}("");
         assertFalse(ok);   // no receive/fallback: ether cannot be sent to it
         assertEq(address(bulk).balance, 0);
+    }
+}
+
+/// A recipient whose receive hook legitimately costs more than the lenient stipend.
+contract HeavyAccepts {
+    uint256[] private junk;
+    function onERC721Received(address, address, uint256, bytes calldata) external returns (bytes4) {
+        for (uint256 i; i < 20; i++) junk.push(i + 1);   // ~20 cold SSTOREs, well over 400k
+        return 0x150b7a02;
     }
 }

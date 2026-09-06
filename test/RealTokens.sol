@@ -156,3 +156,22 @@ contract Weird20 {
         return true;
     }
 }
+
+/// ERC-20 that notifies the recipient (ERC-1363 / ERC-777 shaped). A hostile recipient can burn the caller's
+/// gas through it, which is how a gas-griefing attack reaches an ERC-20 airdrop.
+contract Callback20 {
+    mapping(address => uint256) public balanceOf; mapping(address => mapping(address => uint256)) public allowance;
+    function mint(address to, uint256 a) external { balanceOf[to] += a; }
+    function approve(address s, uint256 a) external returns (bool) { allowance[msg.sender][s] = a; return true; }
+    function transferFrom(address f, address t, uint256 a) external returns (bool) {
+        require(allowance[f][msg.sender] >= a && balanceOf[f] >= a, "nope");
+        allowance[f][msg.sender] -= a; balanceOf[f] -= a; balanceOf[t] += a;
+        if (t.code.length != 0) { (bool ok,) = t.call(abi.encodeWithSignature("onTokenTransfer(address,uint256)", f, a)); require(ok, "hook failed"); }
+        return true;
+    }
+}
+
+/// A recipient that burns every drop of gas it is handed, through the ERC-20 callback path.
+contract Erc20GasHog {
+    function onTokenTransfer(address, uint256) external pure { uint256 x; while (true) { x++; } }
+}
