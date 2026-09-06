@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com https://cloudflareinsights.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com https://cloudflareinsights.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -42,7 +42,7 @@
 <body>
 <header>
   <h1>BulkSend <small>send an NFT or token to hundreds of wallets at once</small></h1>
-  <div id="walletBox"><button id="connect">Connect wallet</button></div>
+  <div id="walletBox"><button id="connect">Connect wallet</button><button class="secondary" id="connectWc" style="margin-left:6px">Phone wallet</button></div>
 </header>
 <main>
   <div class="card">
@@ -235,10 +235,49 @@
     return String(e && (e.shortMessage || e.message) || e).slice(0, 200);
   }
 
+  // ---- phone wallets, through WalletConnect ----
+  // The bundle is served from our own origin rather than a third-party CDN: this page builds transactions, and
+  // a signing page should not take its code from somewhere we do not control.
+  const WC_PROJECT_ID = 'c184dcd61665e5449c9daa02862f432d';
+  const WC_BUNDLE = './wc.js';   // same origin on both hosts, so the import needs no CORS
+  let wcProvider = null;
+  async function connectPhoneWallet() {
+    say('msgTop', 'Loading the phone wallet connector…');
+    try {
+      const mod = await import(WC_BUNDLE);
+      const cur = chainId(), other = cur === 46630 ? 4663 : 46630;
+      wcProvider = await mod.EthereumProvider.init({
+        projectId: WC_PROJECT_ID,
+        chains: [cur],
+        optionalChains: [other],
+        rpcMap: { 46630: CHAINS[46630].rpc, 4663: CHAINS[4663].rpc },
+        showQrModal: true,
+        metadata: {
+          name: 'BulkSend',
+          description: 'Send an NFT or token to many wallets at once on Robinhood Chain',
+          url: location.origin,
+          icons: [location.origin + '/favicon.ico'],
+        },
+      });
+      say('msgTop', 'Scan the code with your wallet app, or pick your wallet from the list.');
+      await wcProvider.connect();
+      wcProvider.on('disconnect', () => {
+        me = null; provider = null; signer = null; wcProvider = null;
+        say('msgTop', 'Your phone wallet disconnected.', 'warn'); plan();
+      });
+      await connect(wcProvider, 'walletconnect');
+      if (me) say('msgTop', 'Connected through your phone wallet.', 'ok');
+    } catch (e) {
+      const m = String(e && (e.message || e));
+      say('msgTop', /reject|cancel|closed/i.test(m) ? 'You closed the connection request.' : 'Could not connect a phone wallet: ' + m.slice(0, 140), 'bad');
+    }
+  }
+  $('connectWc').addEventListener('click', connectPhoneWallet);
+
   // ---- connection ----
   async function connect(explicitProvider, rdns) {
     const chosen = walletChoice(explicitProvider);
-    if (!chosen) { say('msgTop', 'No wallet found in this browser. On a phone, open this page inside your wallet app\'s own browser. On a computer, install a wallet extension and reload.', 'bad'); return; }
+    if (!chosen) { say('msgTop', 'No wallet found in this browser. On a phone, press "Phone wallet" to connect with your wallet app. On a computer, install a wallet extension and reload.', 'bad'); return; }
     eth = chosen;
     if (rdns) { try { localStorage.setItem('bulksend:wallet', rdns); } catch (e) {} }
     try {
@@ -281,6 +320,13 @@
   }
   async function switchChain() {
     const id = chainId(), c = cfg(), hex = '0x' + id.toString(16);
+    if (eth === wcProvider) {
+      // Phone wallets connect to a fixed set of networks and generally will not add one on request.
+      try { const net = await new ethers.BrowserProvider(eth).getNetwork();
+        if (Number(net.chainId) !== id) say('msgTop', 'Your phone wallet is on chain ' + net.chainId + '. Switch it to ' + c.name + ' in the app, or reconnect with that network selected here first.', 'bad');
+      } catch (e) {}
+      return;
+    }
     try { await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }); }
     catch (e) {
       if (e.code === 4902 || /unrecognized|not added/i.test(e.message || '')) {

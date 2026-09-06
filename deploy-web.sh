@@ -29,10 +29,17 @@ import json, sys
 html = open(sys.argv[1], encoding="utf-8").read()
 open(sys.argv[2], "w", encoding="utf-8").write("""// rhairdrop.gmgnrepeat.com - serves the BulkSend page from Cloudflare's edge.
 const HTML = %s;
-export default { fetch(request) {
+export default { async fetch(request) {
   const url = new URL(request.url);
+  // The WalletConnect bundle is served from this same origin, so importing it needs no CORS and the page
+  // never takes signing code from a third party.
+  if (url.pathname === '/wc.js') {
+    const upstream = await fetch('https://gmgnrepeat.com/rhairdrop/wc.js', { cf: { cacheEverything: true, cacheTtl: 86400 } });
+    if (!upstream.ok) return new Response('connector unavailable', { status: 502 });
+    return new Response(upstream.body, { headers: { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'public, max-age=86400', 'x-content-type-options': 'nosniff' } });
+  }
   if (url.pathname !== '/' && url.pathname !== '/index.html') return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
-  return new Response(HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300', 'x-content-type-options': 'nosniff', 'referrer-policy': 'strict-origin-when-cross-origin' } });
+  return new Response(HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300', 'x-content-type-options': 'nosniff', 'referrer-policy': 'strict-origin-when-cross-origin', 'content-security-policy': \"frame-ancestors 'none'\" } });
 } };
 """ % json.dumps(html))
 PY
