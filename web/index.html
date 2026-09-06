@@ -60,7 +60,7 @@
   <div class="card">
     <h2>2 · Recipients</h2>
     <div class="row" style="margin-bottom:10px">
-      <div><label>Build the list from a collection's holders</label><div style="display:flex;gap:8px"><input type="text" id="snapAddr" aria-label="Collection address to take a holder snapshot of" placeholder="holders of 0x… (snapshot)" spellcheck="false"><button class="secondary" id="snap">Fetch</button></div></div>
+      <div><label for="snapAddr">Read a collection's current holders</label><div style="display:flex;gap:8px"><input type="text" id="snapAddr" aria-label="Collection address to take a holder snapshot of" placeholder="holders of 0x… (snapshot)" spellcheck="false"><button class="secondary" id="snap">Fetch</button></div></div>
       <div><label for="each">How many each, from the ones you hold</label><div style="display:flex;gap:8px"><input type="number" id="each" value="1" min="1" max="1000" style="width:88px" aria-label="How many each wallet receives"><button class="secondary" id="assign" style="flex:1">Assign my token ids</button><button class="secondary" id="shuffle">Shuffle</button></div>
       <div style="font-size:12px;color:var(--mut);margin-top:4px">To give one wallet more than the rest, write <span class="mono">x3</span> after its address.</div>
       <div class="check" style="margin:6px 0 0"><input type="checkbox" id="rand" checked><label for="rand" style="margin:0;font-size:12px">Random, so nobody can pick which NFT they get. Costs nothing: they still go out cheapest-first.</label></div></div>
@@ -84,7 +84,7 @@
       <div><label for="batch">Recipients per transaction</label><input type="number" inputmode="numeric" min="1" max="400" id="batch" value="100" aria-label="Recipients per transaction"></div>
       <div><label for="mode">If a wallet cannot receive</label><select id="mode" aria-label="What to do if a wallet cannot receive"><option value="lenient">Keep going: skip that wallet and deliver to everyone else</option><option value="strict">All or nothing: if any wallet fails, send nothing</option></select></div>
     </div>
-    <div class="check" id="safeRow"><input type="checkbox" id="safe"><label for="safe" style="margin:0">Refuse to send to a contract that cannot hold NFTs. Slightly more gas, and a few unusual wallets are refused too.</label></div>
+    <div class="check" id="safeRow"><input type="checkbox" id="safe" checked><label for="safe" style="margin:0">Refuse to send to a contract that cannot hold NFTs (recommended). Unticking this is faster and cheaper, but an NFT sent to a contract that cannot handle it is stuck there for good.</label></div>
   </div>
 
   <div class="card">
@@ -106,7 +106,7 @@
 </main>
 <footer>
   Reviewed by several independent automated audits, not by a human audit firm.
-  This page remembers, in your browser only, which wallets it already delivered to, so a reload cannot pay anyone twice. "Start over" clears that.
+  This page keeps a note, in this browser and for this account only, of what it has already delivered, so reloading the tab will not repeat it. It is a convenience, not a guarantee: another browser, another device, a cleared cache or a private window will not know about it. What has actually been sent is on the chain, and that is the record to trust.
   <span id="contractLine"></span>
   BulkSend holds nothing. Every transfer is <span class="mono">transferFrom(you, recipient, …)</span>, so it can only move what you approved, inside the transaction you sign. Revoke the approval from your wallet or the explorer when the airdrop is done. Contract source is verified on the explorer. Nothing here is financial advice.
 </footer>
@@ -116,7 +116,7 @@
 (() => {
   // ---- chain config; BulkSend addresses are filled in after each deploy ----
   const CHAINS = {
-    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '0x752960a560ea676bec736f55d98773eb0e1fb3df' },
+    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '0x83b2a9c4a09976e0f5221ad198bce1cb2a12abd1' },
     4663:  { name: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com', bulk: '{{BULKSEND_MAINNET}}' },
   };
   const BULK_ABI = [
@@ -150,6 +150,7 @@
   let walletBatchReady = false;   // 'ready' means it will prompt to upgrade the account before the first batch
   let gatedBy = null;       // the collection's creator transfer validator, if it has one
   let tokenPaused = false;  // a paused collection refuses every transfer, so say so before anyone pays gas
+  let tokenLoadedChain = null;   // which chain the token details were read on
   let ethUsd = null;        // best effort, for the cost line; the page works fine without it
 
   // Calls the WALLET makes as itself, for the wallet-batch path. No operator, so no approval.
@@ -170,6 +171,9 @@
   // Which way this airdrop will go out.
   function deliveryPath() {
     if (!LIVE_CHAINS.has(chainId())) return 'notlive';   // mainnet is switched off until it is deployed and tested there
+    // A wallet batch makes plain token calls, and a token that answers "false" without reverting looks
+    // identical to one that worked. Only the contract reads that answer, so tokens always go through it.
+    if (std() === '20') return bulkReady() ? 'bulk' : 'none';
     if (walletBatch) return 'wallet';
     if (gatedBy) return 'blocked';
     return bulkReady() ? 'bulk' : 'none';
@@ -202,7 +206,7 @@
   // themselves and let the user choose. Falls back to window.ethereum for older wallets.
   const wallets = new Map();
   window.addEventListener('eip6963:announceProvider', (e) => {
-    try { const d = e.detail; if (d && d.info && d.provider) { wallets.set(d.info.rdns, d); renderWalletChoice(); } } catch (err) {}
+    try { const d = e.detail; if (d && d.info && d.provider) { wallets.set(d.info.uuid || d.info.rdns, d); renderWalletChoice(); } } catch (err) {}
   });
   try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (e) {}
   function renderWalletChoice() {
@@ -211,15 +215,19 @@
     if (wallets.size <= 1) return;   // one wallet: the plain Connect button is fine
     box.textContent = '';
     const label = document.createElement('span'); label.className = 'pill'; label.textContent = 'connect with'; box.appendChild(label);
-    for (const d of wallets.values()) {
+    for (const [key, d] of wallets) {
       const b = document.createElement('button'); b.className = 'secondary'; b.style.marginLeft = '6px'; b.textContent = d.info.name;
-      b.addEventListener('click', () => connect(d.provider, d.info.rdns)); box.appendChild(b);
+      b.addEventListener('click', () => connect(d.provider, key)); box.appendChild(b);
     }
+    // however many extensions announce themselves, a phone wallet must still be reachable
+    const wc = document.createElement('button'); wc.className = 'secondary'; wc.style.marginLeft = '6px'; wc.id = 'connectWc'; wc.textContent = 'Phone wallet';
+    wc.addEventListener('click', connectPhoneWallet); box.appendChild(wc);
   }
   function walletChoice(explicit) {
     if (explicit) return explicit;
     const remembered = (() => { try { return localStorage.getItem('bulksend:wallet'); } catch (e) { return null; } })();
     if (remembered && wallets.has(remembered)) return wallets.get(remembered).provider;
+    for (const d of wallets.values()) if (d.info && d.info.rdns === remembered) return d.provider;
     if (wallets.size === 1) return [...wallets.values()][0].provider;
     return window.ethereum || null;
   }
@@ -352,7 +360,16 @@
     $('safeRow').style.display = std() === '721' ? 'flex' : 'none';
     rows = []; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); plan(); if ($('token').value.trim()) tokenInfo();
   });
-  $('net').addEventListener('change', async () => { tokenLoadedFor = null; gatedBy = null; gasPriceFor = null; refreshGasPrice(); plan(); if (provider) { await switchChain(); await detectWalletBatch(); plan(); } });
+  $('net').addEventListener('change', async () => {
+    // The same address is a different contract on a different chain, and decimals differ. Keeping a parsed
+    // list across that boundary would send amounts computed for one token using another one's units.
+    rows = []; decimals = null; tokenLoadedFor = null; tokenLoadedChain = null; gatedBy = null; tokenPaused = false;
+    badLines = 0; badLinesOk = false; skippedRows = []; gasPriceFor = null;
+    setStat($('parseOut'), []); setStat($('tokenInfo'), []); say('msgList', ''); $('problems').style.display = 'none'; $('ackRow').style.display = 'none';
+    refreshGasPrice(); plan();
+    if (provider) { await switchChain(); await detectWalletBatch(); plan(); }
+    if ($('token').value.trim()) tokenInfo();
+  });
   $('ack').addEventListener('change', () => { badLinesOk = $('ack').checked; plan(); });
   $('mode').addEventListener('change', plan); $('safe').addEventListener('change', plan); $('batch').addEventListener('input', plan);
 
@@ -383,7 +400,7 @@
         parts.push(['', walletBatch ? 'Your wallet can batch as itself, so this works: no approval needed.' : 'A wallet that batches is needed. Yours does not, so these must go one at a time, or ask the collection to approve BulkSend.', walletBatch ? 'ok' : 'bad']);
         for (const pp of parts) { const span = document.createElement('span'); if (pp[2]) span.className = pp[2]; span.textContent = pp[1]; box.appendChild(span); }
       }
-      tokenLoadedFor = addr.toLowerCase();
+      tokenLoadedFor = addr.toLowerCase(); tokenLoadedChain = chainId();
     } catch (e) { setStat(box, [['', 'Contract found, but it did not answer like a ' + std() + ' token.', 'warn']]); tokenLoadedFor = null; }
     plan();
   }
@@ -396,7 +413,32 @@
     id:  ['tokenid', 'token_id', 'token id', 'id', 'nftid', 'nft_id', 'tokenids', 'token'],
     qty: ['amount', 'quantity', 'qty', 'value', 'count', 'tokens', 'number', 'num'],
   };
-  const splitRow = (line) => line.split(/[,\t;]|\s{2,}| (?=0x)/).map(x => x.trim().replace(/^"|"$/g, '')).filter(x => x !== '');
+  // RFC 4180: quoted fields may contain the separator, and "" is a literal quote. Splitting on punctuation
+  // turns "1,234.5" into two cells and silently changes what someone is sending.
+  function splitRow(line) {
+    const out = []; let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (inQ) {
+        if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
+        else cur += c;
+      } else if (c === '"') inQ = true;
+      else if (c === ',' || c === '\t' || c === ';') { out.push(cur); cur = ''; }
+      else cur += c;
+    }
+    out.push(cur);
+    let cells = out.map(x => x.trim());
+    if (cells.length === 1) cells = cells[0].split(/\s+/).filter(Boolean);   // a whitespace-separated paste
+    return cells.filter(x => x !== '');
+  }
+  // A quantity has to be a plain whole number. Anything else is a mistake worth stopping for, never a silent 1.
+  function wholeNumber(v) {
+    if (typeof v !== 'string') return null;
+    const t = v.trim();
+    if (!/^\d+$/.test(t)) return null;
+    const n = parseInt(t, 10);
+    return Number.isSafeInteger(n) && n > 0 ? n : null;
+  }
   function readHeader(line) {
     const cells = splitRow(line).map(c => c.toLowerCase().replace(/[\s_-]/g, ''));
     if (!cells.length || cells.some(c => ethers.isAddress(c))) return null;   // a row of data, not a header
@@ -436,8 +478,24 @@
       // In the wider ecosystem an NFT file with a quantity column but no id column means "how many of yours",
       // which is the same thing this page calls x3. Rewrite it into that form and let Assign fill the ids in.
       if (s === '721' && colMap.id === undefined && colMap.qty !== undefined) {
-        $('list').value = named.map(r => r.a + (Number(r.qtyCell) > 1 ? ' x' + parseInt(r.qtyCell) : '')).join('\n');
-        say('msgList', 'That file has a quantity column and no token ids, which means how many each wallet gets. Press "Assign my token ids" to choose which of yours they receive.', 'warn');
+        const bad = [];
+        const lines2 = named.map(r => {
+          const q = wholeNumber(r.qtyCell);
+          if (q === null) { bad.push('line ' + r.line + ': "' + String(r.qtyCell).slice(0, 20) + '" is not a whole number of NFTs'); return null; }
+          if (q > 1000) { bad.push('line ' + r.line + ': ' + q + ' is more than this page will assign at once (1000)'); return null; }
+          return r.a + (q > 1 ? ' x' + q : '');
+        });
+        if (bad.length) {
+          rows = []; $('problems').style.display = 'block'; $('problems').textContent = bad.join('\n');
+          say('msgList', 'That file lists how many NFTs each wallet gets, but ' + bad.length + ' line' + (bad.length === 1 ? ' is' : 's are') + ' not a whole number. Nothing was changed. Fix the file and check it again.', 'bad');
+          plan(); return;
+        }
+        const total = named.reduce((a, r) => a + wholeNumber(r.qtyCell), 0);
+        if (!confirm('That file says how many NFTs each wallet gets, not which ones.\n\n' + named.length + ' wallets, ' + total + ' NFTs in total.\n\nReplace the box with that list, so you can press "Assign my token ids" to choose which of yours they receive?')) {
+          say('msgList', 'Left your file as it was.', 'warn'); return;
+        }
+        $('list').value = lines2.join('\n');
+        say('msgList', named.length + ' wallets, ' + total + ' NFTs in total. Press "Assign my token ids" to choose which of yours they receive.', 'warn');
         rows = []; plan(); return;
       }
       for (const r of named) {
@@ -448,11 +506,19 @@
             if (seenId.has(idKey)) { problems.push('line ' + r.line + ': token id ' + r.idCell + ' is listed twice'); continue; }
             seenId.add(idKey); out.push({ to: r.a, id: BigInt(r.idCell), raw: r.idCell });
           } else if (s === '1155') {
-            if (!/^\d+$/.test(r.idCell || '') || !/^\d+$/.test(r.qtyCell || '')) { problems.push('line ' + r.line + ': need a token id and a whole amount'); continue; }
-            out.push({ to: r.a, id: BigInt(r.idCell), amount: BigInt(r.qtyCell), raw: r.qtyCell });
+            if (!/^\d+$/.test(r.idCell || '')) { problems.push('line ' + r.line + ': need a token id'); continue; }
+            const q = wholeNumber(r.qtyCell);
+            if (q === null) { problems.push('line ' + r.line + ': "' + String(r.qtyCell).slice(0, 20) + '" is not a whole amount'); continue; }
+            out.push({ to: r.a, id: BigInt(r.idCell), amount: BigInt(q), raw: String(q) });
           } else {
-            if (!/^\d+(\.\d+)?$/.test(r.qtyCell || '')) { problems.push('line ' + r.line + ': no amount'); continue; }
-            out.push({ to: r.a, amount: ethers.parseUnits(r.qtyCell, decimals), raw: r.qtyCell });
+            const raw = String(r.qtyCell || '');
+            if (!/^\d+(\.\d+)?$/.test(raw)) {
+              problems.push('line ' + r.line + ': "' + raw.slice(0, 20) + '" is not an amount' + (/[,\s]/.test(raw) ? '. Write it without separators, so 1234.5 rather than 1,234.5' : ''));
+              continue;
+            }
+            const parsed = ethers.parseUnits(raw, decimals);
+            if (parsed === 0n) { problems.push('line ' + r.line + ': an amount of zero sends nothing'); continue; }
+            out.push({ to: r.a, amount: parsed, raw });
           }
         } catch (err) { problems.push('line ' + r.line + ': ' + String(err.shortMessage || err.message).slice(0, 90)); }
       }
@@ -493,10 +559,14 @@
           const idKey = BigInt(id).toString();   // 1 and 01 are the same token
           if (seenId.has(idKey)) { problems.push('line ' + (i + 1) + ': token id ' + id + ' is listed twice'); return; } seenId.add(idKey);
           out.push({ to: a, id: BigInt(id), raw: id }); }
-        else if (s === '1155') { const id = parts[1], amt = parts[2]; if (!/^\d+$/.test(id || '') || !/^\d+$/.test(amt || '')) { problems.push('line ' + (i + 1) + ': need a token id and a whole amount'); return; }
-          out.push({ to: a, id: BigInt(id), amount: BigInt(amt), raw: amt }); }
+        else if (s === '1155') { const id = parts[1]; const q = wholeNumber(parts[2]);
+          if (!/^\d+$/.test(id || '')) { problems.push('line ' + (i + 1) + ': need a token id'); return; }
+          if (q === null) { problems.push('line ' + (i + 1) + ': "' + String(parts[2]).slice(0, 20) + '" is not a whole amount'); return; }
+          out.push({ to: a, id: BigInt(id), amount: BigInt(q), raw: String(q) }); }
         else { const amt = parts[1]; if (!/^\d+(\.\d+)?$/.test(amt || '')) { problems.push('line ' + (i + 1) + ': missing amount'); return; }
-          out.push({ to: a, amount: ethers.parseUnits(amt, decimals), raw: amt }); }
+          const parsed = ethers.parseUnits(amt, decimals);
+          if (parsed === 0n) { problems.push('line ' + (i + 1) + ': an amount of zero sends nothing'); return; }
+          out.push({ to: a, amount: parsed, raw: amt }); }
       } catch (err) { problems.push('line ' + (i + 1) + ': ' + String(err.shortMessage || err.message).slice(0, 90)); }
     });
     finishParse(out, problems, headers, '');
@@ -554,18 +624,25 @@
     if (!ethers.isAddress(addr)) { say('msgList', 'Paste the address of the collection whose holders you want.', 'bad'); return; }
     $('snap').disabled = true;
     try {
+      const rpBlock = new ethers.JsonRpcProvider(cfg().rpc);
+      const startBlock = await rpBlock.getBlockNumber().catch(() => null);
       log('Reading holders of ' + addr.slice(0, 10) + '… from the explorer.');
-      const holders = []; let next = '';
-      for (let page = 0; page < 40; page++) {
+      const holders = []; let next = ''; let truncated = false;
+      for (let page = 0; page < 200; page++) {
         const d = await explorer('/tokens/' + addr + '/holders' + (next ? '?' + next : ''));
         for (const it of (d.items || [])) { const h = (it.address || {}).hash; if (h) holders.push(ethers.getAddress(h)); }
         const p = d.next_page_params; if (!p) break;
         next = Object.entries(p).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
-        if (holders.length > 5000) break;
+        if (holders.length >= 20000) { truncated = true; break; }
+        if (page === 199) truncated = true;
       }
       const uniq = [...new Set(holders)].filter(h => h !== ethers.ZeroAddress && (!me || h.toLowerCase() !== me.toLowerCase()));
       if (!uniq.length) { log('The explorer returned no holders for that address.', 'bad'); return; }
-      if (holders.length >= 5000) log('Stopped at 5,000 holders. This collection has more, so the list is incomplete.', 'bad');
+      if (truncated) { say('msgList', 'Stopped after ' + holders.length + ' holders, so this list is incomplete. It has not been used.', 'bad'); log('The holder list was cut short, so nothing was loaded. Narrow the collection or bring your own list.', 'bad'); return; }
+      const endBlock = await rpBlock.getBlockNumber().catch(() => null);
+      if (startBlock && endBlock && endBlock !== startBlock) {
+        log('The chain moved from block ' + startBlock + ' to ' + endBlock + ' while this was being read, so it is a current reading rather than a fixed moment in time. If someone traded mid-read they can appear twice or not at all. Check the list before sending.', 'warn');
+      }
       if (!confirmOverwrite()) return;
       $('list').value = uniq.join('\n');
       // Some holders are contracts: marketplace escrows, vaults, bridges. Tokens sent there are usually stuck.
@@ -584,7 +661,7 @@
           $('dropContracts').style.display = 'inline-block';
         } else { $('dropContracts').style.display = 'none'; }
       } catch (e) {}
-      log(uniq.length + ' holders loaded' + (me ? ' (your own wallet left out)' : '') + '.', 'ok');
+      log(uniq.length + ' holders read at around block ' + (endBlock || '?') + (me ? ', your own wallet left out' : '') + '. This is a live reading, not a snapshot pinned to one block.', 'ok');
       if (std() === '721') log('Next: press "Assign my token ids to these wallets" to fill in which of your NFTs each one gets.');
       parseList();
     } catch (e) { log('Could not read holders: ' + String(e.message || e).slice(0, 120), 'bad'); }
@@ -645,7 +722,9 @@
       const p = line.trim().split(/[,\t; ]+/).filter(Boolean);
       if (!p.length || !ethers.isAddress(p[0])) continue;
       const m = p.slice(1).find(x => /^x\d+$/i.test(x));
-      wants.push({ to: ethers.getAddress(p[0]), n: m ? Math.max(1, Math.min(1000, parseInt(m.slice(1)))) : perWallet });
+      const q = m ? wholeNumber(m.slice(1)) : perWallet;
+      if (q === null || q > 1000) { say('msgList', 'One line asks for "' + String(m).slice(0, 12) + '", which is not a workable number. Fix it and try again.', 'bad'); return; }
+      wants.push({ to: ethers.getAddress(p[0]), n: q });
     }
     if (!wants.length) { say('msgList', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
     const wallets = wants.map(w => w.to);
@@ -728,7 +807,8 @@
   function plan() {
     const c = cfg(); const bs = batchSize(); const n = rows.length; const batches = Math.ceil(n / bs);
     const path = deliveryPath();
-    const ready = !!(provider && ethers.isAddress($('token').value.trim()) && n > 0 && !sending && (path === 'wallet' || path === 'bulk') && (!badLines || badLinesOk));
+    const tokenFresh = tokenLoadedFor === $('token').value.trim().toLowerCase() && tokenLoadedChain === chainId();
+    let ready = !!(provider && ethers.isAddress($('token').value.trim()) && tokenFresh && n > 0 && !sending && (path === 'wallet' || path === 'bulk') && (!badLines || badLinesOk));
     const how = path === 'notlive' ? 'nothing yet: this tool is not live on ' + c.name
               : path === 'wallet' ? 'your wallet, as itself (no approval)'
               : path === 'bulk' ? 'BulkSend ' + (bulkReady() ? c.bulk.slice(0, 8) + '…' : '')
@@ -739,16 +819,20 @@
       ['', n + ' recipients in ' + batches + ' transaction' + (batches === 1 ? '' : 's')],
       ['about', costLine(n)],
     ]);
+    const strictSplit = !lenient() && batches > 1;
+    if (strictSplit) ready = false;
     $('preflight').disabled = !ready; $('send').disabled = !ready;
     $('approve').disabled = !(ready && path === 'bulk');
     let why = '';
     if (sending) why = 'Sending. The form is locked until this finishes.';
     else if (!provider) why = 'Connect a wallet to begin.';
     else if (!ethers.isAddress($('token').value.trim())) why = 'Enter the address of the collection or token you are sending.';
+    else if (!tokenFresh) why = 'Reading that token on this network. One moment.';
     else if (!n) why = 'Add recipients, then press Check list.';
     else if (path === 'notlive') why = 'This tool is not live on ' + c.name + ' yet. Choose the testnet.';
     else if (path === 'blocked') why = 'This collection only allows transfers its creator approved, and your wallet cannot send them as itself.';
     else if (path === 'none') why = 'BulkSend is not deployed on this network.';
+    else if (strictSplit) why = '"All or nothing" only holds inside one transaction. This list needs ' + batches + '. Raise the recipients per transaction so it fits in one, shorten the list, or choose "Keep going".';
     $('whyDisabled').textContent = why;
     $('export').disabled = skippedRows.length === 0;
   }
@@ -907,23 +991,19 @@
   });
   async function runSend() {
     stopFlag = false; skippedRows = [];
-    if (!(await onSelectedChain())) return;
-    {
-      const n = rows.length, bs = batchSize(), batches = Math.ceil(n / bs);
-      const path = deliveryPath();
-      const sigs = path === 'wallet' ? batches : batches + (std() === '20' ? 1 : 1);
-      const name = ($('tokenInfo').textContent || '').split('(')[0].trim().slice(0, 40) || 'this collection';
-      const lines = [
-        'Send ' + n + ' transfer' + (n === 1 ? '' : 's') + ' from ' + name + '?',
-        '',
-        'Network: ' + cfg().name + (chainId() === 4663 ? ' (REAL money)' : ' (test network, no real value)'),
-        'Recipients: ' + n + ' across ' + batches + ' transaction' + (batches === 1 ? '' : 's'),
-        'Sent by: ' + (path === 'wallet' ? 'your own wallet, no approval needed' : 'the BulkSend contract, which you approve first'),
-        'Estimated cost: ' + costLine(n),
-        'You will be asked to confirm in your wallet about ' + sigs + ' time' + (sigs === 1 ? '' : 's') + '.',
-      ];
-      if (!confirm(lines.join('\n'))) { log('Cancelled. Nothing was sent.', 'warn'); return; }
+    // Two tabs of the same list would both read "nothing delivered yet" and both send it.
+    let releaseLock = null;
+    if (navigator.locks) {
+      const got = await new Promise((resolve) => {
+        navigator.locks.request('bulksend:' + runKey(), { ifAvailable: true }, (lock) => {
+          if (!lock) { resolve(false); return; }
+          resolve(true); return new Promise((r) => { releaseLock = r; });
+        }).catch(() => resolve(true));
+      });
+      if (!got) { log('Another tab of this page is already sending this list. Finish there, or close it, before sending here.', 'bad'); return; }
     }
+    try {
+    if (!(await onSelectedChain())) return;
     const base = workingList();
     if (base.skippedBefore) log(base.skippedBefore + ' of these were already delivered from this browser by this account, so they are left out. "Forget what was delivered" sends them again.', 'warn');
     if (!base.list.length) { log('Everything on this list has already been delivered.', 'ok'); return; }
@@ -931,7 +1011,36 @@
     const pre = await preflight(false, base.list);
     if (!pre.ok) { log('Nothing was sent. ' + pre.why, 'bad'); return; }
     if (pre.willDeliver === 0) { log('The test run says none of these would be delivered, so nothing was sent.', 'bad'); return; }
+    // Strict means all or nothing. Quietly sending everyone except the failures would be the opposite.
+    if (!lenient() && pre.willSkip) {
+      log('You chose "all or nothing", and ' + pre.willSkip + ' of these would fail, so nothing was sent. Remove them, or choose "Keep going" to deliver to the rest.', 'bad');
+      return;
+    }
     if (pre.willSkip) log('Test run: ' + pre.willDeliver + ' will be delivered, ' + pre.willSkip + ' skipped.', 'warn');
+    // Everything below is settled now: which rows, in what order, in how many transactions. Describe that.
+    {
+      const path = deliveryPath();
+      const finalList = path === 'wallet' ? pre.good : pre.list;
+      const bs = batchSize(), batches = Math.ceil(finalList.length / bs);
+      const sigs = path === 'wallet' ? batches : batches;
+      const name = ($('tokenInfo').textContent || '').split('(')[0].trim().slice(0, 40) || 'this collection';
+      const first = finalList[0], last = finalList[finalList.length - 1];
+      const show = (r) => r ? (r.to.slice(0, 8) + '…' + (r.id !== undefined ? ' id ' + r.id : '') + (r.amount !== undefined && std() !== '721' ? ' x' + r.amount : '')) : '';
+      const lines = [
+        'Send ' + finalList.length + ' transfer' + (finalList.length === 1 ? '' : 's') + ' from ' + name + '?',
+        '',
+        'Network: ' + cfg().name + (chainId() === 4663 ? ' (REAL money)' : ' (test network, nothing of value)'),
+        'Recipients: ' + finalList.length + ' across ' + batches + ' transaction' + (batches === 1 ? '' : 's'),
+        pre.willSkip ? 'Left out because they would fail: ' + pre.willSkip : 'None are being left out.',
+        base.skippedBefore ? 'Left out as already delivered: ' + base.skippedBefore : '',
+        'Sent by: ' + (path === 'wallet' ? 'your own wallet, no approval needed' : 'the BulkSend contract you approved'),
+        'Order: ' + (std() === '20' ? 'as listed' : 'lowest token id first, so if you stop partway the lower ids are the ones that went out'),
+        'First: ' + show(first) + (finalList.length > 1 ? '   Last: ' + show(last) : ''),
+        'Estimated cost: ' + costLine(finalList.length),
+        'Your wallet will ask you to confirm about ' + sigs + ' time' + (sigs === 1 ? '' : 's') + '.',
+      ].filter(Boolean);
+      if (!confirm(lines.join('\n'))) { log('Cancelled. Nothing was sent.', 'warn'); return; }
+    }
     $('stop').disabled = false;
     if (deliveryPath() === 'wallet') { await sendViaWallet(pre); return; }
     const list = pre.list;   // exactly what the test run simulated, in the order it will go out
@@ -947,15 +1056,26 @@
         log('  sent, waiting …', '', tx.hash);
         // A multisig such as Safe hands back a request id and only executes once the other owners sign, so
         // waiting on it would hang forever. Stop after a while and say what is actually going on.
-        const rc = await Promise.race([
-          tx.wait(),
-          new Promise((res) => setTimeout(() => res(null), 180000)),
-        ]);
+        let rc;
+        try {
+          rc = await Promise.race([tx.wait(), new Promise((res) => setTimeout(() => res(null), 180000))]);
+        } catch (e) {
+          // "Speed up" in a wallet replaces the transaction. That is a success, not an error, but only if the
+          // replacement is the same call: same destination, same calldata. Anything else is not our batch.
+          if (e && e.code === 'TRANSACTION_REPLACED' && !e.cancelled && e.receipt && e.replacement
+              && String(e.replacement.to || '').toLowerCase() === String(tx.to || '').toLowerCase()
+              && String(e.replacement.data || '') === String(tx.data || '')) {
+            rc = e.receipt; log('  your wallet replaced that transaction with an identical one; following the replacement.', 'warn', rc.hash);
+          } else if (e && e.code === 'TRANSACTION_REPLACED') {
+            log('  that transaction was replaced by a different one, so this batch cannot be accounted for. Check the explorer before sending again; nothing has been recorded as delivered.', 'bad');
+            break;
+          } else { throw e; }
+        }
         if (!rc) {
           log('  no confirmation after three minutes. If this is a multisig wallet, the batch is waiting for the other signers and will go out when they approve. Nothing has been recorded as delivered; check the explorer before sending again.', 'bad', tx.hash);
           break;
         }
-        let bSent = 0, bSkip = 0; const skippedIdx = new Set();
+        let bSent = 0, bSkip = 0; const skippedIdx = new Set(); let ambiguous = false;
         for (const l of rc.logs) {
           if (l.address.toLowerCase() !== bulkAddr.toLowerCase()) continue;   // only this contract's own events count
           let p; try { p = bulk.interface.parseLog(l); } catch { continue; }
@@ -964,14 +1084,19 @@
             // Match on the id or amount too, and use each row once: a wallet may appear more than once in a
             // batch, and recording the wrong row would both hide an unpaid one and invite a repeat payment.
             const want = String(p.args.to).toLowerCase();
-            let idx = chunk.findIndex((r, i) => !skippedIdx.has(i) && r.to.toLowerCase() === want &&
-              (std() === '20' ? String(r.amount) === String(p.args.amount) : String(r.id) === String(p.args.id)));
-            if (idx < 0) idx = chunk.findIndex((r, i) => !skippedIdx.has(i) && r.to.toLowerCase() === want);
+            let idx = chunk.findIndex((r, i) => !skippedIdx.has(i) && r.to.toLowerCase() === want
+              && (r.id === undefined || String(r.id) === String(p.args.id))
+              && (r.amount === undefined || String(r.amount) === String(p.args.amount)));
             if (idx >= 0) { skippedIdx.add(idx); skippedRows.push(chunk[idx]); }
+            else ambiguous = true;   // an event we cannot tie to a row: do not guess which one it was
             log('  skipped ' + p.args.to + ': ' + decodeReason(p.args.reason), 'warn');
           } else if (p.name.startsWith('Airdrop')) { bSent = Number(p.args.sent); }
         }
         sent += bSent; skipped += bSkip;
+        if (ambiguous || skippedIdx.size !== bSkip) {
+          log('  this batch reported ' + bSkip + ' skipped but they could not be matched to your list, so nothing from it has been recorded. Check the transaction before sending again.', 'bad', rc.hash);
+          break;
+        }
         if (bSent) markDelivered(chunk.filter((r, i) => !skippedIdx.has(i)));
         log('  done: ' + bSent + ' delivered' + (bSkip ? ', ' + bSkip + ' skipped' : '') + ' · gas ' + rc.gasUsed, 'ok');
         if (stopFlag) { log('Stopped.', 'warn'); break; }
@@ -979,6 +1104,7 @@
       log('Finished. ' + sent + ' delivered' + (skipped ? ', ' + skipped + ' skipped' : '') + '.', 'ok');
       if (skipped) log('Download the skipped list to retry those wallets.', 'warn');
     } catch (e) { log('Stopped on error: ' + explainCallError(e), 'bad'); }
+    } finally { if (releaseLock) releaseLock(); }
   }
 
   // ---- the wallet-batch path: the wallet runs the transfers as itself, in one transaction per batch ----

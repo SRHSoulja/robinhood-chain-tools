@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import {BulkSend} from "../src/BulkSend.sol";
-import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20, Callback20, Erc20GasHog} from "./RealTokens.sol";
+import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20, Callback20, Erc20GasHog, PaysThenLies20, LongReason20} from "./RealTokens.sol";
 import {IERC721Errors, IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 /// Every airdrop method, against real token implementations, in every mode, with every awkward recipient.
@@ -261,15 +261,13 @@ contract BulkSendRealTest is Test {
         Weird20 t = new Weird20(); t.mint(me, 100);
         address[] memory to = _to(2, 81);
         vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
-        t.setMode(1);   // 16-byte return
-        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, _fill(2, 1), true);
-        assertEq(sent, 0); assertEq(skipped, 2);
+        t.setMode(1);   // 16-byte return: the call succeeded, so the balance may already have moved
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[0], 0)); bulk.airdrop20(address(t), to, _fill(2, 1), true);
         t.setMode(2);   // a word holding 2
-        (sent, skipped) = bulk.airdrop20(address(t), to, _fill(2, 1), true);
-        assertEq(sent, 0); assertEq(skipped, 2);
-        vm.expectRevert(abi.encodeWithSelector(BulkSend.TransferFailed.selector, to[0], 0)); bulk.airdrop20(address(t), to, _fill(2, 1), false);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[0], 0)); bulk.airdrop20(address(t), to, _fill(2, 1), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[0], 0)); bulk.airdrop20(address(t), to, _fill(2, 1), false);
         t.setMode(0);
-        (sent, skipped) = bulk.airdrop20(address(t), to, _fill(2, 1), true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, _fill(2, 1), true);
         vm.stopPrank();
         assertEq(sent, 2); assertEq(skipped, 0);
     }
@@ -409,14 +407,16 @@ contract BulkSendRealTest is Test {
         assertEq(sent, 4); assertEq(skipped, 0); assertEq(t.balanceOf(to[3]), 100_000); assertEq(t.balanceOf(me), 600_000);
     }
 
-    function testFalse20_returns_false_is_a_failure_not_a_delivery() public {
+    /// A `false` answer is indistinguishable from a token that paid and then lied, so neither mode may treat it
+    /// as a skip. The whole batch is undone, which also undoes anything the token did do.
+    function testFalse20_returningFalseRevertsBothModes() public {
         False20 t = new False20(); t.mint(me, 100);
-        address[] memory to = _to(2, 12); uint256[] memory amt = new uint256[](2); amt[0] = 60; amt[1] = 60;   // second one fails: balance short
+        address[] memory to = _to(2, 12); uint256[] memory amt = new uint256[](2); amt[0] = 60; amt[1] = 60;
         vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
-        vm.expectRevert(); bulk.airdrop20(address(t), to, amt, false);   // False20 returns false with no reason, so TransferFailed still stands
-        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, amt, true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[1], 1)); bulk.airdrop20(address(t), to, amt, false);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[1], 1)); bulk.airdrop20(address(t), to, amt, true);
         vm.stopPrank();
-        assertEq(sent, 1); assertEq(skipped, 1); assertEq(t.balanceOf(to[0]), 60); assertEq(t.balanceOf(to[1]), 0);
+        assertEq(t.balanceOf(to[0]), 0); assertEq(t.balanceOf(me), 100);
     }
 
     function testFee20_delivers_less_than_sent_and_reports_sent_count_only() public {
@@ -578,6 +578,74 @@ contract BulkSendRealTest is Test {
         vm.startPrank(me); t.approve(address(bulk), 1e18);
         vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(bulk), 1e18, 5e18));
         bulk.airdrop20(address(t), to, _fill(2, 5e18), false);
+        vm.stopPrank();
+    }
+
+
+    // ======================= external audit findings =======================
+
+    /// H-01. A token that moves the balance then answers something other than true has PAID the recipient.
+    /// Calling that a skip is how a retry pays them twice, so the whole batch is undone instead.
+    function testERC20_paidButAnsweredWrong_revertsInsteadOfSkipping() public {
+        for (uint8 mode = 0; mode < 3; mode++) {
+            PaysThenLies20 t = new PaysThenLies20(); t.mint(me, 100); t.setMode(mode);
+            address[] memory to = _to(2, 300 + mode);
+            vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
+            vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[0], 0));
+            bulk.airdrop20(address(t), to, _fill(2, 10), true);     // lenient must NOT swallow it
+            vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[0], 0));
+            bulk.airdrop20(address(t), to, _fill(2, 10), false);
+            vm.stopPrank();
+            assertEq(t.balanceOf(to[0]), 0, "the revert must undo the transfer it already made");
+            assertEq(t.balanceOf(me), 100);
+        }
+    }
+
+    /// A token that REVERTS moved nothing, so lenient mode may still skip it. That is the distinction.
+    function testERC20_revertedTransferIsStillSkippable() public {
+        Blacklist20 t = new Blacklist20(); t.mint(me, 100e18);
+        address[] memory to = _to(2, 310); t.block_(to[1], true);
+        vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
+        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, _fill(2, 1e18), true);
+        vm.stopPrank();
+        assertEq(sent, 1); assertEq(skipped, 1); assertEq(t.balanceOf(to[0]), 1e18); assertEq(t.balanceOf(to[1]), 0);
+    }
+
+    /// H-07. The contract can never give anything back, so it must refuse to be a recipient.
+    function test_refusesToBeItsOwnRecipient() public {
+        OZ721 n = new OZ721(); n.mint(me, 1);
+        OZ20 t = new OZ20(); t.mint(me, 10e18);
+        OZ1155 m = new OZ1155(); m.mint(me, 1, 10);
+        address[] memory to = new address[](1); to[0] = address(bulk);
+        vm.startPrank(me); n.setApprovalForAll(address(bulk), true); t.approve(address(bulk), type(uint256).max); m.setApprovalForAll(address(bulk), true);
+        for (uint256 mode = 0; mode < 2; mode++) {
+            bool len = mode == 1;
+            vm.expectRevert(abi.encodeWithSelector(BulkSend.SelfRecipient.selector, 0)); bulk.airdrop721(address(n), to, _fill(1, 1), false, len);
+            vm.expectRevert(abi.encodeWithSelector(BulkSend.SelfRecipient.selector, 0)); bulk.airdrop20(address(t), to, _fill(1, 1e18), len);
+            vm.expectRevert(abi.encodeWithSelector(BulkSend.SelfRecipient.selector, 0)); bulk.airdrop1155(address(m), to, _fill(1, 1), _fill(1, 1), len);
+        }
+        vm.stopPrank();
+        assertEq(n.balanceOf(address(bulk)), 0); assertEq(t.balanceOf(address(bulk)), 0); assertEq(m.balanceOf(address(bulk), 1), 0);
+    }
+
+    /// M-04. Sending nothing is not a delivery.
+    function test_zeroAmountIsRefused() public {
+        OZ20 t = new OZ20(); t.mint(me, 10e18);
+        OZ1155 m = new OZ1155(); m.mint(me, 1, 10);
+        address[] memory to = _to(1, 320);
+        vm.startPrank(me); t.approve(address(bulk), type(uint256).max); m.setApprovalForAll(address(bulk), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.ZeroAmount.selector, 0)); bulk.airdrop20(address(t), to, _fill(1, 0), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.ZeroAmount.selector, 0)); bulk.airdrop1155(address(m), to, _fill(1, 1), _fill(1, 0), true);
+        vm.stopPrank();
+    }
+
+    /// L-02. Strict mode promised the token's own error; a truncated one decodes as nothing.
+    function testStrict20_longRevertReasonArrivesWhole() public {
+        LongReason20 t = new LongReason20(); t.mint(me, 10e18);
+        address[] memory to = _to(1, 330);
+        vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
+        vm.expectRevert(bytes("this rejection reason is deliberately far longer than one hundred and twenty eight bytes so that any truncation would leave behind something that no longer decodes as an Error(string) at all"));
+        bulk.airdrop20(address(t), to, _fill(1, 1e18), false);
         vm.stopPrank();
     }
 

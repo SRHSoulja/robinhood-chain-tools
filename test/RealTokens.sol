@@ -175,3 +175,30 @@ contract Callback20 {
 contract Erc20GasHog {
     function onTokenTransfer(address, uint256) external pure { uint256 x; while (true) { x++; } }
 }
+
+/// Moves the balance and then answers something other than `true`. The dangerous shape: the call succeeds, so
+/// the recipient really was paid, and any report of "skipped" would invite a second payment.
+contract PaysThenLies20 {
+    mapping(address => uint256) public balanceOf; mapping(address => mapping(address => uint256)) public allowance;
+    uint8 public mode;   // 0 = returns false, 1 = returns 16 bytes, 2 = returns the word 2
+    function mint(address to, uint256 a) external { balanceOf[to] += a; }
+    function approve(address s, uint256 a) external returns (bool) { allowance[msg.sender][s] = a; return true; }
+    function setMode(uint8 m) external { mode = m; }
+    function transferFrom(address f, address t, uint256 a) external returns (bool) {
+        require(allowance[f][msg.sender] >= a && balanceOf[f] >= a, "nope");
+        allowance[f][msg.sender] -= a; balanceOf[f] -= a; balanceOf[t] += a;   // the money really moved
+        if (mode == 1) { assembly { mstore(0, 1) return(0, 16) } }
+        if (mode == 2) { assembly { mstore(0, 2) return(0, 32) } }
+        return false;
+    }
+}
+
+/// Reverts with a reason longer than the lenient cap, to prove strict mode hands it back whole.
+contract LongReason20 {
+    mapping(address => uint256) public balanceOf; mapping(address => mapping(address => uint256)) public allowance;
+    function mint(address to, uint256 a) external { balanceOf[to] += a; }
+    function approve(address s, uint256 a) external returns (bool) { allowance[msg.sender][s] = a; return true; }
+    function transferFrom(address, address, uint256) external pure returns (bool) {
+        revert("this rejection reason is deliberately far longer than one hundred and twenty eight bytes so that any truncation would leave behind something that no longer decodes as an Error(string) at all");
+    }
+}

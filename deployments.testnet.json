@@ -1,5 +1,5 @@
 {
- "BulkSend": "0x752960a560ea676bec736f55d98773eb0e1fb3df",
+ "BulkSend": "0x83b2a9c4a09976e0f5221ad198bce1cb2a12abd1",
  "OZ721": "0x5277956787c1a52c02d3e63d441ee2491a36c1ce",
  "A721": "0x05e9a41b225b76fa0bba1932a027b2b60ed38473",
  "OZ1155": "0x61e0dc59c4ca30f170791add9ac8395d3c86b1a7",
@@ -8,5 +8,6 @@
  "BulkSend_v1_unoptimized": "0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf",
  "BulkSend_v2_prior": "0x7f8ba77de30099d4617657d3ec87e98484e568bf",
  "BulkSend_v3_prior": "0x0e6e6d592091fd5a43259cb33b67279c4f28fbfa",
- "BulkSend_v4_prior": "0xd013c00eec3e7f1b93223a75eaf50f77b863853f"
+ "BulkSend_v4_prior": "0xd013c00eec3e7f1b93223a75eaf50f77b863853f",
+ "BulkSend_v5_prior": "0x752960a560ea676bec736f55d98773eb0e1fb3df"
 }

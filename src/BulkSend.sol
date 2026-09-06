@@ -40,6 +40,9 @@ contract BulkSend {
     error TransferFailed(address to, uint256 id);
     error NotAContract(address token);
     error DelegatedWallet(address token);
+    error SelfRecipient(uint256 index);
+    error ZeroAmount(uint256 index);
+    error AmbiguousResult(address to, uint256 index);
     error ZeroRecipient(uint256 index);
     error OutOfGasForBatch(uint256 index);
 
@@ -71,6 +74,7 @@ contract BulkSend {
         _mustBeContract(token);
         for (uint256 i; i < n;) {
             address dst = to[i];
+            if (dst == address(this)) revert SelfRecipient(i);   // nothing here can ever give it back
             if (lenient) {
                 if (dst == address(0)) { ++skipped; emit Skipped(token, dst, ids[i], 1, ZERO_REASON); unchecked { ++i; } continue; }
                 bytes memory data = safe
@@ -108,6 +112,8 @@ contract BulkSend {
         _mustBeContract(token);
         for (uint256 i; i < n;) {
             address dst = to[i];
+            if (dst == address(this)) revert SelfRecipient(i);
+            if (amounts[i] == 0) revert ZeroAmount(i);           // a no-op is not a delivery
             if (lenient) {
                 if (dst == address(0)) { ++skipped; emit Skipped(token, dst, ids[i], amounts[i], ZERO_REASON); unchecked { ++i; } continue; }
                 (bool ok, bytes memory reason) =
@@ -129,9 +135,11 @@ contract BulkSend {
     }
 
     /// @notice Send `amounts[i]` of an ERC-20 to each recipient. Tolerates tokens that return nothing.
-    /// @dev A token that moves the balance and then returns data that is not exactly `true` is counted as a
-    ///      failure. That is deliberate (fail closed), so the skip report reflects the token's answer, not a
-    ///      balance check; re-sending to a skipped wallet on such a token could pay it twice.
+    /// @dev Three outcomes, not two. A reverted call moved nothing and is safe to skip in lenient mode. A call
+    ///      that returned exactly `true`, or nothing at all (USDT-style), delivered. A call that SUCCEEDED and
+    ///      answered anything else is ambiguous: the balance may already have moved, so calling it "skipped"
+    ///      would invite a second payment to someone who was already paid. That reverts the whole batch, which
+    ///      undoes whatever it did, in both modes.
     function airdrop20(address token, address[] calldata to, uint256[] calldata amounts, bool lenient)
         external
         returns (uint256 sent, uint256 skipped)
@@ -142,6 +150,8 @@ contract BulkSend {
         _mustBeContract(token);
         for (uint256 i; i < n;) {
             address dst = to[i];
+            if (dst == address(this)) revert SelfRecipient(i);
+            if (amounts[i] == 0) revert ZeroAmount(i);
             if (dst == address(0)) {
                 if (!lenient) revert ZeroRecipient(i);
                 ++skipped; emit Skipped(token, dst, 0, amounts[i], ZERO_REASON); unchecked { ++i; } continue;
@@ -154,14 +164,15 @@ contract BulkSend {
             } else {
                 (ok, ret) = _callAll(token, data);
             }
-            bool good = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (uint256)) == 1));
-            if (good) {
+            if (ok) {
+                bool answeredTrue = ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (uint256)) == 1);
+                if (!answeredTrue) revert AmbiguousResult(dst, i);   // it may have paid them; do not call this a skip
                 ++sent;
             } else if (lenient) {
                 ++skipped;
                 emit Skipped(token, dst, 0, amounts[i], ret);
             } else {
-                if (!ok && ret.length > 0) {
+                if (ret.length > 0) {
                     assembly ("memory-safe") { revert(add(ret, 32), mload(ret)) }   // the token said why; pass it on
                 }
                 revert TransferFailed(dst, 0);
@@ -191,13 +202,14 @@ contract BulkSend {
         }
     }
 
-    /// @dev Strict-mode ERC-20 call: all remaining gas, returndata capped anyway (it is only read, never bubbled).
+    /// @dev Strict-mode ERC-20 call: all remaining gas, and the token's answer kept whole. Truncating it here
+    ///      would hand back a fragment that no longer decodes as the error it came from, which is worse than
+    ///      no reason at all. A batch that reverts costs the sender only this transaction, so there is nothing
+    ///      to amplify: the returndata cap belongs to the lenient path, which keeps going.
     function _callAll(address token, bytes memory data) internal returns (bool ok, bytes memory ret) {
-        uint256 cap = REASON_CAP;
         assembly ("memory-safe") {
             ok := call(gas(), token, 0, add(data, 32), mload(data), 0, 0)
             let size := returndatasize()
-            if gt(size, cap) { size := cap }
             ret := mload(0x40)
             mstore(ret, size)
             returndatacopy(add(ret, 32), 0, size)
