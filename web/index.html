@@ -713,9 +713,42 @@
     $('preflight').disabled = true;
     try { if (await onSelectedChain()) await preflight(true); } finally { plan(); }
   });
+  // Each transfer is simulated on its own, so nothing in that loop can notice that the amounts add up to more
+  // than the wallet holds: every one passes, and the run then fails partway, or fails as a whole in the
+  // all-or-nothing wallet path. This checks the totals first.
+  async function checkTotals(list) {
+    const token = $('token').value.trim(); if (!list.length || !me) return null;
+    const rp = new ethers.JsonRpcProvider(cfg().rpc);
+    try {
+      if (std() === '20') {
+        const t = new ethers.Contract(token, ERC20_ABI, rp);
+        const total = list.reduce((a, r) => a + r.amount, 0n);
+        const bal = await t.balanceOf(me);
+        if (bal < total) return 'This list adds up to ' + ethers.formatUnits(total, decimals) + ' but the wallet holds ' + ethers.formatUnits(bal, decimals) + '. Reduce the amounts or the number of recipients.';
+        if (deliveryPath() === 'bulk') {
+          const allow = await t.allowance(me, cfg().bulk);
+          if (allow < total) return 'The list adds up to ' + ethers.formatUnits(total, decimals) + ' but BulkSend is only approved for ' + ethers.formatUnits(allow, decimals) + '. Press Approve first.';
+        }
+      } else if (std() === '1155') {
+        const t = new ethers.Contract(token, ['function balanceOf(address,uint256) view returns (uint256)'], rp);
+        const per = new Map();
+        for (const r of list) per.set(r.id.toString(), (per.get(r.id.toString()) || 0n) + r.amount);
+        for (const [id, need] of per) {
+          const have = await t.balanceOf(me, BigInt(id));
+          if (have < need) return 'This list needs ' + need + ' of id ' + id + ' but the wallet holds ' + have + '.';
+        }
+      }
+    } catch (e) { return null; }   // a token that will not answer is caught by the per-transfer checks anyway
+    return null;
+  }
+
   async function preflight(verbose, listIn) {
     const ordered = listIn || workingList().list;
     if (verbose) log('Test run: simulating every transfer against the live chain. Nothing is signed and nothing is spent.');
+    {
+      const shortfall = await checkTotals(ordered);
+      if (shortfall) { log(shortfall, 'bad'); return { ok: false, why: shortfall, willDeliver: 0, willSkip: 0, good: [], bad: [], list: ordered }; }
+    }
     // Wallet-batch path: simulate each transfer exactly as the wallet would make it, one eth_call each.
     // Anything that fails is left out of the batch, which gives the "skip the bad ones" behaviour without a contract.
     if (deliveryPath() === 'wallet') {
@@ -825,7 +858,16 @@
         log('Batch ' + (Math.floor(i / bs) + 1) + ' of ' + Math.ceil(list.length / bs) + ': ' + chunk.length + ' recipients …');
         const tx = await bulk[fn](...args);
         log('  sent, waiting …', '', tx.hash);
-        const rc = await tx.wait();
+        // A multisig such as Safe hands back a request id and only executes once the other owners sign, so
+        // waiting on it would hang forever. Stop after a while and say what is actually going on.
+        const rc = await Promise.race([
+          tx.wait(),
+          new Promise((res) => setTimeout(() => res(null), 180000)),
+        ]);
+        if (!rc) {
+          log('  no confirmation after three minutes. If this is a multisig wallet, the batch is waiting for the other signers and will go out when they approve. Nothing has been recorded as delivered; check the explorer before sending again.', 'bad', tx.hash);
+          break;
+        }
         let bSent = 0, bSkip = 0; const skippedIdx = new Set();
         for (const l of rc.logs) {
           if (l.address.toLowerCase() !== bulkAddr.toLowerCase()) continue;   // only this contract's own events count
