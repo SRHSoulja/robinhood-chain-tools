@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import {BulkSend} from "../src/BulkSend.sol";
-import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog} from "./RealTokens.sol";
+import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20} from "./RealTokens.sol";
 import {IERC721Errors, IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 /// Every airdrop method, against real token implementations, in every mode, with every awkward recipient.
@@ -191,13 +191,74 @@ contract BulkSendRealTest is Test {
         assertEq(t.ownerOf(1), address(r)); assertEq(t.ownerOf(2), address(0xB2));
     }
 
-    function testOZ721_gas_griefing_recipient_lenient_skips_and_continues() public {
-        OZ721 t = new OZ721(); t.mint(me, 1); t.mint(me, 2);
-        address[] memory to = new address[](2); to[0] = address(new GasHog()); to[1] = address(0xB2);
+    /// Audit finding 2: under EIP-150 a hook that burns everything it is given used to leave the loop with 1/64 of its
+    /// gas, so one hostile address near the front of a long lenient batch sank the whole batch. With the per-transfer
+    /// gas cap the hog is skipped and the other 119 are delivered, on a gas budget that is realistic for the batch.
+    function testOZ721_gas_griefing_at_front_of_long_lenient_batch_cannot_sink_it() public {
+        uint256 n = 120;
+        OZ721 t = new OZ721(); t.mintMany(me, 1, n);
+        address[] memory to = _to(n, 77); to[1] = address(new GasHog());
         vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
-        (uint256 sent, uint256 skipped) = bulk.airdrop721{gas: 3_000_000}(address(t), to, _range(1, 2), true, true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721{gas: 8_000_000}(address(t), to, _range(1, n), true, true);
         vm.stopPrank();
-        assertEq(sent, 1); assertEq(skipped, 1); assertEq(t.ownerOf(1), me); assertEq(t.ownerOf(2), address(0xB2));
+        assertEq(sent, n - 1); assertEq(skipped, 1); assertEq(t.ownerOf(2), me); assertEq(t.ownerOf(1), to[0]); assertEq(t.ownerOf(n), to[n - 1]);
+    }
+
+    function testOZ721_three_gas_hogs_in_lenient_batch_all_skipped_rest_delivered() public {
+        uint256 n = 60;
+        OZ721 t = new OZ721(); t.mintMany(me, 1, n);
+        address[] memory to = _to(n, 78); to[0] = address(new GasHog()); to[30] = address(new GasHog()); to[59] = address(new GasHog());
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721{gas: 6_000_000}(address(t), to, _range(1, n), true, true);
+        vm.stopPrank();
+        assertEq(sent, n - 3); assertEq(skipped, 3); assertEq(t.balanceOf(me), 3);
+    }
+
+    function testOZ721_return_bomb_recipient_lenient_skipped_rest_delivered() public {
+        uint256 n = 40;
+        OZ721 t = new OZ721(); t.mintMany(me, 1, n);
+        address[] memory to = _to(n, 79); to[3] = address(new Bomb());
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721{gas: 5_000_000}(address(t), to, _range(1, n), true, true);
+        vm.stopPrank();
+        assertEq(sent, n - 1); assertEq(skipped, 1); assertEq(t.ownerOf(4), me);
+    }
+
+    function testOZ1155_gas_hog_and_bomb_in_lenient_batch_skipped_rest_delivered() public {
+        uint256 n = 80;
+        OZ1155 t = new OZ1155(); t.mint(me, 1, n);
+        address[] memory to = _to(n, 80); to[0] = address(new GasHog()); to[40] = address(new Bomb());
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop1155{gas: 7_000_000}(address(t), to, _fill(n, 1), _fill(n, 1), true);
+        vm.stopPrank();
+        assertEq(sent, n - 2); assertEq(skipped, 2); assertEq(t.balanceOf(me, 1), 2);
+    }
+
+    function testOZ721_strict_safe_forwards_full_gas_so_a_heavy_honest_hook_still_works() public {
+        // strict mode has no cap: an honest recipient hook that needs more than the lenient cap must still succeed there
+        OZ721 t = new OZ721(); t.mint(me, 1);
+        address[] memory to = new address[](1); to[0] = address(new Accepts());
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        (uint256 sent,) = bulk.airdrop721(address(t), to, _range(1, 1), true, false);
+        vm.stopPrank();
+        assertEq(sent, 1);
+    }
+
+    function testWeird20_odd_return_data_is_a_failure_not_a_panic() public {
+        Weird20 t = new Weird20(); t.mint(me, 100);
+        address[] memory to = _to(2, 81);
+        vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
+        t.setMode(1);   // 16-byte return
+        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, _fill(2, 1), true);
+        assertEq(sent, 0); assertEq(skipped, 2);
+        t.setMode(2);   // a word holding 2
+        (sent, skipped) = bulk.airdrop20(address(t), to, _fill(2, 1), true);
+        assertEq(sent, 0); assertEq(skipped, 2);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.TransferFailed.selector, to[0], 0)); bulk.airdrop20(address(t), to, _fill(2, 1), false);
+        t.setMode(0);
+        (sent, skipped) = bulk.airdrop20(address(t), to, _fill(2, 1), true);
+        vm.stopPrank();
+        assertEq(sent, 2); assertEq(skipped, 0);
     }
 
     function testFuzz_OZ721_any_batch_size_delivers_exactly(uint8 nRaw) public {

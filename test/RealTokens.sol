@@ -132,4 +132,27 @@ contract Reenter is IERC721Receiver {
 /// Recipient that burns all the gas it is given inside the hook (a gas-griefing recipient).
 contract GasHog {
     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) { uint256 x; while (true) { x++; } }
+    function onERC1155Received(address, address, uint256, uint256, bytes calldata) external pure returns (bytes4) { uint256 x; while (true) { x++; } }
+}
+
+/// Recipient that reverts with a huge payload (a return-bomb) to inflate the caller's memory cost.
+contract Bomb {
+    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) { bytes memory big = new bytes(200_000); assembly { revert(add(big, 32), mload(big)) } }
+    function onERC1155Received(address, address, uint256, uint256, bytes calldata) external pure returns (bytes4) { bytes memory big = new bytes(200_000); assembly { revert(add(big, 32), mload(big)) } }
+}
+
+/// ERC-20 that answers transferFrom with odd return data: 16 bytes, or a full word holding 2. Neither is a success.
+contract Weird20 {
+    uint8 public mode;   // 0 = normal true, 1 = return 16 bytes, 2 = return the word 2
+    mapping(address => uint256) public balanceOf; mapping(address => mapping(address => uint256)) public allowance;
+    function mint(address to, uint256 a) external { balanceOf[to] += a; }
+    function approve(address s, uint256 a) external returns (bool) { allowance[msg.sender][s] = a; return true; }
+    function setMode(uint8 m) external { mode = m; }
+    function transferFrom(address f, address t, uint256 a) external returns (bool) {
+        require(allowance[f][msg.sender] >= a && balanceOf[f] >= a, "nope");
+        allowance[f][msg.sender] -= a; balanceOf[f] -= a; balanceOf[t] += a;
+        if (mode == 1) { assembly { mstore(0, 1) return(0, 16) } }
+        if (mode == 2) { assembly { mstore(0, 2) return(0, 32) } }
+        return true;
+    }
 }

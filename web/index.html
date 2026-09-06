@@ -83,12 +83,12 @@
   BulkSend holds nothing. Every transfer is <span class="mono">transferFrom(you, recipient, …)</span>, so it can only move what you approved, inside the transaction you sign. Revoke the approval any time from your wallet or the explorer. Contract source is verified on the explorer. Nothing here is financial advice.
 </footer>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js" integrity="sha384-6Zl0Pc8zjSz8KvmNeXRvUQgY4ryFb+BwDvKCmLYcBME0joAaru491tQgi9B7zsMM" crossorigin="anonymous"></script>
 <script>
 (() => {
   // ---- chain config; BulkSend addresses are filled in after each deploy ----
   const CHAINS = {
-    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '0x904412cfe982f33385F486AAFF8c8a4A6f4B5fbf' },
+    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '0x7f8ba77de30099d4617657d3ec87e98484e568bf' },
     4663:  { name: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com', bulk: '{{BULKSEND_MAINNET}}' },
   };
   const BULK_ABI = [
@@ -105,11 +105,14 @@
   const ERC20_ABI = ['function name() view returns (string)','function symbol() view returns (string)','function decimals() view returns (uint8)','function balanceOf(address) view returns (uint256)','function allowance(address,address) view returns (uint256)','function approve(address,uint256) returns (bool)'];
 
   const $ = (id) => document.getElementById(id);
-  const log = (msg, cls) => { const el = $('log'); const line = document.createElement('div'); if (cls) line.className = cls; line.innerHTML = msg; el.appendChild(line); el.scrollTop = el.scrollHeight; };
+  // Everything logged is text. Token names, symbols and revert reasons come from contracts we do not control; they must never become markup.
+  const log = (msg, cls, txHash) => { const el = $('log'); const line = document.createElement('div'); if (cls) line.className = cls; line.textContent = msg;
+    if (txHash) { line.appendChild(document.createTextNode(' ')); const a = document.createElement('a'); a.href = cfg().explorer + '/tx/' + txHash; a.target = '_blank'; a.rel = 'noopener'; a.textContent = txHash.slice(0, 10) + '…'; line.appendChild(a); }
+    el.appendChild(line); el.scrollTop = el.scrollHeight; };
+  const setStat = (el, parts) => { el.textContent = ''; for (const [label, value, cls] of parts) { const span = document.createElement('span'); if (cls) span.className = cls; if (label) span.appendChild(document.createTextNode(label + ' ')); const b = document.createElement('b'); b.textContent = value; span.appendChild(b); el.appendChild(span); } };
   let provider, signer, me, rows = [], stopFlag = false, decimals = 18;
   const chainId = () => Number($('net').value); const cfg = () => CHAINS[chainId()];
   const std = () => $('std').value;
-  const explorerTx = (h) => `<a href="${cfg().explorer}/tx/${h}" target="_blank" rel="noopener">${h.slice(0, 10)}…</a>`;
 
   $('std').addEventListener('change', () => { $('fmt').textContent = std() === '721' ? 'address, tokenId' : std() === '1155' ? 'address, tokenId, amount' : 'address, amount'; $('safeRow').style.display = std() === '721' ? 'flex' : 'none'; rows = []; $('parseOut').textContent = ''; plan(); });
   $('net').addEventListener('change', () => { plan(); if (provider) switchChain(); });
@@ -117,7 +120,7 @@
   async function connect() {
     if (!window.ethereum) { log('No wallet found. Install a browser wallet, then reload.', 'bad'); return; }
     provider = new ethers.BrowserProvider(window.ethereum); await provider.send('eth_requestAccounts', []); signer = await provider.getSigner(); me = await signer.getAddress();
-    $('walletBox').innerHTML = `<span class="pill ok mono">${me.slice(0, 6)}…${me.slice(-4)}</span>`; await switchChain(); plan();
+    { const box = $('walletBox'); box.textContent = ''; const pill = document.createElement('span'); pill.className = 'pill ok mono'; pill.textContent = me.slice(0, 6) + '…' + me.slice(-4); box.appendChild(pill); } await switchChain(); plan();
   }
   async function switchChain() {
     const id = chainId(), c = cfg(), hex = '0x' + id.toString(16);
@@ -131,14 +134,15 @@
   $('token').addEventListener('change', tokenInfo);
   async function tokenInfo() {
     const addr = $('token').value.trim(); const box = $('tokenInfo'); box.textContent = '';
-    if (!ethers.isAddress(addr)) { box.innerHTML = '<span class="bad">That is not an address.</span>'; return; }
+    if (!ethers.isAddress(addr)) { setStat(box, [['', 'That is not an address.', 'bad']]); return; }
     const rp = new ethers.JsonRpcProvider(cfg().rpc); const code = await rp.getCode(addr);
-    if (code === '0x') { box.innerHTML = '<span class="bad">No contract at that address on this network.</span>'; return; }
+    if (code === '0x') { setStat(box, [['', 'No contract at that address on this network.', 'bad']]); return; }
+    const clip = (v) => String(v).slice(0, 48);   // names and symbols are untrusted strings: shown as text, trimmed
     try {
-      if (std() === '721') { const t = new ethers.Contract(addr, ERC721_ABI, rp); const [n, s] = await Promise.all([t.name().catch(() => '?'), t.symbol().catch(() => '?')]); const bal = me ? await t.balanceOf(me).catch(() => null) : null; box.innerHTML = `<span><b>${n}</b> (${s})</span>` + (bal !== null ? `<span>you hold <b>${bal}</b></span>` : ''); }
-      else if (std() === '20') { const t = new ethers.Contract(addr, ERC20_ABI, rp); const [n, s, d] = await Promise.all([t.name().catch(() => '?'), t.symbol().catch(() => '?'), t.decimals().catch(() => 18)]); decimals = Number(d); const bal = me ? await t.balanceOf(me).catch(() => null) : null; box.innerHTML = `<span><b>${n}</b> (${s}) · ${decimals} decimals</span>` + (bal !== null ? `<span>you hold <b>${ethers.formatUnits(bal, decimals)}</b></span>` : ''); }
-      else { box.innerHTML = '<span>ERC-1155 contract found.</span>'; }
-    } catch (e) { box.innerHTML = '<span class="warn">Contract found, but it did not answer like a ' + std() + ' token.</span>'; }
+      if (std() === '721') { const t = new ethers.Contract(addr, ERC721_ABI, rp); const [n, s] = await Promise.all([t.name().catch(() => '?'), t.symbol().catch(() => '?')]); const bal = me ? await t.balanceOf(me).catch(() => null) : null; const parts = [['', clip(n) + ' (' + clip(s) + ')']]; if (bal !== null) parts.push(['you hold', String(bal)]); setStat(box, parts); }
+      else if (std() === '20') { const t = new ethers.Contract(addr, ERC20_ABI, rp); const [n, s, d] = await Promise.all([t.name().catch(() => '?'), t.symbol().catch(() => '?'), t.decimals().catch(() => 18)]); decimals = Number(d); const bal = me ? await t.balanceOf(me).catch(() => null) : null; const parts = [['', clip(n) + ' (' + clip(s) + ') · ' + decimals + ' decimals']]; if (bal !== null) parts.push(['you hold', ethers.formatUnits(bal, decimals)]); parts.push(['', 'If this token takes a fee on transfer, each wallet receives less than the amount listed.', 'warn']); setStat(box, parts); }
+      else { setStat(box, [['', 'ERC-1155 contract found.']]); }
+    } catch (e) { setStat(box, [['', 'Contract found, but it did not answer like a ' + std() + ' token.', 'warn']]); }
     plan();
   }
 
@@ -149,13 +153,13 @@
     const s = std(); const lines = $('list').value.split(/\r?\n/); const out = [], problems = []; const seen = new Map();
     lines.forEach((line, i) => { const t = line.trim(); if (!t || /^(address|wallet|to)\b/i.test(t)) return; const parts = t.split(/[,\t; ]+/).filter(Boolean);
       const addr = parts[0]; if (!ethers.isAddress(addr)) { problems.push(`line ${i + 1}: bad address "${addr}"`); return; }
-      const a = ethers.getAddress(addr);
+      const a = ethers.getAddress(addr); if (a === ethers.ZeroAddress) { problems.push(`line ${i + 1}: the zero address burns tokens on some contracts and reverts on others; not allowed`); return; }
       if (s === '721') { const id = parts[1]; if (!/^\d+$/.test(id || '')) { problems.push(`line ${i + 1}: missing token id`); return; } if (seen.has('id' + id)) { problems.push(`line ${i + 1}: token id ${id} listed twice`); return; } seen.set('id' + id, 1); out.push({ to: a, id: BigInt(id) }); }
       else if (s === '1155') { const id = parts[1], amt = parts[2] || '1'; if (!/^\d+$/.test(id || '') || !/^\d+$/.test(amt)) { problems.push(`line ${i + 1}: need id and amount`); return; } out.push({ to: a, id: BigInt(id), amount: BigInt(amt) }); }
       else { const amt = parts[1]; if (!/^\d+(\.\d+)?$/.test(amt || '')) { problems.push(`line ${i + 1}: missing amount`); return; } out.push({ to: a, amount: ethers.parseUnits(amt, decimals) }); }
     });
     rows = out; const dup = new Set(); const dupes = out.filter(r => { const k = r.to + ':' + (r.id ?? ''); if (dup.has(k)) return true; dup.add(k); return false; }).length;
-    $('parseOut').innerHTML = `<span><b>${out.length}</b> recipients</span>` + (problems.length ? `<span class="bad">${problems.length} problem lines skipped</span>` : '') + (dupes ? `<span class="warn">${dupes} duplicate wallet entries (they will each receive)</span>` : '');
+    const parts = [['', out.length + ' recipients']]; if (problems.length) parts.push(['', problems.length + ' problem lines skipped', 'bad']); if (dupes) parts.push(['', dupes + ' duplicate wallet entries (they will each receive)', 'warn']); setStat($('parseOut'), parts);
     $('problems').style.display = problems.length ? 'block' : 'none'; $('problems').textContent = problems.join('\n'); plan();
   }
 
@@ -163,22 +167,23 @@
   function plan() {
     const c = cfg(); const bs = Math.max(1, Math.min(400, parseInt($('batch').value) || 150)); const n = rows.length; const batches = Math.ceil(n / bs);
     const ready = !!(provider && ethers.isAddress($('token').value.trim()) && n > 0 && ethers.isAddress(c.bulk || ''));
-    $('plan').innerHTML = `<span>network <b>${c.name}</b></span><span>BulkSend <b class="mono">${ethers.isAddress(c.bulk || '') ? c.bulk.slice(0, 8) + '…' : 'not deployed on this network yet'}</b></span><span><b>${n}</b> recipients in <b>${batches}</b> transaction${batches === 1 ? '' : 's'}</span><span>about <b>${(n * 37).toLocaleString()}k</b> gas total</span>`;
+    setStat($('plan'), [['network', c.name], ['BulkSend', ethers.isAddress(c.bulk || '') ? c.bulk.slice(0, 8) + '…' : 'not deployed on this network yet'], ['', n + ' recipients in ' + batches + ' transaction' + (batches === 1 ? '' : 's')], ['about', (n * 37).toLocaleString() + 'k gas total']]);
     $('approve').disabled = !ready; $('send').disabled = !ready;
   }
   $('batch').addEventListener('input', plan);
 
   $('approve').addEventListener('click', async () => {
     try { const token = $('token').value.trim(), bulk = cfg().bulk;
-      if (std() === '20') { const t = new ethers.Contract(token, ERC20_ABI, signer); const total = rows.reduce((a, r) => a + r.amount, 0n); const tx = await t.approve(bulk, total); log(`Approving ${ethers.formatUnits(total, decimals)} … ${explorerTx(tx.hash)}`); await tx.wait(); log('Approved.', 'ok'); }
-      else { const t = new ethers.Contract(token, ERC721_ABI, signer); if (await t.isApprovedForAll(me, bulk)) { log('Already approved for all.', 'ok'); return; } const tx = await t.setApprovalForAll(bulk, true); log(`Approving BulkSend as operator … ${explorerTx(tx.hash)}`); await tx.wait(); log('Approved. You can revoke this from your wallet at any time.', 'ok'); }
+      if (!(await onSelectedChain())) return;
+      if (std() === '20') { const t = new ethers.Contract(token, ERC20_ABI, signer); const total = rows.reduce((a, r) => a + r.amount, 0n); const tx = await t.approve(bulk, total); log('Approving exactly ' + ethers.formatUnits(total, decimals) + ' (the batch total, not unlimited) …', '', tx.hash); await tx.wait(); log('Approved.', 'ok'); }
+      else { const t = new ethers.Contract(token, ERC721_ABI, signer); if (await t.isApprovedForAll(me, bulk)) { log('Already approved for all.', 'ok'); return; } const tx = await t.setApprovalForAll(bulk, true); log('Approving BulkSend as operator …', '', tx.hash); await tx.wait(); log('Approved. Revoke it from your wallet or the explorer when the airdrop is done.', 'ok'); }
     } catch (e) { log('Approval failed: ' + (e.shortMessage || e.message), 'bad'); }
   });
 
   $('stop').addEventListener('click', () => { stopFlag = true; log('Will stop after the current batch.', 'warn'); });
 
   $('send').addEventListener('click', async () => {
-    stopFlag = false; $('send').disabled = true; $('stop').disabled = false;
+    stopFlag = false; if (!(await onSelectedChain())) return; $('send').disabled = true; $('stop').disabled = false;
     const token = $('token').value.trim(), bulk = new ethers.Contract(cfg().bulk, BULK_ABI, signer), lenient = $('mode').value === 'lenient', safe = $('safe').checked;
     const bs = Math.max(1, Math.min(400, parseInt($('batch').value) || 150)); let sent = 0, skipped = 0;
     try {
@@ -188,8 +193,8 @@
         if (std() === '721') tx = await bulk.airdrop721(token, to, chunk.map(r => r.id), safe, lenient);
         else if (std() === '1155') tx = await bulk.airdrop1155(token, to, chunk.map(r => r.id), chunk.map(r => r.amount), lenient);
         else tx = await bulk.airdrop20(token, to, chunk.map(r => r.amount), lenient);
-        log(`  sent ${explorerTx(tx.hash)}, waiting …`); const rc = await tx.wait();
-        let bSent = 0, bSkip = 0; for (const l of rc.logs) { try { const p = bulk.interface.parseLog(l); if (!p) continue; if (p.name === 'Skipped') { bSkip++; log(`  skipped ${p.args.to} (id ${p.args.id}): ${decodeReason(p.args.reason)}`, 'warn'); } else if (p.name.startsWith('Airdrop')) { bSent = Number(p.args.sent); } } catch {} }
+        log('  sent, waiting …', '', tx.hash); const rc = await tx.wait();
+        let bSent = 0, bSkip = 0; for (const l of rc.logs) { try { const p = bulk.interface.parseLog(l); if (!p) continue; if (p.name === 'Skipped') { bSkip++; log('  skipped ' + p.args.to + ' (id ' + p.args.id + '): ' + decodeReason(p.args.reason), 'warn'); } else if (p.name.startsWith('Airdrop')) { bSent = Number(p.args.sent); } } catch {} }
         sent += bSent; skipped += bSkip; log(`  done: ${bSent} delivered${bSkip ? ', ' + bSkip + ' skipped' : ''} · gas ${rc.gasUsed}`, 'ok');
         if (stopFlag) { log('Stopped.', 'warn'); break; }
       }
@@ -204,11 +209,12 @@
     '0xe237d922': 'BulkSend is not approved for this collection', '0xfb8f41b2': 'allowance too low for this amount', '0xe450d38c': 'not enough token balance', '0xec442f05': 'invalid recipient (zero address)', '0xd93c0665': 'the token contract is paused',
     '0xa1148100': 'that id is not owned by the sending wallet', '0xd1a57ed6': 'recipient is a contract that cannot receive NFTs', '0x59c896be': 'BulkSend is not approved for this collection', '0xdf2d9b42': 'that token id does not exist', '0xea553b34': 'recipient is the zero address',
   };
+  async function onSelectedChain() { try { const net = await new ethers.BrowserProvider(window.ethereum).getNetwork(); if (Number(net.chainId) !== chainId()) { log('Your wallet is on chain ' + net.chainId + ' but ' + cfg().name + ' (' + chainId() + ') is selected. Switch the wallet, or pick the matching network above.', 'bad'); await switchChain(); return false; } return true; } catch (e) { log('Could not read the wallet network: ' + (e.shortMessage || e.message), 'bad'); return false; } }
   function decodeReason(b) {
     if (!b || b === '0x') return 'no reason given (recipient cannot receive)';
     const sel = b.slice(0, 10).toLowerCase();
     try { if (sel === '0x08c379a0') return ethers.AbiCoder.defaultAbiCoder().decode(['string'], '0x' + b.slice(10))[0]; if (sel === '0x4e487b71') return 'arithmetic or internal error in the token contract (panic ' + ethers.AbiCoder.defaultAbiCoder().decode(['uint256'], '0x' + b.slice(10))[0] + ')'; } catch {}
-    return KNOWN[sel] || ('reverted with ' + sel);
+    return (KNOWN[sel] || ('reverted with ' + sel)).slice(0, 160);
   }
   window.__decodeReason = decodeReason;   // exposed for the page's own test run; harmless otherwise
   plan();

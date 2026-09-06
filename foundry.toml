@@ -2,5 +2,13 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+# Pinned so the mainnet bytecode is reproducible and matches the verified source (audit finding 4).
+solc_version = "0.8.36"
+# Robinhood Chain testnet and mainnet both run nitro v3.11 at ArbOS 61 (checked 2026-09-06), which supports Cancun.
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
 
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+[fuzz]
+runs = 512

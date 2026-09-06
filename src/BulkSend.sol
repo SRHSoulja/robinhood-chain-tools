@@ -32,6 +32,14 @@ contract BulkSend {
     error TransferFailed(address to, uint256 id);
     error NotAContract(address token);
 
+    /// @dev Gas handed to one safe transfer in LENIENT mode (the transfer itself plus the recipient's receive hook).
+    ///      Without a cap, one recipient whose hook burns everything it is given leaves the loop with 1/64 of its
+    ///      gas (EIP-150) and the rest of the batch runs dry and reverts, which is exactly what lenient mode promises
+    ///      not to do. 400k covers any honest transfer with any honest hook by a wide margin; a hook that needs more
+    ///      is skipped and logged, never able to sink the batch. Strict mode forwards all gas, since any failure there
+    ///      reverts the whole batch by design.
+    uint256 internal constant LENIENT_GAS = 400_000;
+
     /// @dev A low-level call to an address with no code "succeeds" with empty return data, which is also what
     ///      USDT-style tokens return on success. So the token must be a contract before any batch runs.
     function _mustBeContract(address token) internal view {
@@ -75,7 +83,7 @@ contract BulkSend {
         _mustBeContract(token);
         for (uint256 i; i < n;) {
             if (lenient) {
-                try IERC1155Like(token).safeTransferFrom(msg.sender, to[i], ids[i], amounts[i], "") {
+                try IERC1155Like(token).safeTransferFrom{gas: LENIENT_GAS}(msg.sender, to[i], ids[i], amounts[i], "") {
                     ++sent;
                 } catch (bytes memory reason) {
                     ++skipped;
@@ -102,7 +110,10 @@ contract BulkSend {
         for (uint256 i; i < n;) {
             (bool ok, bytes memory ret) =
                 token.call(abi.encodeWithSelector(IERC20Like.transferFrom.selector, msg.sender, to[i], amounts[i]));
-            bool good = ok && (ret.length == 0 || abi.decode(ret, (bool)));
+            // success = call succeeded AND (no return data, USDT-style) OR (at least one word whose value is exactly 1).
+            // Decoded as uint256, not bool, so odd return data (short, or a word that is neither 0 nor 1) is a plain
+            // failure instead of a Panic that would escape the lenient path and revert the whole batch.
+            bool good = ok && (ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (uint256)) == 1));
             if (good) {
                 ++sent;
             } else if (lenient) {
@@ -118,10 +129,10 @@ contract BulkSend {
 
     function _try721(address token, address to, uint256 id, bool safe) internal returns (bool) {
         if (safe) {
-            try IERC721Like(token).safeTransferFrom(msg.sender, to, id) { return true; }
+            try IERC721Like(token).safeTransferFrom{gas: LENIENT_GAS}(msg.sender, to, id) { return true; }
             catch (bytes memory reason) { emit Skipped(token, to, id, 1, reason); return false; }
         } else {
-            try IERC721Like(token).transferFrom(msg.sender, to, id) { return true; }
+            try IERC721Like(token).transferFrom{gas: LENIENT_GAS}(msg.sender, to, id) { return true; }
             catch (bytes memory reason) { emit Skipped(token, to, id, 1, reason); return false; }
         }
     }
