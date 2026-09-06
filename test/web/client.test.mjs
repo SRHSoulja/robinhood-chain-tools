@@ -65,6 +65,7 @@ function chainAnswer(O) {
       case 'eth_getCode': {
         const a = String(params[0] || '').toLowerCase();
         if ([NFT, TOK, ED].includes(a)) return '0x60006000';
+        if ((O.delegated || []).map((x) => x.toLowerCase()).includes(a)) return '0xef0100' + (O.delegate || A(0xde1)).slice(2);
         return (O.contractHolders || []).map((x) => x.toLowerCase()).includes(a) ? '0x60006000' : '0x';
       }
       case 'eth_call': {
@@ -86,6 +87,11 @@ function chainAnswer(O) {
         if (sel === '0x098144d4') return O.gated ? enc(BigInt('0xA000027A9B2802E1ddf7000061001e5c005A0000')) : null;
         if (sel === '0x5c975abb') return enc(0);
         if (sel === '0xe985e9c5') return enc(O.approved ? 1 : 0);
+        // the receive hooks, asked of a delegate directly
+        if (sel === '0x150b7a02' || sel === '0xf23a6e61') {
+          if (O.delegateAccepts) return sel + '0'.repeat(56);
+          const e = new Error('execution reverted'); e.revertData = '0x'; throw e;
+        }
         // BulkSend itself: its published bounds, and (sent, skipped) for a simulated batch
         if (sel === '0x56c3e5e9' || sel === '0xdf1c9e47') return enc(400000);
         if (sel === '0x20d2c951') return enc(100000);
@@ -552,6 +558,49 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   await page.click('#send'); await page.waitForTimeout(6000);
   check('M-03 a full ledger stops the run instead of forgetting its oldest rows',
     (await text(page, '#log')).includes('is full'), (await text(page, '#log')).slice(-220));
+  await page.close();
+}
+
+// ---- an upgraded wallet is a wallet, and the page has to say so -----------------
+{
+  const upgraded = A(0xf1);
+  const page = await open(browser, { delegated: [upgraded], delegateAccepts: false });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, upgraded + ',1\n' + A(0xf2) + ',2\n');
+  await page.click('#preflight'); await page.waitForTimeout(5000);
+  const logText = await text(page, '#log');
+  check('EIP-7702 an upgraded wallet that cannot take a safe transfer is named before signing',
+    /upgraded \(EIP-7702\)/.test(logText), logText.slice(0, 300));
+  check('EIP-7702 and is called a wallet, not a contract', /real wallets, not contracts/.test(logText), logText.slice(0, 300));
+  check('EIP-7702 with the fix that actually works for an NFT', /unticking/.test(logText), logText.slice(0, 400));
+  await page.close();
+}
+
+// ---- and the same wallet is fine once safe mode is off --------------------------
+{
+  const upgraded = A(0xf3);
+  const page = await open(browser, { delegated: [upgraded], delegateAccepts: false });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, upgraded + ',1\n');
+  await page.uncheck('#safe'); await page.waitForTimeout(300);
+  await page.click('#preflight'); await page.waitForTimeout(5000);
+  check('EIP-7702 a plain transfer to an upgraded wallet raises no warning',
+    !/upgraded \(EIP-7702\)/.test(await text(page, '#log')), (await text(page, '#log')).slice(0, 200));
+  await page.close();
+}
+
+// ---- an edition cannot reach one at all, and the page says that plainly ----------
+{
+  const upgraded = A(0xf4);
+  const page = await open(browser, { delegated: [upgraded], delegateAccepts: false });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, ED, '1155');
+  await setList(page, upgraded + ',5,2\n');
+  await page.click('#preflight'); await page.waitForTimeout(5000);
+  check('EIP-7702 an edition to an upgraded wallet is called impossible, not user error',
+    /cannot receive one from anybody/.test(await text(page, '#log')), (await text(page, '#log')).slice(0, 400));
   await page.close();
 }
 

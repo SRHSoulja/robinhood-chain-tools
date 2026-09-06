@@ -74,6 +74,26 @@ What the contract does refuse is anything it can actually detect: an address wit
 posing as a token, itself as a recipient, the zero address, a zero amount, and an ERC-20 answer it cannot read
 as either success or failure.
 
+### Upgraded wallets, and what they can still receive
+
+A wallet that has delegated under EIP-7702 has code. It is still that person's wallet, but a **safe** ERC-721
+transfer calls `onERC721Received` on whatever it delegated to, and plenty of delegates do not implement it.
+ERC-1155 has no unsafe transfer at all, so such a wallet cannot receive an edition from anybody.
+
+Measured on Robinhood Chain against a delegated account:
+
+| | delegated wallet with no receive hook |
+|---|---|
+| ERC-721 `transferFrom` | accepted |
+| ERC-721 `safeTransferFrom` | refused, `ERC721InvalidReceiver` |
+| ERC-1155 `safeTransferFrom` | refused, `ERC1155InvalidReceiver` |
+
+This matters because EIP-7702 is live on Robinhood Chain mainnet and wallets do delegate, so these recipients
+appear in ordinary holder lists looking exactly like ordinary wallets. The test run names them before anything
+is signed, asks their delegate directly rather than guessing, and says the useful thing: for an NFT, untick the
+safe-transfer box and a plain transfer reaches them; for an edition, nothing can be done from the sender's
+side.
+
 ### Before you send
 
 The page simulates every batch against live chain state with `eth_call` first, so you learn how many would be

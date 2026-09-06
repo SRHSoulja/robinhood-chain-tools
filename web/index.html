@@ -1186,6 +1186,56 @@
              : ['airdrop20', [token, to, chunk.map(r => r.amount), lenient()]];
   }
 
+  // ---- wallets that have been upgraded, and what they can still receive ----
+  // A wallet that has delegated under EIP-7702 has code. It is still that person's wallet, and a plain
+  // transfer reaches it, but a *safe* transfer calls onERC721Received on whatever it delegated to, and many
+  // delegates do not implement it. ERC-1155 has no unsafe transfer at all, so such a wallet cannot receive an
+  // edition from anyone. Measured on the live chain against a delegated account: plain transfer accepted,
+  // safeTransferFrom refused with ERC721InvalidReceiver, ERC-1155 refused with ERC1155InvalidReceiver.
+  const codeCache = new Map();
+  async function codeOf(list) {
+    const rp = new ethers.JsonRpcProvider(cfg().rpc);
+    const want = list.filter(a => !codeCache.has(a.toLowerCase()));
+    for (let i = 0; i < want.length; i += 25) {
+      const part = want.slice(i, i + 25);
+      const codes = await Promise.all(part.map(a => rp.getCode(a).catch(() => null)));
+      part.forEach((a, k) => { if (codes[k] !== null) codeCache.set(a.toLowerCase(), codes[k]); });
+    }
+    return codeCache;
+  }
+  const delegateIn = (code) => (code && code.length === 2 + 23 * 2 && code.slice(0, 8).toLowerCase() === '0xef0100') ? ethers.getAddress('0x' + code.slice(8)) : null;
+  // Ask the delegate itself, rather than guessing from a list of known ones.
+  async function delegateAccepts(delegate, kind) {
+    const rp = new ethers.JsonRpcProvider(cfg().rpc);
+    const iface = new ethers.Interface([
+      'function onERC721Received(address,address,uint256,bytes) returns (bytes4)',
+      'function onERC1155Received(address,address,uint256,uint256,bytes) returns (bytes4)',
+    ]);
+    const data = kind === '1155'
+      ? iface.encodeFunctionData('onERC1155Received', [me || ethers.ZeroAddress, me || ethers.ZeroAddress, 1, 1, '0x'])
+      : iface.encodeFunctionData('onERC721Received', [me || ethers.ZeroAddress, me || ethers.ZeroAddress, 1, '0x']);
+    try {
+      const ret = await rp.call({ to: delegate, data });
+      const want = kind === '1155' ? '0xf23a6e61' : '0x150b7a02';
+      return String(ret).slice(0, 10).toLowerCase() === want;
+    } catch (e) { return false; }
+  }
+  // Returns the recipients that are upgraded wallets which cannot accept this kind of transfer.
+  async function upgradedWalletsThatCannotReceive(list) {
+    if (std() === '20') return [];
+    if (std() === '721' && !safeMode()) return [];   // a plain transfer reaches them fine
+    const codes = await codeOf(list.map(r => r.to));
+    const out = [];
+    const asked = new Map();
+    for (const r of list) {
+      const d = delegateIn(codes.get(r.to.toLowerCase()));
+      if (!d) continue;
+      if (!asked.has(d)) asked.set(d, await delegateAccepts(d, std()));
+      if (!asked.get(d)) out.push(r);
+    }
+    return out;
+  }
+
   // ---- preflight: run the whole airdrop against live chain state without signing anything ----
   $('preflight').addEventListener('click', async () => {
     if (sending) return;
@@ -1224,6 +1274,19 @@
   async function preflight(verbose, listIn) {
     const ordered = listIn || workingList().list;
     if (verbose) log('Test run: simulating every transfer against the live chain. Nothing is signed and nothing is spent.');
+    // Said before the per-transfer results, because "recipient is a contract that cannot receive NFTs" is a
+    // baffling thing to read about an address that is plainly somebody's wallet.
+    try {
+      const upgraded = await upgradedWalletsThatCannotReceive(ordered);
+      if (upgraded.length) {
+        log(upgraded.length + ' of these are wallets that have been upgraded (EIP-7702) to code that does not accept '
+          + (std() === '1155' ? 'editions' : 'NFTs') + '. They are real wallets, not contracts.', 'warn');
+        if (std() === '721') log('  For an NFT collection you can reach them by unticking "refuse to send to a contract that cannot hold NFTs". That check exists to stop NFTs being stranded in contracts; these are wallets, and their owner can always move what they receive.', 'warn');
+        else log('  An edition has no transfer that skips this check, so these wallets cannot receive one from anybody until they change what their wallet is upgraded to.', 'warn');
+        for (const r of upgraded.slice(0, 8)) log('    ' + r.to, 'warn');
+        if (upgraded.length > 8) log('    … and ' + (upgraded.length - 8) + ' more', 'warn');
+      }
+    } catch (e) { /* an advisory check: never let it stop a run */ }
     {
       const shortfall = await checkTotals(ordered);
       if (shortfall) { log(shortfall, 'bad'); return { ok: false, why: shortfall, willDeliver: 0, willSkip: 0, good: [], bad: [], list: ordered }; }
@@ -1536,10 +1599,10 @@
   const KNOWN = {
     '0x1de5204e': 'this collection only allows transfers through operators its creator approved, so a bulk sender cannot move it. Ask the collection team to whitelist BulkSend, or use their own transfer tool.',
     '0x177e802f': 'this wallet has not approved BulkSend for that id, or no longer owns it', '0x64283d7b': 'that id is not owned by the sending wallet',
-    '0x64a0ae92': 'recipient is a contract that cannot receive NFTs', '0x7e273289': 'that token id does not exist', '0x73c6ac6e': 'invalid sender', '0x5b08ba18': 'invalid operator',
-    '0x03dee4c5': 'not enough balance of that id', '0x57f447ce': 'recipient is a contract that cannot receive ERC-1155', '0xe237d922': 'BulkSend is not approved for this collection',
+    '0x64a0ae92': 'the recipient would not accept an NFT sent this way. A wallet that has been upgraded (EIP-7702) to code with no NFT receive hook looks like this; untick the safe-transfer box and a plain transfer reaches it. A contract that genuinely cannot hold NFTs looks like this too, so leave the box ticked if you are not sure who this is.', '0x7e273289': 'that token id does not exist', '0x73c6ac6e': 'invalid sender', '0x5b08ba18': 'invalid operator',
+    '0x03dee4c5': 'not enough balance of that id', '0x57f447ce': 'the recipient would not accept this edition. An edition has no transfer that skips the receiver check, so a wallet upgraded (EIP-7702) to code with no receive hook cannot be sent one by anybody.', '0xe237d922': 'BulkSend is not approved for this collection',
     '0xfb8f41b2': 'allowance too low for this amount', '0xe450d38c': 'not enough token balance', '0xec442f05': 'invalid recipient', '0xd93c0665': 'the token contract is paused',
-    '0xa1148100': 'that id is not owned by the sending wallet', '0xd1a57ed6': 'recipient is a contract that cannot receive NFTs', '0x59c896be': 'BulkSend is not approved for this collection',
+    '0xa1148100': 'that id is not owned by the sending wallet', '0xd1a57ed6': 'the recipient would not accept an NFT sent this way. A wallet that has been upgraded (EIP-7702) to code with no NFT receive hook looks like this; untick the safe-transfer box and a plain transfer reaches it. A contract that genuinely cannot hold NFTs looks like this too, so leave the box ticked if you are not sure who this is.', '0x59c896be': 'BulkSend is not approved for this collection',
     '0xdf2d9b42': 'that token id does not exist', '0xea553b34': 'recipient is the zero address',
   };
   // BulkSend's own errors, filled in at load from the deployed ABI so they read as instructions, not hex
