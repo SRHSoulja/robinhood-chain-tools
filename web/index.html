@@ -52,7 +52,7 @@
     <h2>2 · Recipients</h2>
     <div class="row" style="margin-bottom:10px">
       <div><label>Build the list from a collection's holders</label><div style="display:flex;gap:8px"><input type="text" id="snapAddr" placeholder="holders of 0x… (snapshot)" spellcheck="false"><button class="secondary" id="snap">Fetch</button></div></div>
-      <div><label>Or let it use the token ids you hold</label><button class="secondary" id="assign" style="width:100%">Assign my token ids to these wallets</button></div>
+      <div><label>Or let it use the token ids you hold</label><button class="secondary" id="assign" style="width:100%">Assign my token ids to these wallets</button><div style="font-size:12px;color:var(--mut);margin-top:4px">Paste wallets on their own and this fills in which NFT each one gets.</div></div>
     </div>
     <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV</label>
     <textarea id="list" placeholder="0xabc…, 12&#10;0xdef…, 13"></textarea>
@@ -258,6 +258,20 @@
     if (s === '20' && tokenLoadedFor !== $('token').value.trim().toLowerCase()) { setStat($('parseOut'), [['', 'Enter the token address first: the amounts depend on how many decimals it uses.', 'bad']]); rows = []; plan(); return; }
     const want = s === '1155' ? 3 : 2;   // fields per line; more than this means a stray separator, such as a thousands comma
     const lines = $('list').value.split(/\r?\n/); const out = [], problems = []; const seenId = new Set();
+    // Bare wallets, no ids: that is how most people start. Offer to fill the ids in rather than flagging every line.
+    if (s === '721') {
+      const rowsIn = lines.map(l => l.trim()).filter(l => l && !/^(address|wallet|to)\b/i.test(l));
+      const bare = rowsIn.filter(l => ethers.isAddress(l.split(/[,\t; ]+/)[0]) && l.split(/[,\t; ]+/).filter(Boolean).length === 1);
+      if (rowsIn.length && bare.length === rowsIn.length) {
+        rows = [];
+        setStat($('parseOut'), [['', bare.length + ' wallets, no token ids yet', 'warn']]);
+        $('problems').style.display = 'block';
+        $('problems').textContent = 'These are wallets with no token ids. Press "Assign my token ids to these wallets" and the ids you hold are filled in for you, lowest first. Or write the id after each address yourself.';
+        $('assign').style.borderColor = 'var(--warn)'; $('assign').style.color = 'var(--warn)';
+        plan(); return;
+      }
+      $('assign').style.borderColor = ''; $('assign').style.color = '';
+    }
     lines.forEach((line, i) => {
       const t = line.trim(); if (!t || /^(address|wallet|to)\b/i.test(t)) return;
       const parts = t.split(/[,\t;]+|\s+/).filter(Boolean);
@@ -323,7 +337,8 @@
       const uniq = [...new Set(holders)].filter(h => h !== ethers.ZeroAddress && (!me || h.toLowerCase() !== me.toLowerCase()));
       if (!uniq.length) { log('The explorer returned no holders for that address.', 'bad'); return; }
       $('list').value = uniq.join('\n');
-      log(uniq.length + ' holders loaded' + (me ? ' (your own wallet left out)' : '') + '. Now assign token ids, or add them to the list yourself.', 'ok');
+      log(uniq.length + ' holders loaded' + (me ? ' (your own wallet left out)' : '') + '.', 'ok');
+      if (std() === '721') log('Next: press "Assign my token ids to these wallets" to fill in which of your NFTs each one gets.');
       parseList();
     } catch (e) { log('Could not read holders: ' + String(e.message || e).slice(0, 120), 'bad'); }
     $('snap').disabled = false;
