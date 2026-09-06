@@ -130,7 +130,7 @@
 (() => {
   // ---- chain config; BulkSend addresses are filled in after each deploy ----
   const CHAINS = {
-    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '0xc6ae3189edae544ed60adf5ec057e338ce224f74' },
+    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '0x3159f3abf0235eacedff866312cb1bb335d6f80e' },
     4663:  { name: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com', bulk: '{{BULKSEND_MAINNET}}' },
   };
   const BULK_ABI = [
@@ -480,7 +480,23 @@
     out.push(cur);
     let cells = out.map(x => x.trim());
     if (cells.length === 1) cells = cells[0].split(/\s+/).filter(Boolean);   // a whitespace-separated paste
-    return cells.filter(x => x !== '');
+    // Empty cells are kept. Dropping them used to shift every later cell one place to the left, so a file
+    // saying "give this wallet ten NFTs" with the id column left blank was read as "send NFT number ten":
+    // a different asset, and nine allocations gone, with nothing flagged.
+    while (cells.length > 1 && cells[cells.length - 1] === '') cells.pop();   // a trailing separator is not a column
+    return cells;
+  }
+  // Some addresses are not recipients. The zero address burns; BulkSend has no owner and no rescue function,
+  // so anything sent there is gone; a token's own contract almost never gives it back either. The contract
+  // refuses itself, but the wallet-batch path never reaches the contract, so the refusal has to live here too.
+  function recipientProblem(a) {
+    if (a === ethers.ZeroAddress) return 'the zero address would burn the token; not allowed';
+    if (bulkReady() && a.toLowerCase() === String(cfg().bulk).toLowerCase())
+      return 'that is the BulkSend contract itself. It has no owner and no way to send anything back, so the token would be stuck there for good';
+    const token = $('token').value.trim();
+    if (ethers.isAddress(token) && a.toLowerCase() === token.toLowerCase())
+      return 'that is the token\u2019s own contract address. Tokens sent to their own contract are almost never recoverable';
+    return null;
   }
   // A quantity has to be a plain whole number. Anything else is a mistake worth stopping for, never a silent 1.
   function wholeNumber(v) {
@@ -521,13 +537,28 @@
         const addr = cells[colMap.to];
         if (!addr || !ethers.isAddress(addr)) { problems.push('line ' + (i + 1) + ': no wallet address in the "' + Object.keys(COLS).find(k => COLS[k]) + '" column'); return; }
         const a = ethers.getAddress(addr);
-        if (a === ethers.ZeroAddress) { problems.push('line ' + (i + 1) + ': the zero address would burn the token; not allowed'); return; }
+        { const bad = recipientProblem(a); if (bad) { problems.push('line ' + (i + 1) + ': ' + bad); return; } }
         const idCell = colMap.id !== undefined ? cells[colMap.id] : null;
         const qtyCell = colMap.qty !== undefined ? cells[colMap.qty] : null;
         named.push({ a, idCell, qtyCell, line: i + 1 });
       });
       // In the wider ecosystem an NFT file with a quantity column but no id column means "how many of yours",
       // which is the same thing this page calls x3. Rewrite it into that form and let Assign fill the ids in.
+      // A file that names an id column and then leaves it blank is not a file that means "assign some";
+      // it is a file with a hole in it. Say so rather than reading whatever fell into that position.
+      if (colMap.id !== undefined) {
+        const blanks = named.filter(r => !String(r.idCell || '').trim());
+        if (blanks.length && blanks.length < named.length) {
+          for (const r of blanks) problems.push('line ' + r.line + ': the token id column is empty on this line');
+        } else if (blanks.length === named.length && colMap.qty !== undefined && s === '721') {
+          // Every id is blank and there are quantities: that is the "how many each" shape with an empty column,
+          // and it still has to be confirmed below before it replaces anything.
+          colMap = Object.assign({}, colMap); delete colMap.id;
+        } else if (blanks.length === named.length) {
+          say('msgList', 'That file has a token id column and every one of them is empty. Nothing was changed.', 'bad');
+          rows = []; plan(); return;
+        }
+      }
       if (s === '721' && colMap.id === undefined && colMap.qty !== undefined) {
         const bad = [];
         const lines2 = named.map(r => {
@@ -604,7 +635,7 @@
         const looksLikeThousands = parts.length === want + 1 && /^\d{1,3}$/.test(parts[1] || '') && /^\d{3}(\.\d+)?$/.test(parts[2] || '');
         problems.push('line ' + (i + 1) + ': ' + parts.length + ' values, expected ' + want + (looksLikeThousands ? '. A thousands separator splits the line, so write 1234.5 rather than 1,234.5' : '')); return; }
       const a = ethers.getAddress(addr);
-      if (a === ethers.ZeroAddress) { problems.push('line ' + (i + 1) + ': the zero address would burn the token; not allowed'); return; }
+      { const bad = recipientProblem(a); if (bad) { problems.push('line ' + (i + 1) + ': ' + bad); return; } }
       try {
         if (s === '721') { const id = parts[1]; if (!/^\d+$/.test(id || '')) { problems.push('line ' + (i + 1) + ': missing token id'); return; }
           const idKey = BigInt(id).toString();   // 1 and 01 are the same token
@@ -659,10 +690,26 @@
   const rowKey = (r) => r.to.toLowerCase() + ':' + (r.id !== undefined ? r.id.toString() : '') + ':' + (r.amount !== undefined ? r.amount.toString() : '');
   const keyOf = (r) => r.k || (rowKey(r) + '#1');
   function loadDelivered() { try { return new Set(JSON.parse(localStorage.getItem(runKey()) || '[]')); } catch (e) { return new Set(); } }
+  // Returns whether the record is actually on disk. A swallowed failure here is a recipient who gets paid a
+  // second time on the next reload, so every caller checks the answer and stops.
   function markDelivered(rowsDone) {
-    try { const s = loadDelivered(); for (const r of rowsDone) s.add(keyOf(r)); localStorage.setItem(runKey(), JSON.stringify([...s].slice(-20000))); }
-    catch (e) { log('This browser would not save the record of what was delivered, so it cannot protect you from sending twice. Keep the tab open and finish in one go.', 'bad'); }
+    try {
+      const s = loadDelivered(); for (const r of rowsDone) s.add(keyOf(r));
+      const all = [...s];
+      if (all.length > LEDGER_CAP) throw new Error('ledger full');
+      localStorage.setItem(runKey(), JSON.stringify(all));
+      const back = loadDelivered();                        // read it back: quota failures are not always thrown
+      for (const r of rowsDone) if (!back.has(keyOf(r))) throw new Error('not stored');
+      return true;
+    } catch (e) {
+      log('This browser did not save the record of what was just delivered' + (String(e.message) === 'ledger full'
+        ? ', because that record is full (' + LEDGER_CAP.toLocaleString() + ' rows). Start a new run, or press "Forget what was delivered" once you are sure everything landed.'
+        : '. Without it, reloading could pay those wallets again.') + ' Stopping here.', 'bad');
+      return false;
+    }
   }
+  // Nothing is ever silently evicted from the ledger: a forgotten row is a row that gets paid twice.
+  const LEDGER_CAP = 20000;
   function dropAlreadyDelivered(list) {
     const done = loadDelivered(); const held = heldByPending();
     if (!done.size && !held.size) return { list, skippedBefore: 0, heldBack: 0 };
@@ -681,10 +728,25 @@
   const rowsToJson = (list) => list.map(r => ({ to: r.to, id: r.id === undefined ? null : r.id.toString(), amount: r.amount === undefined ? null : r.amount.toString(), k: keyOf(r) }));
   const rowsFromJson = (list) => (list || []).map(o => ({ to: o.to, id: o.id === null || o.id === undefined ? undefined : BigInt(o.id), amount: o.amount === null || o.amount === undefined ? undefined : BigInt(o.amount), k: o.k }));
   function loadPending() { try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]'); } catch (e) { return []; } }
-  function savePending(l) { try { localStorage.setItem(PENDING_KEY, JSON.stringify(l.slice(-100))); } catch (e) {} }
-  function addPending(entry) { const l = loadPending(); l.push(entry); savePending(l); return entry; }
+  function savePending(l) {
+    try {
+      localStorage.setItem(PENDING_KEY, JSON.stringify(l));   // never trimmed: an unresolved batch is not noise
+      return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]').length === l.length;
+    } catch (e) { return false; }
+  }
+  function addPending(entry) { const l = loadPending(); l.push(entry); return savePending(l) ? entry : null; }
   function dropPending(id) { savePending(loadPending().filter(e => e.pid !== id)); }
   const newPid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  // Proves the ledger can actually be written before anything is signed against it.
+  function storageWorks() {
+    try {
+      const k = 'bulksend:probe'; const v = String(Date.now());
+      localStorage.setItem(k, v);
+      const ok = localStorage.getItem(k) === v;
+      localStorage.removeItem(k);
+      return ok;
+    } catch (e) { return false; }
+  }
   // Rows inside an unresolved batch for the run currently on screen.
   function heldByPending() {
     const out = new Set(); const rk = runKey();
@@ -816,7 +878,7 @@
     $('assign').disabled = true;
     try {
       const ids = await myTokenIds(token, totalWanted);
-      if (!ids.length) { say('msgList', 'Your wallet does not appear to hold anything in this collection.', 'bad'); $('assign').disabled = false; return; }
+      if (!ids.length) { say('msgList', 'Your wallet does not appear to hold anything in this collection, or the explorer would not say. Nothing has been changed.', 'bad'); $('assign').disabled = false; return; }
       const random = $('rand').checked;
       if (std() === '1155') {
         // an edition is divisible, so "how many each" is just the amount on the line
@@ -827,9 +889,22 @@
         // an NFT cannot be divided, so a wallet getting more means more ids, one line each
         const order = random ? shuffled(wants) : wants.slice();
         const pool = random ? shuffled(ids) : ids.slice();
+        // Fewer ids than the list asks for means someone in that list is being dropped, and with random
+        // pairing nobody can predict who. The box is left exactly as it was until that is agreed to.
+        if (ids.length < totalWanted) {
+          const short = totalWanted - ids.length;
+          const missing = [];
+          { let k = 0; for (const w of order) { const got = Math.max(0, Math.min(w.n, ids.length - k)); if (got < w.n) missing.push(w.to.slice(0, 10) + '\u2026 gets ' + got + ' of ' + w.n); k += got; } }
+          say('msgList', 'This list asks for ' + totalWanted + ' NFTs and this wallet holds ' + ids.length + ' of them. Nothing has been changed.', 'bad');
+          $('problems').style.display = 'block';
+          $('problems').textContent = 'Short by ' + short + '. If this went ahead, these wallets would get less than the list asks for:\n  '
+            + missing.slice(0, 12).join('\n  ') + (missing.length > 12 ? '\n  \u2026 and ' + (missing.length - 12) + ' more' : '')
+            + '\n\nEither shorten the list, lower "how many each", or check that this wallet really holds them: a collection the explorer indexes slowly can also read as fewer than you own.';
+          log('Assign stopped: the list asks for ' + totalWanted + ' and only ' + ids.length + ' could be found in this wallet. Your list is untouched.', 'bad');
+          $('assign').disabled = false; return;
+        }
         const lines = []; let k = 0;
         for (const w of order) { for (let j = 0; j < w.n && k < pool.length; j++) lines.push(w.to + ',' + pool[k++]); }
-        if (k < totalWanted) log('The list asks for ' + totalWanted + ' but the wallet holds ' + ids.length + '. ' + lines.length + ' were assigned; the wallets after that get nothing.', 'warn');
         $('list').value = lines.join('\n');
       }
       const n = $('list').value.split('\n').filter(Boolean).length;
@@ -1036,26 +1111,52 @@
     let resolved = 0;
     for (const e of list) {
       const c = CHAINS[e.chain]; if (!c) continue;
-      let rc = null;
-      try { rc = await new ethers.JsonRpcProvider(c.rpc).getTransactionReceipt(e.hash); }
-      catch (err) { continue; }   // cannot ask the chain right now: leave it exactly as it is
-      if (!rc) {
-        if (!quiet) log('A batch of ' + (e.rows || []).length + ' sent from this browser on ' + new Date(e.at).toLocaleString() + ' is not on the chain. Those recipients are being held back until it is, so nothing is sent twice.', 'warn', e.hash);
+      // A wallet batch may have been written down before the wallet gave us a transaction hash. The wallet
+      // still knows the batch by the id it handed back, so ask it before giving up on the rows.
+      if (!e.hash && e.callsId && eth && chainId() === e.chain) {
+        try {
+          const st = await eth.request({ method: 'wallet_getCallsStatus', params: [e.callsId] });
+          const raw = st && st.status; const code = typeof raw === 'number' ? raw : (raw === 'CONFIRMED' ? 200 : raw === 'PENDING' ? 100 : 0);
+          const h = st && st.receipts && st.receipts[0] && st.receipts[0].transactionHash;
+          if (code >= 400) { log('An unfinished batch of ' + (e.rows || []).length + ' from ' + new Date(e.at).toLocaleString() + ' failed in your wallet, so nothing in it moved. Those recipients are back in the list.', 'warn'); dropPending(e.pid); resolved++; continue; }
+          if (h) { const l = loadPending(); const ent = l.find(x => x.pid === e.pid); if (ent) { ent.hash = h; savePending(l); } e.hash = h; }
+        } catch (err) { /* the wallet no longer knows this batch (EIP-5792 error 5730), or is not connected */ }
+      }
+      // A replacement transaction the page could not follow at the time is still followable now.
+      const lookFor = e.hash || e.replacedBy;
+      if (!lookFor) {
+        if (!quiet) log('A batch of ' + (e.rows || []).length + ' from ' + new Date(e.at).toLocaleString() + ' was sent to your wallet and never came back with a transaction. Connect the same wallet on the same network and reload, and this page will ask it what happened. Until then those recipients are held back.', 'warn');
         continue;
       }
+      let rc = null;
+      try { rc = await new ethers.JsonRpcProvider(c.rpc).getTransactionReceipt(lookFor); }
+      catch (err) { continue; }   // cannot ask the chain right now: leave it exactly as it is
+      if (!rc && e.replacedBy && e.hash) {
+        try { rc = await new ethers.JsonRpcProvider(c.rpc).getTransactionReceipt(e.replacedBy); } catch (err) {}
+      }
+      if (!rc) {
+        if (!quiet) log('A batch of ' + (e.rows || []).length + ' sent from this browser on ' + new Date(e.at).toLocaleString() + ' is not on the chain. Those recipients are being held back until it is, so nothing is sent twice.', 'warn', lookFor);
+        continue;
+      }
+      // A replacement that did land is only ours if it is the same call to the same place.
+      if (e.replacedBy && rc.to && e.bulk && String(rc.to).toLowerCase() !== String(e.bulk).toLowerCase()) {
+        if (!quiet) log('The transaction that replaced a batch from ' + new Date(e.at).toLocaleString() + ' went somewhere else, so that batch never ran. Those recipients are back in the list.', 'warn', e.replacedBy);
+        dropPending(e.pid); resolved++; continue;
+      }
       const chunk = rowsFromJson(e.rows);
-      if (rc.status === 0) { log('A batch sent on ' + new Date(e.at).toLocaleString() + ' failed on the chain, so nothing in it moved. Those ' + chunk.length + ' recipients are back in the list.', 'warn', e.hash); dropPending(e.pid); resolved++; continue; }
+      if (rc.status === 0) { log('A batch sent on ' + new Date(e.at).toLocaleString() + ' failed on the chain, so nothing in it moved. Those ' + chunk.length + ' recipients are back in the list.', 'warn', lookFor); dropPending(e.pid); resolved++; continue; }
       if (e.via === 'wallet') {
         // The wallet sent the transfers as itself and the transaction succeeded, so all of them landed.
-        writeDeliveredFor(e.run, chunk); dropPending(e.pid); resolved++;
-        log('Caught up: a batch of ' + chunk.length + ' from ' + new Date(e.at).toLocaleString() + ' did land, and has been recorded so it is not sent again.', 'ok', e.hash);
+        if (!writeDeliveredFor(e.run, chunk)) { log('A batch from ' + new Date(e.at).toLocaleString() + ' did land, but this browser would not record it. It is being kept as unresolved rather than forgotten.', 'bad', lookFor); continue; }
+        dropPending(e.pid); resolved++;
+        log('Caught up: a batch of ' + chunk.length + ' from ' + new Date(e.at).toLocaleString() + ' did land, and has been recorded so it is not sent again.', 'ok', lookFor);
         continue;
       }
       const r = readBatchReceipt(rc, chunk, e.bulk);
-      if (r.ambiguous) { log('A batch from ' + new Date(e.at).toLocaleString() + ' cannot be read back line by line, so it is left alone. Check it on the explorer before sending to those wallets again.', 'bad', e.hash); continue; }
-      writeDeliveredFor(e.run, r.delivered);
+      if (r.ambiguous) { log('A batch from ' + new Date(e.at).toLocaleString() + ' cannot be read back line by line, so it is left alone. Check it on the explorer before sending to those wallets again.', 'bad', lookFor); continue; }
+      if (!writeDeliveredFor(e.run, r.delivered)) { log('A batch from ' + new Date(e.at).toLocaleString() + ' could be read but not recorded, so it is being kept as unresolved rather than forgotten.', 'bad', lookFor); continue; }
       dropPending(e.pid); resolved++;
-      log('Caught up: a batch from ' + new Date(e.at).toLocaleString() + ' delivered ' + r.delivered.length + (r.skipped ? ' and skipped ' + r.skipped : '') + '. Recorded, so it will not be sent again.', 'ok', e.hash);
+      log('Caught up: a batch from ' + new Date(e.at).toLocaleString() + ' delivered ' + r.delivered.length + (r.skipped ? ' and skipped ' + r.skipped : '') + '. Recorded, so it will not be sent again.', 'ok', lookFor);
     }
     if (resolved) plan();
     return resolved;
@@ -1065,8 +1166,13 @@
     try {
       const cur = new Set(JSON.parse(localStorage.getItem(key) || '[]'));
       for (const r of rowsDone) cur.add(keyOf(r));
-      localStorage.setItem(key, JSON.stringify([...cur].slice(-20000)));
-    } catch (e) {}
+      const all = [...cur];
+      if (all.length > LEDGER_CAP) throw new Error('ledger full');
+      localStorage.setItem(key, JSON.stringify(all));
+      const back = new Set(JSON.parse(localStorage.getItem(key) || '[]'));
+      for (const r of rowsDone) if (!back.has(keyOf(r))) throw new Error('not stored');
+      return true;
+    } catch (e) { return false; }
   }
 
   // ---- the call for one chunk ----
@@ -1195,14 +1301,23 @@
     stopFlag = false; skippedRows = [];
     // Two tabs of the same list would both read "nothing delivered yet" and both send it.
     let releaseLock = null;
-    if (navigator.locks) {
+    if (!navigator.locks || !navigator.locks.request) {
+      log('This browser does not support the lock that stops two tabs sending the same list at once, so this page will not send. Use a current version of Chrome, Edge, Firefox or Safari.', 'bad');
+      return;
+    }
+    {
       const got = await new Promise((resolve) => {
         navigator.locks.request('bulksend:' + runKey(), { ifAvailable: true }, (lock) => {
           if (!lock) { resolve(false); return; }
           resolve(true); return new Promise((r) => { releaseLock = r; });
-        }).catch(() => resolve(true));
+        }).catch(() => resolve(false));   // a lock that errors is a lock we do not hold
       });
-      if (!got) { log('Another tab of this page is already sending this list. Finish there, or close it, before sending here.', 'bad'); return; }
+      if (!got) { log('Another tab of this page is already sending this list, or this browser would not grant the lock. Finish there, or close it, before sending here.', 'bad'); return; }
+    }
+    // The ledger has to be writable before anything is signed, not discovered to be unwritable afterwards.
+    if (!storageWorks()) {
+      log('This browser will not let this page store anything, so it cannot remember what it has delivered and cannot protect you from sending twice. Nothing was sent. Leave private browsing, or allow site data for this page.', 'bad');
+      return;
     }
     try {
     if (!(await onSelectedChain())) return;
@@ -1278,7 +1393,10 @@
         // Written down before the wait: if this tab closes now, the next visit reads the receipt instead of
         // assuming none of these were paid.
         const pid = newPid();
-        addPending({ pid, run: runKey(), chain: chainId(), bulk: bulkAddr, hash: tx.hash, at: Date.now(), rows: rowsToJson(chunk), via: 'bulk' });
+        if (!addPending({ pid, run: runKey(), chain: chainId(), bulk: bulkAddr, hash: tx.hash, at: Date.now(), rows: rowsToJson(chunk), via: 'bulk' })) {
+          log('  this browser stopped saving. That batch is on its way and this page can no longer keep track of it, so nothing more will be sent. Check ' + tx.hash.slice(0, 12) + '… on the explorer before sending to these wallets again.', 'bad', tx.hash);
+          break;
+        }
         log('  sent, waiting …', '', tx.hash);
         // A multisig such as Safe hands back a request id and only executes once the other owners sign, so
         // waiting on it would hang forever. Stop after a while and say what is actually going on.
@@ -1293,6 +1411,10 @@
               && String(e.replacement.data || '') === String(tx.data || '')) {
             rc = e.receipt; log('  your wallet replaced that transaction with an identical one; following the replacement.', 'warn', rc.hash);
           } else if (e && e.code === 'TRANSACTION_REPLACED') {
+            // Record what replaced it, so the next visit has something to look up instead of a hash that will
+            // never have a receipt.
+            const l = loadPending(); const ent = l.find(x => x.pid === pid);
+            if (ent) { ent.replacedBy = (e.replacement && e.replacement.hash) || null; ent.cancelled = !!e.cancelled; savePending(l); }
             log('  that transaction was replaced by a different one, so this batch cannot be accounted for. Check the explorer before sending again; nothing has been recorded as delivered.', 'bad');
             break;
           } else { throw e; }
@@ -1308,8 +1430,8 @@
           log('  this batch reported ' + r.skipped + ' skipped but they could not be matched to your list, so nothing from it has been recorded. Check the transaction before sending again.', 'bad', rc.hash);
           break;
         }
-        if (r.sent) markDelivered(r.delivered);
-        dropPending(pid);   // the chain has been read: this batch is no longer unaccounted for
+        if (r.sent && !markDelivered(r.delivered)) break;   // the record failed: keep the batch pending and stop
+        dropPending(pid);   // recorded, and only now no longer unaccounted for
         log('  done: ' + r.sent + ' delivered' + (r.skipped ? ', ' + r.skipped + ' skipped' : '') + ' · gas ' + rc.gasUsed, 'ok');
         if (stopFlag) { log('Stopped.', 'warn'); break; }
       }
@@ -1345,7 +1467,10 @@
         const id = typeof res === 'string' ? res : (res && res.id);
         if (!id) { log('  the wallet did not return a batch id, so this cannot be tracked. Check your wallet and the explorer before sending again.', 'bad'); break; }
         const pid = newPid();
-        addPending({ pid, run: runKey(), chain: chainId(), bulk: null, hash: null, callsId: String(id), at: Date.now(), rows: rowsToJson(chunk), via: 'wallet' });
+        if (!addPending({ pid, run: runKey(), chain: chainId(), bulk: null, hash: null, callsId: String(id), at: Date.now(), rows: rowsToJson(chunk), via: 'wallet' })) {
+          log('  this browser stopped saving, and that batch has already gone to your wallet. Nothing more will be sent. Check your wallet before sending to these wallets again.', 'bad');
+          break;
+        }
         const rcpt = await waitForCalls(id);
         if (rcpt.hash) { const l = loadPending(); const e = l.find(x => x.pid === pid); if (e) { e.hash = rcpt.hash; savePending(l); } }
         if (rcpt.state === 'failed') { dropPending(pid); log('  the wallet reported this batch failed; nothing in it moved.', 'bad'); break; }
@@ -1357,7 +1482,9 @@
             : '  the wallet stopped reporting on this batch, so whether it landed is unknown. Check the explorer before sending again.', 'bad', rcpt.hash);
           break;
         }
-        sent += chunk.length; markDelivered(chunk); dropPending(pid);
+        sent += chunk.length;
+        if (!markDelivered(chunk)) break;                   // the record failed: keep the batch pending and stop
+        dropPending(pid);
         log('  done: ' + chunk.length + ' delivered', 'ok', rcpt.hash);
       } catch (e) {
         log('  stopped: ' + explainCallError(e), 'bad'); break;

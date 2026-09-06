@@ -76,6 +76,7 @@ async function open(browser, opts = {}) {
     const req = route.request(), url = req.url();
     if (url.startsWith('file://') || url.includes('cdnjs.cloudflare.com')) return route.continue();
     if (url.includes('/api/v2/smart-contracts/') || url.includes('/x/')) {
+      if (opts.slowFor && url.toLowerCase().includes(opts.slowFor.toLowerCase().slice(2))) await new Promise((r) => setTimeout(r, opts.slowMs || 3000));
       if (opts.explorerSick) return route.fulfill({ status: 500, contentType: 'text/html', body: 'upstream is unwell' });
       const addr = url.split('/').pop().toLowerCase();
       const body = opts.verified && opts.verified[addr];
@@ -238,6 +239,100 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   check('and the page says plainly that it could not check',
     t.includes('could not check for a published source'), t.slice(0, 260));
   check('while everything readable from the chain is still shown', t.includes('Code size'), t.slice(0, 400));
+  await page.close();
+}
+
+// ---- H-02: a name is not a behaviour, and no match proves nothing ----------------
+{
+  const verified = {};
+  verified[NASTY] = { is_verified: true, name: 'Quiet', compiler_version: 'v0.8.24', abi: [
+    { type: 'function', name: 'rebalance', stateMutability: 'nonpayable', inputs: [{ name: 'victim', type: 'address' }, { name: 'amount', type: 'uint256' }] },
+    { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }] },
+  ] };
+  const page = await open(browser, { verified });
+  const t = await ask(page, NASTY);
+  check('H-02 the page never claims a contract cannot mint, pause, block or be replaced',
+    !/Nothing in .* lets anyone/.test(t), t.slice(0, 300));
+  check('H-02 it says what the section actually is', t.includes('What this section is, and is not'), t.slice(0, 400));
+  check('H-02 and that nothing matching is not the same as nothing to find',
+    /not that there is nothing to find/.test(t), t.slice(0, 500));
+  await page.close();
+}
+
+// ---- H-02: behind a proxy, the code that runs is what gets read ------------------
+{
+  const verified = {};
+  verified[PROXY] = { is_verified: true, name: 'Forwarder', abi: [
+    { type: 'function', name: 'harmless', stateMutability: 'view', inputs: [] },
+  ] };
+  verified[IMPL] = { is_verified: true, name: 'TheRealCode', abi: [
+    { type: 'function', name: 'mint', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'id', type: 'uint256' }] },
+  ] };
+  const page = await open(browser, { verified });
+  const t = await ask(page, PROXY);
+  check('H-02 a proxy is read through to the implementation, not stopped at the forwarder',
+    /create new tokens/.test(t), t.slice(0, 400));
+  check('H-02 and the page says where it read from', t.includes('implementation'), t.slice(0, 400));
+  await page.close();
+}
+
+// ---- H-02: partial verification is incomplete evidence ---------------------------
+{
+  const verified = {};
+  verified[NFT] = { is_verified: true, is_partially_verified: true, name: 'Partly', abi: [{ type: 'function', name: 'harmless', stateMutability: 'view', inputs: [] }] };
+  const page = await open(browser, { verified });
+  const t = await ask(page, NFT);
+  check('H-02 partial verification is called out as incomplete', /only partially verified/.test(t), t.slice(0, 400));
+  await page.close();
+}
+
+// ---- H-03: silence is not proof that nothing moved -------------------------------
+{
+  const page = await open(browser, { simLogs: [] });
+  const t = await ask(page, JSON.stringify({ to: NFT, data: '0x23b872dd' + ME.slice(2).padStart(64, '0') + A(0x2222).slice(2).padStart(64, '0') + (7).toString(16).padStart(64, '0') }), ME);
+  check('H-03 an empty log set is never reported as "nothing moves"', !/No tokens and no ETH move/.test(t), t.slice(0, 300));
+  check('H-03 and the page says a token could move without announcing it',
+    /without announcing it/.test(t), t.slice(0, 500));
+  await page.close();
+}
+
+// ---- H-03: what is shown is what the contract announced --------------------------
+{
+  const page = await open(browser, { simLogs: [{ address: TOK, topics: [TRANSFER, topicAddr(ME), topicAddr(A(0x2222))], data: word(100) }] });
+  const t = await ask(page, JSON.stringify({ to: TOK, data: '0xa9059cbb' + A(0x2222).slice(2).padStart(64, '0') + word(100).slice(2) }), ME);
+  check('H-03 the movement section is named for what it holds: announcements',
+    /announce moving/.test(t), t.slice(0, 300));
+  await page.close();
+}
+
+// ---- M-05: a transaction with no receipt has unknown movements -------------------
+{
+  const tx = { hash: '0x' + 'cd'.repeat(32), from: ME, to: NFT, input: '0x23b872dd' + ME.slice(2).padStart(64, '0') + A(0x2222).slice(2).padStart(64, '0') + (7).toString(16).padStart(64, '0'), value: '0x0', gas: '0x5208', gasPrice: '0x989680', nonce: '0x1', blockHash: null, blockNumber: null, transactionIndex: null, type: '0x2', chainId: '0xb626', maxFeePerGas: '0x989680', maxPriorityFeePerGas: '0x0', accessList: [], v: '0x1', r: '0x' + '11'.repeat(32), s: '0x' + '22'.repeat(32) };
+  const page = await open(browser, { tx, receipt: null });
+  const t = await ask(page, tx.hash, ME);
+  check('M-05 a pending transaction is not described as having moved nothing',
+    !/No tokens and no ETH move/.test(t) && !/No standard transfer or approval events/.test(t), t.slice(0, 300));
+  check('M-05 it says the movements are unknown until it is mined',
+    /has not been mined/.test(t), t.slice(0, 400));
+  await page.close();
+}
+
+// ---- M-01: a slow answer never lands on top of a newer question ------------------
+{
+  const verified = {};
+  verified[NASTY] = { is_verified: true, name: 'SlowOne', abi: [{ type: 'function', name: 'mint', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }] }] };
+  verified[WALLET] = { is_verified: false };
+  const page = await open(browser, { verified, slowFor: NASTY, slowMs: 4000 });
+  await page.fill('#input', NASTY);
+  await page.click('#go');
+  await page.waitForTimeout(400);
+  await page.fill('#input', TOK);
+  await page.evaluate(() => { const b = document.querySelector('#go'); b.disabled = false; b.click(); });
+  await page.waitForTimeout(7000);
+  const t = (await page.textContent('#out')) || '';
+  check('M-01 the answer on screen belongs to the question in the box',
+    !t.includes('SlowOne') && t.toLowerCase().includes(TOK.slice(-6).toLowerCase()) && !t.toLowerCase().includes(NASTY.slice(-6).toLowerCase()),
+    t.slice(0, 300));
   await page.close();
 }
 

@@ -19,6 +19,11 @@ pragma solidity ^0.8.24;
 /// pick their own between `MIN_GAS` and `MAX_GAS`. A recipient skipped for running out of it has not been
 /// judged unable to receive; it may simply be expensive. Send that one on its own in strict mode, where the
 /// whole transaction's gas is available to it, or raise the stipend.
+///
+/// What this contract cannot do is make a token honest. Every delivery it counts means "the token's transfer
+/// function was called and did not fail". A contract that accepts a transfer, returns success and moves
+/// nothing is indistinguishable from one that paid; a fee-on-transfer token delivers less than the amount
+/// asked for while correctly returning true. Counting is not proof of payment. The chain is.
 interface IERC721Like {
     function transferFrom(address from, address to, uint256 tokenId) external;
     function safeTransferFrom(address from, address to, uint256 tokenId) external;
@@ -261,7 +266,9 @@ contract BulkSend {
                 (ok, ret) = _callAll(token, data);
             }
             if (ok) {
-                bool answeredTrue = ret.length == 0 || (ret.length >= 32 && abi.decode(ret, (uint256)) == 1);
+                // Exactly nothing (USDT-style) or exactly one word holding 1. Trailing bytes after that word
+                // are not a `bool`, and this contract has no business guessing what they were meant to be.
+                bool answeredTrue = ret.length == 0 || (ret.length == 32 && abi.decode(ret, (uint256)) == 1);
                 if (!answeredTrue) revert AmbiguousResult(dst, i);   // it may have paid them; do not call this a skip
                 ++sent;
             } else if (o.lenient) {

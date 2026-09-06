@@ -101,11 +101,29 @@ if [ -n "${ORIGIN_PUBLISH_CMD:-}" ]; then
   $ORIGIN_PUBLISH_CMD "$SRC" "$ORIGIN_NAME"
 fi
 
-if [ -n "$VERIFY" ]; then
+# A 200 proves something answered, not that it answered with the file that was just reviewed. Compare the
+# bytes: a custom domain still pointing at an older worker returns 200 all day.
+verify_body () {
+  local url="$1" want="$2" label="$3" got=""
+  local want_sum; want_sum="$(sha256sum "$want" | cut -d' ' -f1)"
   for _ in 1 2 3 4 5 6; do
-    CODE="$(curl -s -o /dev/null -w '%{http_code}' -m 25 "$VERIFY" || true)"
-    [ "$CODE" = "200" ] && break
+    got="$(curl -s -m 25 "$url" | sha256sum | cut -d' ' -f1 || true)"
+    [ "$got" = "$want_sum" ] && break
     sleep 5
   done
-  echo "$VERIFY -> $CODE"
+  if [ "$got" = "$want_sum" ]; then
+    echo "$label $url matches $want  ($want_sum)"
+  else
+    echo "$label $url DOES NOT match $want" >&2
+    echo "  served $got" >&2
+    echo "  local  $want_sum" >&2
+    return 1
+  fi
+}
+
+FAILED=0
+[ -n "$VERIFY" ] && { verify_body "$VERIFY" "$SRC" "page:" || FAILED=1; }
+if [ "$TARGET" = "airdrop" ] && [ -n "$VERIFY" ] && [ -f "$ROOT/web/wc.js" ]; then
+  verify_body "${VERIFY%/}/wc.js" "$ROOT/web/wc.js" "connector:" || FAILED=1
 fi
+exit $FAILED

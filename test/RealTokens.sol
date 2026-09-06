@@ -202,3 +202,21 @@ contract LongReason20 {
         revert("this rejection reason is deliberately far longer than one hundred and twenty eight bytes so that any truncation would leave behind something that no longer decodes as an Error(string) at all");
     }
 }
+
+/// Returns 64 bytes whose first word is 1. A caller reading only the first word calls this a success.
+contract TwoWord20 {
+    mapping(address => uint256) public balanceOf; mapping(address => mapping(address => uint256)) public allowance;
+    function mint(address to, uint256 a) external { balanceOf[to] += a; }
+    function approve(address s, uint256 a) external returns (bool) { allowance[msg.sender][s] = a; return true; }
+    function transferFrom(address f, address t, uint256 a) external returns (bool) {
+        require(allowance[f][msg.sender] >= a && balanceOf[f] >= a, "nope");
+        allowance[f][msg.sender] -= a; balanceOf[f] -= a; balanceOf[t] += a;
+        assembly { mstore(0, 1) mstore(32, 2) return(0, 64) }
+    }
+}
+
+/// Accepts every call, returns success, and moves nothing. Nothing on chain can tell a caller otherwise:
+/// this is the boundary of what a batch sender can promise.
+contract PolitelyDoesNothing {
+    fallback() external { assembly { mstore(0, 1) return(0, 32) } }
+}

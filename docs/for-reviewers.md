@@ -3,12 +3,12 @@
 ## The thing that matters
 
 `src/BulkSend.sol`, about 300 lines. It is deployed at
-[`0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74`](https://explorer.testnet.chain.robinhood.com/address/0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74)
+[`0x3159F3AbF0235eaCedfF866312Cb1BB335D6f80E`](https://explorer.testnet.chain.robinhood.com/address/0x3159F3AbF0235eaCedfF866312Cb1BB335D6f80E)
 on Robinhood Chain testnet, verified, and its runtime bytecode is byte-for-byte equal to what this repository
 builds. Check that yourself:
 
     forge build
-    cast code 0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74 --rpc-url https://rpc.testnet.chain.robinhood.com
+    cast code 0x3159F3AbF0235eaCedfF866312Cb1BB335D6f80E --rpc-url https://rpc.testnet.chain.robinhood.com
     # compare with out/BulkSend.sol/BulkSend.json -> deployedBytecode.object
 
 The two pages under `web/` are what people actually use, and the live copies are byte-identical to the files
@@ -19,8 +19,8 @@ here:
 
 ## Running everything
 
-    forge test                    # 75 contract tests
-    npm install && npm test       # 70 browser tests, all answers mocked, no network
+    forge test                    # 78 contract tests
+    npm install && npm test       # 97 browser tests, all answers mocked, no network
     ./test.sh                     # both of the above
 
 The browser tests answer every RPC, explorer and price request from the test file itself, so a failure is the
@@ -67,6 +67,7 @@ These are choices, not accidents, and a reviewer disagreeing with one is useful.
 ## Previous review
 
 - Six internal review passes.
-- One external audit by a different model with no prior context: 8 High, 4 Medium, 3 Low, all fixed.
-  Published unedited at [audit-2026-09-06-external.md](audit-2026-09-06-external.md).
+- Two external audits, each by a different model with no prior context, both published unedited:
+  [the first](audit-2026-09-06-external.md) (8 High, 4 Medium, 3 Low) and
+  [the second](audit-2026-09-06-second-external.md) (6 High, 5 Medium, 1 Low). All fixed.
 - No human audit firm has looked at this.

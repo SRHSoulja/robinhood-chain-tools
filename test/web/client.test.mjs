@@ -14,7 +14,10 @@ const ME  = '0x00000000000000000000000000000000000000Me'.slice(0, 42);
 const A = (n) => '0x' + n.toString(16).padStart(40, '0');
 // the three airdrop entry points and their …WithGas twins, so the mock can answer a simulated batch
 const BULK_SELECTORS = ['0xb097e731', '0x97e763b3', '0xd00a888d', '0x45310558', '0xc0d13d4e', '0xeb0f0b68'];
-const BULK = '0xc6ae3189edae544ed60adf5ec057e338ce224f74';
+const bulkAddress = (page) => page.evaluate(() => {
+  const a = document.querySelector('#contractLine a');
+  return a ? a.textContent.trim() : null;
+});
 const RUN_ME = A(0xdead);
 
 let pass = 0, fail = 0;
@@ -45,7 +48,7 @@ function chainAnswer(O) {
       case 'wallet_getCapabilities': return O.walletBatch ? { '0xb626': { atomic: { status: 'supported' } } } : {};
       case 'wallet_switchEthereumChain': case 'wallet_addEthereumChain': return null;
       case 'wallet_sendCalls': return { id: '0xbatch' };
-      case 'wallet_getCallsStatus': return { status: 200, receipts: [{ transactionHash: '0x' + 'ab'.repeat(32), status: '0x1', logs: [] }] };
+      case 'wallet_getCallsStatus': return O.callsStatus || { status: 200, receipts: [{ transactionHash: '0x' + 'ab'.repeat(32), status: '0x1', logs: [] }] };
       case 'eth_sendTransaction': return '0x' + 'cd'.repeat(32);
       case 'eth_getTransactionReceipt': {
         if (O.noReceipt) return null;
@@ -53,7 +56,7 @@ function chainAnswer(O) {
         // the whole shape ethers expects, so a receipt read back later parses the same as a live one
         return {
           status: '0x1', transactionHash: h, transactionIndex: '0x0', blockNumber: '0x1000',
-          blockHash: '0x' + '11'.repeat(32), from: me, to: BULK, contractAddress: null,
+          blockHash: '0x' + '11'.repeat(32), from: me, to: A(0xb01c), contractAddress: null,
           cumulativeGasUsed: '0x1', gasUsed: '0x1', effectiveGasPrice: '0x989680', type: '0x2',
           logsBloom: '0x' + '00'.repeat(256), logs: O.receiptLogs || [],
         };
@@ -66,6 +69,11 @@ function chainAnswer(O) {
       }
       case 'eth_call': {
         const to = String(params[0].to || '').toLowerCase(), data = String(params[0].data || ''), sel = data.slice(0, 10);
+        if (sel === '0x2f745c59' && O.ownedIds) {                      // tokenOfOwnerByIndex
+          const i = Number(BigInt('0x' + data.slice(74)));
+          return i < O.ownedIds.length ? enc(O.ownedIds[i]) : null;
+        }
+        if (sel === '0x70a08231' && O.ownedIds) return enc(O.ownedIds.length);
         if (sel === '0x01ffc9a7') { const iface = data.slice(10, 18);
           if (to === NFT) return enc(iface === '80ac58cd' ? 1 : 0);
           if (to === ED) return enc(iface === 'd9b67a26' ? 1 : 0);
@@ -93,7 +101,9 @@ function chainAnswer(O) {
 
 async function open(browser, opts = {}) {
   const answer = chainAnswer(opts);
-  const page = await browser.newPage({ viewport: { width: 1200, height: 1400 } });
+  // Web Locks are shared between the tabs of one browser profile, not between browser contexts. A test that
+  // wants two tabs has to put them in one context; two contexts are two profiles and share nothing.
+  const page = opts.ctx ? await opts.ctx.newPage() : await browser.newPage({ viewport: { width: 1200, height: 1400 } });
   const errs = [];
   page.on('pageerror', (e) => errs.push(String(e).slice(0, 160)));
   page.on('dialog', (d) => (opts.dismissDialogs ? d.dismiss() : d.accept()));
@@ -120,6 +130,11 @@ async function open(browser, opts = {}) {
   await page.exposeFunction('__chain', (method, params) => {
     try { return { ok: true, result: answer(method, params) }; }
     catch (e) { return { ok: false, code: e.code || 3, message: String(e.message || e), data: e.revertData }; }
+  });
+  if (opts.noLocks) await page.addInitScript(() => { Object.defineProperty(navigator, 'locks', { get: () => undefined, configurable: true }); });
+  if (opts.brokenStorage) await page.addInitScript(() => {
+    const real = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) { if (String(k).startsWith('bulksend:')) throw new Error('quota'); return real.call(this, k, v); };
   });
   await page.addInitScript(() => {
     window.__sent = [];
@@ -415,6 +430,128 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   const msg = dialogs.join(' ');
   check('L-03 and the confirmation says who a partial run favours', /lower token ids are the ones that were paid/.test(msg), msg.slice(0, 300));
   check('L-03 the exact list can be downloaded', !(await page.evaluate(() => document.querySelector('#manifest').disabled)));
+  await page.close();
+}
+
+// ---- H-01: an address that can never give the token back is not a recipient ------
+{
+  const page = await open(browser, { walletBatch: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const BULK = await bulkAddress(page);
+  check('H-01 the page names the contract it would use', !!BULK && BULK.startsWith('0x'), String(BULK));
+  await setList(page, BULK + ',7\n');
+  check('H-01 the BulkSend contract is refused as a recipient', (await text(page, '#problems')).includes('stuck there for good'), await text(page, '#problems'));
+  check('H-01 and nothing is left to send', (await text(page, '#parseOut')).includes('0 recipients') || await page.evaluate(() => document.querySelector('#send').disabled), await text(page, '#parseOut'));
+  await setList(page, NFT + ',8\n');
+  check('H-01 the token\'s own contract is refused too', (await text(page, '#problems')).includes('own contract address'), await text(page, '#problems'));
+  await page.close();
+}
+
+// ---- H-05: a blank cell is a position, not an absence ---------------------------
+{
+  const page = await open(browser, { ownedIds: [11, 12, 13] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, 'address,tokenId,quantity\n' + A(0x14) + ',,10\n');
+  const list = await val(page, '#list');
+  const parseOut = await text(page, '#parseOut');
+  check('H-05 a blank token id never becomes the quantity', !parseOut.includes('1 recipient') || !list.includes(',10'), parseOut + ' | ' + list.slice(0, 80));
+  const shown = (await text(page, '#problems')) + (await text(page, '#msgList')) + (await text(page, '#log'));
+  check('H-05 and the file is either refused or read as how-many-each', /empty|how many|assign/i.test(shown), shown.slice(0, 200));
+  await page.close();
+}
+
+// ---- H-04: the cross-tab lock fails closed --------------------------------------
+{
+  const page = await open(browser, { walletBatch: true, noLocks: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0xb1) + ',1\n');
+  await page.click('#send'); await page.waitForTimeout(4000);
+  check('H-04 a browser with no Web Locks is refused, not waved through',
+    (await text(page, '#log')).includes('does not support the lock'), (await text(page, '#log')).slice(0, 160));
+  check('H-04 and nothing was sent', (await page.evaluate(() => window.__sent.length)) === 0);
+  await page.close();
+}
+
+// ---- H-04: an unwritable ledger fails closed ------------------------------------
+{
+  const page = await open(browser, { walletBatch: true, brokenStorage: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0xb2) + ',1\n');
+  await page.click('#send'); await page.waitForTimeout(4000);
+  check('H-04 a browser that will not store anything is refused before signing',
+    (await text(page, '#log')).includes('will not let this page store'), (await text(page, '#log')).slice(0, 200));
+  check('H-04 and nothing was sent', (await page.evaluate(() => window.__sent.length)) === 0);
+  await page.close();
+}
+
+// ---- H-04: two real tabs, one lock ----------------------------------------------
+{
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 1400 } });
+  const one = await open(browser, { walletBatch: true, ctx });
+  const two = await open(browser, { walletBatch: true, ctx });
+  for (const p of [one, two]) {
+    await p.click('#connect'); await p.waitForTimeout(500);
+    await useToken(p, NFT, '721');
+    await setList(p, A(0xb3) + ',1\n');
+  }
+  await Promise.all([one.click('#send'), two.click('#send')]);
+  await one.waitForTimeout(6000);
+  const sent = (await one.evaluate(() => window.__sent.length)) + (await two.evaluate(() => window.__sent.length));
+  check('H-04 two tabs sending the same list produce one batch, not two', sent <= 1, 'batches sent: ' + sent);
+  await one.close(); await two.close(); await ctx.close();
+}
+
+// ---- M-02: a wallet batch with no transaction hash is resolved by its calls id ---
+{
+  const page = await open(browser, { walletBatch: true, approved: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await page.evaluate(([acct, nft]) => {
+    const run = 'bulksend:46630:' + acct.toLowerCase() + ':' + nft.toLowerCase() + ':721';
+    localStorage.setItem('bulksend:pending', JSON.stringify([{
+      pid: 'w1', run, chain: 46630, bulk: null, hash: null, callsId: '0xbatch', at: Date.now() - 60000, via: 'wallet',
+      rows: [{ to: '0x00000000000000000000000000000000000000c1', id: '5', amount: null, k: '0x00000000000000000000000000000000000000c1:5:#1' }],
+    }]));
+  }, [A(0xdead), NFT]);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0xc1) + ',5\n' + A(0xc2) + ',6\n');
+  await page.click('#send'); await page.waitForTimeout(6000);
+  const logText = await text(page, '#log');
+  check('M-02 a hashless wallet batch is resolved by asking the wallet', logText.includes('Caught up'), logText.slice(0, 240));
+  await page.close();
+}
+
+// ---- M-04: an allocation that cannot be filled is not quietly shrunk -------------
+{
+  const page = await open(browser, { ownedIds: [21, 22, 23] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const before = A(0xd1) + ' x2\n' + A(0xd2) + ' x2\n';
+  await page.fill('#list', before); await page.waitForTimeout(200);
+  await page.click('#assign'); await page.waitForTimeout(3500);
+  check('M-04 assign refuses when the wallet holds fewer than the list asks for',
+    (await text(page, '#msgList')).includes('Nothing has been changed'), await text(page, '#msgList'));
+  check('M-04 and the list is left exactly as it was', (await val(page, '#list')) === before, (await val(page, '#list')).slice(0, 80));
+  await page.close();
+}
+
+// ---- M-03: the delivered ledger is never silently trimmed ------------------------
+{
+  const page = await open(browser, { walletBatch: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0xe1) + ',1\n');
+  await page.evaluate(([acct, nft]) => {
+    const run = 'bulksend:46630:' + acct.toLowerCase() + ':' + nft.toLowerCase() + ':721';
+    const filler = []; for (let i = 0; i < 20000; i++) filler.push('x' + i);
+    localStorage.setItem(run, JSON.stringify(filler));
+  }, [A(0xdead), NFT]);
+  await page.click('#send'); await page.waitForTimeout(6000);
+  check('M-03 a full ledger stops the run instead of forgetting its oldest rows',
+    (await text(page, '#log')).includes('is full'), (await text(page, '#log')).slice(-220));
   await page.close();
 }
 

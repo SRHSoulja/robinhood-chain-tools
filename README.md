@@ -20,7 +20,7 @@ One contract, three functions. It holds nothing: every transfer is `transferFrom
 only move what you approved, inside the transaction you signed. **No owner, no upgrade path, no fees, no
 pause.** If you want it to stop, stop calling it.
 
-Deployed at [`0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74`](https://explorer.testnet.chain.robinhood.com/address/0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74),
+Deployed at [`0x3159F3AbF0235eaCedfF866312Cb1BB335D6f80E`](https://explorer.testnet.chain.robinhood.com/address/0x3159F3AbF0235eaCedfF866312Cb1BB335D6f80E),
 verified, runtime bytecode byte-for-byte equal to what this repository builds.
 
 ### Modes
@@ -62,6 +62,18 @@ ascending token id order, which makes each scan trivial. Measured on chain with 
 lenient mode a descending list can push honest recipients past the stipend so they are skipped. Everyone still
 receives exactly the id listed for them; only the order changes.
 
+### What it cannot promise
+
+Every delivery this counts means the token's transfer function was called and did not fail. That is not the
+same as somebody being paid. A contract that accepts the call, returns success and moves nothing looks
+identical from the outside, and no on-chain check can tell the difference; a fee-on-transfer token delivers
+less than the amount asked for while correctly returning `true`. The counter is a report of what was
+attempted. The chain is the record of what happened, and the page links every batch to it.
+
+What the contract does refuse is anything it can actually detect: an address with no code, a delegated wallet
+posing as a token, itself as a recipient, the zero address, a zero amount, and an ERC-20 answer it cannot read
+as either success or failure.
+
 ### Before you send
 
 The page simulates every batch against live chain state with `eth_call` first, so you learn how many would be
@@ -99,17 +111,23 @@ blob a wallet shows under "raw data". It answers in a sentence.
   that would fail right now.
 
 Three things it does that a block explorer does not: it previews a transaction that has not been sent, it
-reads contracts that never published their source, and it says whether a contract's owners can do something to
-you. One thing it is careful about: **an explorer that will not answer is not a contract without a source.**
-Verification status is three-valued, and "could not check" is reported as itself.
+reads contracts that never published their source, and it shows which function names suggest the people behind
+a contract can act on your holdings.
+
+It is careful about the limits of all three. An explorer that will not answer is not a contract without a
+source, so verification status is three-valued and "could not check" is reported as itself. A function name is
+not a behaviour, so a name matching is worth showing and **nothing matching proves nothing at all** — the page
+says so rather than printing an all-clear. And a transfer event is a contract announcing something, not proof
+it happened, so the movement section is labelled for what it holds and silence is never reported as "nothing
+moved".
 
 ---
 
 ## Build, test, deploy
 
     forge build
-    forge test                 # 75 contract tests
-    npm install && npm test    # 70 browser tests, every answer mocked, no network
+    forge test                 # 78 contract tests
+    npm install && npm test    # 97 browser tests, every answer mocked, no network
     ./test.sh                  # all of it
 
 The browser tests drive the real pages in headless Chromium and answer every RPC, explorer and price request
@@ -147,10 +165,11 @@ what makes Check's previews real; `debug_traceCall` and `eth_createAccessList` a
 
 ## Reviews
 
-Six internal review passes and one external audit by a different model given the code and no other context:
-8 High, 4 Medium, 3 Low, all fixed. The audit is published unedited in
-[`docs/audit-2026-09-06-external.md`](docs/audit-2026-09-06-external.md), including the finding that a bug I
-had previously dismissed in a code comment as deliberate was in fact a double-payment path.
+Six internal review passes and two external audits, each by a different model given the code and no other
+context. The first found 8 High, 4 Medium and 3 Low; the second, run against the fixes, found 6 High, 5 Medium
+and 1 Low. All are fixed, and both are published unedited in [`docs/`](docs/) — including the first audit's
+finding that a bug I had dismissed in a code comment as deliberate was in fact a double-payment path, and the
+second's finding that the Check page was printing safety conclusions on the strength of function names.
 
 No human audit firm has reviewed this. If you are reviewing it, start with
 [`docs/for-reviewers.md`](docs/for-reviewers.md).

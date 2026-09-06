@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import {BulkSend} from "../src/BulkSend.sol";
-import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20, Callback20, Erc20GasHog, PaysThenLies20, LongReason20} from "./RealTokens.sol";
+import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20, Callback20, Erc20GasHog, PaysThenLies20, LongReason20, TwoWord20, PolitelyDoesNothing} from "./RealTokens.sol";
 import {IERC721Errors, IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 /// Every airdrop method, against real token implementations, in every mode, with every awkward recipient.
@@ -760,6 +760,45 @@ contract BulkSendRealTest is Test {
         vm.stopPrank();
         assertEq(s1, 3); assertEq(k1, 0); assertEq(m.balanceOf(to[2], 7), 5);
         assertEq(s2, 3); assertEq(k2, 0); assertEq(e.balanceOf(to[2]), 2e18);
+    }
+
+    // ============== third review: what a successful call does and does not prove ==============
+
+    /// A token that moves the balance and answers with two words, the first of which is 1, is not answering
+    /// `bool`. Reading only the first word would call that a delivery.
+    function test_erc20ReturningTwoWordsIsAmbiguousNotDelivered() public {
+        TwoWord20 t = new TwoWord20(); t.mint(me, 10e18);
+        address[] memory to = _to(1, 41);
+        vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[0], 0));
+        bulk.airdrop20(address(t), to, _fill(1, 1e18), true);
+        vm.stopPrank();
+        assertEq(t.balanceOf(to[0]), 0);   // the revert undid the transfer the token had already made
+        assertEq(t.balanceOf(me), 10e18);
+    }
+
+    /// The boundary, stated as a test so nobody mistakes the counter for a receipt: a contract that accepts
+    /// every call, returns success and moves nothing is counted as delivered, and no on-chain check can
+    /// distinguish it from a token that paid. This is what the README and the contract's NatSpec must say.
+    function test_aContractThatAcceptsAndMovesNothingIsCountedAsSent() public {
+        PolitelyDoesNothing fake = new PolitelyDoesNothing();
+        address[] memory to = _to(2, 42);
+        vm.prank(me);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721(address(fake), to, _range(1, 2), false, false);
+        assertEq(sent, 2); assertEq(skipped, 0);   // "sent" means the call did not fail, and nothing more
+    }
+
+    /// A fee-on-transfer token returns true and delivers less than it was asked for. The batch is honest
+    /// about having made the call; the recipient's balance is the only place the shortfall is visible.
+    function test_feeOnTransferDeliversLessThanTheAmountCounted() public {
+        Fee20 t = new Fee20(); t.mint(me, 1000e18);
+        address[] memory to = _to(1, 43);
+        vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
+        (uint256 sent,) = bulk.airdrop20(address(t), to, _fill(1, 100e18), false);
+        vm.stopPrank();
+        assertEq(sent, 1);
+        assertLt(t.balanceOf(to[0]), 100e18);   // counted as one delivery, paid 98
+        assertEq(t.balanceOf(to[0]), 98e18);
     }
 }
 

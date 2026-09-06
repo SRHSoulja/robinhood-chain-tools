@@ -5,7 +5,7 @@ explorer. Nothing has been deployed to mainnet. Superseded addresses are left in
 [`deployments.testnet.json`](../deployments.testnet.json) as tombstones so any transaction referring to one
 can still be traced.
 
-## v7 — `0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74` (current)
+## v7 — `0x3159F3AbF0235eaCedfF866312Cb1BB335D6f80E` (current)
 
 Closes the last open finding from the external audit, plus the client work the auditor asked for.
 

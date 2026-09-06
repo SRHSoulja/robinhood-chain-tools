@@ -17,6 +17,12 @@ Approving a bulk sender is a real risk in general: an allowance outlives the tra
 approves the exact batch total rather than an unlimited amount, and tells you to revoke afterwards. Revoke
 afterwards.
 
+## What a delivery count means
+
+`BulkSend` reports a delivery when the token's own transfer function was called and did not revert. A token
+that accepts the call and moves nothing, or moves less than asked, produces the same report. No contract can
+check this from the inside. Treat the count as what was attempted and the chain as what happened.
+
 ## Status
 
 Deployed on testnet only. Nothing here has been reviewed by a human audit firm. See

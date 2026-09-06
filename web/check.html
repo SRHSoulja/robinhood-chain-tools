@@ -370,8 +370,23 @@
 
     // Behind a proxy, the ABI that matters belongs to the code being run, not to the forwarder.
     if (out.proxy && out.proxy.target) {
-      const impl = (await explorerJson('/smart-contracts/' + out.proxy.target)).data;
-      if (impl) { out.proxy.verified = !!impl.is_verified; out.proxy.name = impl.name || null; if (impl.abi && !out.abi) out.abi = impl.abi; if (impl.abi) out.implAbi = impl.abi; }
+      // A beacon is not the code either: it names the implementation, so follow one more step.
+      if (String(out.proxy.kind).startsWith('beacon')) {
+        try {
+          const impl = await new ethers.Contract(out.proxy.target, ['function implementation() view returns (address)'], p).implementation();
+          if (impl && impl !== ethers.ZeroAddress) { out.proxy.beacon = out.proxy.target; out.proxy.target = ethers.getAddress(impl); }
+        } catch (e) { out.proxy.beaconUnread = true; }
+      }
+      const res = await explorerJson('/smart-contracts/' + out.proxy.target);
+      const impl = res.data;
+      out.proxy.verified = res.ok ? !!(impl && impl.is_verified) : null;
+      if (impl) {
+        out.proxy.name = impl.name || null;
+        // The forwarder's own ABI describes the forwarder. Everything this page says about what the contract
+        // can do, and every piece of calldata it decodes, has to come from the code that actually runs.
+        if (impl.abi && impl.abi.length) { out.abi = impl.abi; out.abiFrom = 'implementation'; }
+      }
+      out.proxy.code = await p.getCode(out.proxy.target).catch(() => '0x');
     }
 
     // What standard it claims, and its token facts, read from the contract rather than from a label.
@@ -409,22 +424,23 @@
   }
   function knownFunctions(o) {
     const found = [];
-    if (o.abi) {
+    if (o.abi && o.abi.length) {
       for (const f of o.abi) {
         if (f.type !== 'function') continue;
         const sig = f.name + '(' + (f.inputs || []).map((i) => i.type).join(',') + ')';
         found.push({ sig, name: f.name, mutating: f.stateMutability !== 'view' && f.stateMutability !== 'pure' });
       }
-      return { list: found, source: 'the published source', long: 'the published source' };
+      return { list: found, source: 'the published source', long: 'the published source', complete: true };
     }
-    const sels = selectorsIn(o.code);
+    // No usable ABI: read the selectors the code itself dispatches on. A floor, never a ceiling.
+    const sels = selectorsIn((o.proxy && o.proxy.code && o.proxy.code !== '0x') ? o.proxy.code : o.code);
     for (const s of sels) {
       const extra = EXTRA_SELECTORS[s];
       if (extra) { found.push({ sig: extra, name: extra.split('(')[0], mutating: true, guessed: true }); continue; }
       let frag = null; try { frag = KNOWN_IFACE.getFunction(s); } catch (e) {}
       if (frag) found.push({ sig: frag.format('sighash'), name: frag.name, mutating: frag.stateMutability !== 'view' && frag.stateMutability !== 'pure', guessed: true });
     }
-    return { list: found, source: 'its bytecode', long: 'the contract’s own bytecode' };
+    return { list: found, source: 'its bytecode', long: 'the contract’s own bytecode', complete: false };
   }
   function powersOf(fns) {
     const out = [];
@@ -573,8 +589,13 @@
     return out;
   }
 
-  function renderMovements(moves, me, senderLabel) {
-    if (!moves.length) return h('p', { class: 'mut', text: 'No tokens and no ETH move.' });
+  // Every line here comes from an event the contract chose to emit. An honest token emits one for each real
+  // movement, which is why this is worth reading; a dishonest one can emit a transfer that never happened, or
+  // move balances and emit nothing at all. So this section reports what was announced, and never concludes
+  // from silence that nothing happened.
+  function renderMovements(moves, me, senderLabel, unknown) {
+    if (unknown) return h('p', { class: 'warn', text: unknown });
+    if (!moves.length) return h('p', { class: 'mut', text: 'No standard transfer or approval events were emitted. Most tokens emit one for every movement, so usually that means nothing moved \u2014 but a token that moves balances without announcing it would look exactly like this too.' });
     const mine = (a) => me && a && a.toLowerCase() === me.toLowerCase();
     const outWords = senderLabel ? '  — out of ' + senderLabel : '  — out of your wallet';
     const inWords = senderLabel ? '  — into ' + senderLabel : '  — into your wallet';
@@ -587,6 +608,8 @@
       else if (m.kind === 'approval') line = short(m.from) + ' lets ' + short(m.to) + (m.nft ? ' move ' + name + ' #' + m.value : ' spend ' + fmtAmount(m.value, m.token) + ' of ' + name);
       else if (m.kind === 'approvalAll') line = short(m.from) + (m.on ? ' lets ' : ' stops ') + short(m.to) + (m.on ? ' move every ' + name + ' they own' : ' moving their ' + name);
       else line = name + ' emits ' + m.sig;
+      // Three indexed arguments is the ERC-721 shape and two is the ERC-20 shape, but the emitter chooses its
+      // own topics, so this is a reading of the event rather than a fact about the token.
       const dir = mine(m.from) ? 'out' : mine(m.to) ? 'in' : '';
       return h('div', { class: 'move ' + dir }, document.createTextNode(line + (mine(m.from) ? outWords : mine(m.to) ? inWords : '')));
     }));
@@ -616,11 +639,14 @@
 
   // ---------- the three things this page can be asked ----------
   const out = (...kids) => { const o = $('out'); o.textContent = ''; for (const k of kids) if (k) o.appendChild(k); };
+  // Renders only if this is still the question being asked. `seq` is captured when the lookup starts.
+  const outIf = (seq, ...kids) => { if (seq !== activeLookup) return; out(...kids); };
 
-  async function showTransaction(hash, viewer) {
+  async function showTransaction(hash, viewer, seq) {
     say('Reading that transaction…');
     const p = rp();
     const [tx, rc] = await Promise.all([p.getTransaction(hash).catch(() => null), p.getTransactionReceipt(hash).catch(() => null)]);
+    if (stale(seq)) return;
     if (!tx && !rc) { say('No transaction with that hash on ' + cfg().name + '. It may be on the other network, or not mined yet.', 'bad'); out(); return; }
     const target = tx && tx.to ? await readAddress(tx.to) : null;
     const parsed = tx ? parseData(tx.data, target && target.abi) : { empty: true };
@@ -645,6 +671,7 @@
       }
     }
     const fee = rc ? rc.gasUsed * (rc.gasPrice ?? 0n) : null;
+    if (stale(seq)) return;
     say('');
     out(
       card(null,
@@ -664,7 +691,9 @@
           ['Hash', link(hash, short(hash), 'tx')],
         ]),
       ),
-      card('What moved', renderMovements(moves, viewer || (tx && tx.from), viewer ? null : 'the sender’s wallet')),
+      card(rc ? 'What it announced moving' : 'What moved',
+        renderMovements(moves, viewer || (tx && tx.from), viewer ? null : 'the sender\u2019s wallet',
+          rc ? null : 'This transaction has not been mined, so there is no receipt to read and no way to say what it moved. It may still be waiting, and it may still do everything it was asked to do.')),
       parsed && parsed.args && parsed.args.length ? card('Everything it was asked to do', renderArgs(parsed, target)) : null,
       target ? contractCard(target, 'The contract it called') : null,
     );
@@ -715,7 +744,13 @@
         o.token && o.token.decimals !== null && o.token.decimals !== undefined ? ['Decimals', String(o.token.decimals)] : null,
         o.token && o.token.supply !== null && o.token.supply !== undefined ? ['Total supply', o.token.decimals !== null && o.standard === 'ERC-20' ? ethers.formatUnits(o.token.supply, o.token.decimals) : String(o.token.supply)] : null,
         o.owner ? ['Owner', o.owner === ethers.ZeroAddress ? 'nobody: ownership has been given up' : link(o.owner, short(o.owner))] : null,
-        o.proxy ? ['Proxy', h('span', {}, document.createTextNode(o.proxy.kind + ' → '), link(o.proxy.target, short(o.proxy.target)), document.createTextNode(o.proxy.verified === false ? '  (that code has no published source either)' : ''))] : null,
+        o.proxy ? ['Proxy', h('span', {},
+          document.createTextNode(o.proxy.kind + (o.proxy.beacon ? ' via beacon ' + short(o.proxy.beacon) : '') + ' \u2192 '),
+          link(o.proxy.target, short(o.proxy.target)),
+          document.createTextNode(o.proxy.verified === false ? '  (the code it runs has no published source)'
+            : o.proxy.verified === null ? '  (could not check whether that code has published source)' : ''),
+          o.proxy.beaconUnread ? document.createTextNode('  (the beacon would not say which implementation it points at)') : null)] : null,
+        o.abiFrom === 'implementation' ? ['Read from', 'the implementation\u2019s published source, not the forwarder\u2019s'] : null,
         o.admin ? ['Proxy admin', link(o.admin, short(o.admin))] : null,
         o.validator ? ['Transfer validator', link(o.validator, short(o.validator))] : null,
         o.verified ? ['Compiled with', (o.compiler || '') + (o.optimized ? ', optimizer on' : '') + (o.evm ? ', ' + o.evm : '')] : null,
@@ -724,29 +759,45 @@
       ]),
       o.validator ? note('warn', 'This collection controls who may move it',
         'A creator transfer validator is set, so transfers only go through operators the creator has allowed. Marketplaces and bulk senders that are not on that list will be refused, and there is nothing a holder can do about it from their side.') : null,
+      // This page matches function NAMES against a list of names that usually mean something. A name is not
+      // a behaviour: a back door called `rebalance` matches nothing here, and a function called `mint` might
+      // do nothing at all. So a match is worth showing, and the absence of a match proves nothing whatsoever.
+      // Saying otherwise would be the most dangerous sentence on the page.
       powers.length
         ? h('div', {}, [
-            h('p', { class: 'mut', text: 'What whoever controls this contract can do, read from ' + fns.long + ':' }),
+            h('p', { class: 'mut', text: 'Function names in ' + fns.long + ' that usually mean the people behind a contract can do this:' }),
             h('ul', { class: 'plain' }, powers.map((p) => h('li', { class: p.cls === 'mut' ? '' : p.cls }, document.createTextNode(p.what + ' '), h('span', { class: 'mut mono', text: '(' + p.sig + ')' })))),
-            o.owner && o.owner !== ethers.ZeroAddress ? h('p', { class: 'mut', text: 'Those powers sit with ' + short(o.owner) + ' today, and can be handed on.' }) : null,
-            o.owner === ethers.ZeroAddress ? h('p', { class: 'ok', text: 'Ownership has been given up, so the owner-only ones can no longer be used by anybody.' }) : null,
+            o.owner && o.owner !== ethers.ZeroAddress ? h('p', { class: 'mut', text: 'A function called owner() answers ' + short(o.owner) + '. Whether that address is the one allowed to call the functions above depends on code this page has not read.' }) : null,
+            o.owner === ethers.ZeroAddress ? h('p', { class: 'mut', text: 'A function called owner() answers the zero address. That often means ownership was given up, but plenty of contracts gate privileged functions on roles or their own rules instead, so on its own it does not mean nobody can use them.' }) : null,
           ])
-        : h('p', { class: o.verified ? 'ok' : 'mut', text: 'Nothing in ' + fns.source + ' lets anyone mint, pause, block, retax or replace this contract.' + (o.verified ? '' : ' That is what the selectors in the code show, which is a floor rather than a ceiling.') }),
+        : h('p', { class: 'mut', text: 'No function name in ' + fns.long + ' matched the short list of names this page recognises.' }),
+      h('div', { class: 'note warn' }, [
+        h('b', { text: 'What this section is, and is not' }),
+        document.createTextNode(fns.complete
+          ? 'It matches function names against a list. It cannot tell you what those functions do, and a function that can take your tokens does not have to be called anything in particular. Nothing matching above means nothing matched, not that there is nothing to find. To know what this contract does, read it: '
+          : (o.verified === false
+              ? 'No source has been published, so this is the set of 4-byte selectors the bytecode dispatches on, matched against names this page knows. '
+              : 'This page had no source to read, so this is the set of 4-byte selectors the bytecode dispatches on, matched against names it knows. ')
+            + 'It is a floor and never a ceiling: whatever else the contract can do is in there too, unnamed. '),
+        fns.complete ? link(o.address, 'the verified source on the explorer') : null,
+        o.partial ? document.createTextNode('  This contract is only partially verified, so even the published source may not be all of the code that runs.') : null,
+      ]),
       o.verified === false ? note('warn', 'No source has been published',
-        'The bytecode is public and this page has read it, but nobody has shown which source code produced it. Everything above about what it can do comes from the function selectors in the code itself, which is a floor and not a ceiling.') : null,
+        'The bytecode is public and this page has read it, but nobody has shown which source code produced it. Nobody outside the people who deployed it knows what this contract does.') : null,
       o.verified === null ? note('warn', 'Whether the source is published is unknown',
         'The block explorer did not answer, so this page could not ask. Everything above was read from the chain itself, which always answers, but it cannot tell you whether the source code behind this contract has been published. Try again in a minute.') : null,
     ]);
   }
 
-  async function showAddress(addr) {
+  async function showAddress(addr, seq) {
     say('Reading that address…');
     const o = await readAddress(addr);
+    if (stale(seq)) return;
     say('');
     out(contractCard(o, o.isContract ? 'This contract' : 'This address'));
   }
 
-  async function showCall(to, data, from, value) {
+  async function showCall(to, data, from, value, seq) {
     say('Working out what that would do…');
     const target = await readAddress(to);
     const parsed = parseData(data, target.abi);
@@ -773,6 +824,7 @@
       warnings.push(['warn', 'This contract can be replaced', 'It forwards to ' + short(target.proxy.target) + ', and whoever controls it can point it somewhere else after you sign.']);
     if (sim && !sim.ok)
       warnings.push(['bad', 'This would fail right now', decodeRevert(sim.reason, iface)]);
+    if (stale(seq)) return;
     if (!from)
       warnings.push(['warn', 'Nobody was named as the sender', 'The preview ran as the zero address, so anything that depends on who is asking, an allowance, a balance, an owner check, may come out differently for you. Put your address in the box above.']);
     say('');
@@ -788,7 +840,7 @@
         simErr ? note('warn', 'The node would not run the preview', simErr) : null,
         warnings.map(([cls, title, body]) => note(cls, title, body)),
       ),
-      sim ? card('What it would move', renderMovements(moves, from)) : null,
+      sim ? card('What it would announce moving', renderMovements(moves, from)) : null,
       parsed.args && parsed.args.length ? card('Everything it is asking for', renderArgs(parsed, target)) : null,
       parsed.unknown ? card('The raw call', [
         kv([['Selector', mono(parsed.selector)], ['Length', String((data.length - 10) / 2) + ' bytes of arguments']]),
@@ -818,36 +870,46 @@
     return { kind: 'bad', why: 'That is not a transaction hash, an address, or calldata. Paste one of those.' };
   }
 
+  // Each lookup gets a number and a frozen copy of the network it was asked on. Anything that finishes after
+  // a newer question has been asked is dropped, so the answer on screen always belongs to the box above it.
+  let lookupSeq = 0, activeLookup = 0;
+  const stale = (n) => n !== activeLookup;
   async function go() {
     const parsedInput = readInput($('input').value);
     const fromRaw = $('from').value.trim();
     const from = ethers.isAddress(fromRaw) ? ethers.getAddress(fromRaw) : null;
     if (fromRaw && !from) { say('That sender address is not a valid address.', 'bad'); return; }
-    $('go').disabled = true;
+    const seq = ++lookupSeq; activeLookup = seq;
+    const askedOn = chainId();
+    $('go').disabled = true; $('net').disabled = true;
+    for (const b of document.querySelectorAll('.ex')) b.disabled = true;
     try {
       if (parsedInput.kind === 'empty') { say('Paste something first.', 'warn'); return; }
       if (parsedInput.kind === 'bad') { say(parsedInput.why, 'bad'); return; }
-      if (parsedInput.kind === 'tx') return await showTransaction(parsedInput.hash, from);
-      if (parsedInput.kind === 'address') return await showAddress(parsedInput.address);
+      if (parsedInput.kind === 'tx') return await showTransaction(parsedInput.hash, from, seq);
+      if (parsedInput.kind === 'address') return await showAddress(parsedInput.address, seq);
       if (parsedInput.kind === 'call') {
         if (!ethers.isAddress(parsedInput.to || '')) { say('That call has no valid "to" address in it.', 'bad'); return; }
-        return await showCall(ethers.getAddress(parsedInput.to), parsedInput.data, from || (ethers.isAddress(parsedInput.from || '') ? ethers.getAddress(parsedInput.from) : null), parsedInput.value);
+        return await showCall(ethers.getAddress(parsedInput.to), parsedInput.data, from || (ethers.isAddress(parsedInput.from || '') ? ethers.getAddress(parsedInput.from) : null), parsedInput.value, seq);
       }
       if (parsedInput.kind === 'data') {
         // Calldata alone says what is being asked for but not of whom, and the answer depends on both.
         const to = prompt('Which contract is that call going to? Paste its address.\n\nThe same calldata means different things at different contracts.');
         if (!to || !ethers.isAddress(to.trim())) { say('A preview needs the contract the call is going to. Paste it into the box as {"to":"0x…","data":"0x…"} if it is easier.', 'warn'); return; }
-        return await showCall(ethers.getAddress(to.trim()), parsedInput.data, from, null);
+        return await showCall(ethers.getAddress(to.trim()), parsedInput.data, from, null, seq);
       }
     } catch (e) {
+      if (stale(seq) || askedOn !== chainId()) return;
       say('That did not work: ' + String(e && (e.shortMessage || e.message) || e).slice(0, 180), 'bad');
-    } finally { $('go').disabled = false; }
+    } finally {
+      if (!stale(seq)) { $('go').disabled = false; $('net').disabled = false; for (const b of document.querySelectorAll('.ex')) b.disabled = false; }
+    }
   }
 
   // ---------- the page ----------
   $('go').addEventListener('click', go);
   $('input').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(); } });
-  $('net').addEventListener('change', () => { $('netPill').textContent = cfg().name; $('out').textContent = ''; say(''); refreshFoot(); });
+  $('net').addEventListener('change', () => { activeLookup = ++lookupSeq; $('netPill').textContent = cfg().name; $('out').textContent = ''; say(''); refreshFoot(); });
   $('useWallet').addEventListener('click', async () => {
     const eth = window.ethereum;
     if (!eth) { say('No wallet in this browser. Type or paste the address instead.', 'warn'); return; }
