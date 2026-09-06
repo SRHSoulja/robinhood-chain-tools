@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Publish the BulkSend page to airdrop.gmgnrepeat.com (Cloudflare Worker) and gmgnrepeat.com/airdrop/ (origin copy).
+# The Porkbun origin 301s unknown subdomains to the apex, so the subdomain is served from the edge, not the host.
+set -euo pipefail
+BRAIN=/home/arson/gmgn-brain
+SRC=/home/arson/rh-airdrop/web/index.html
+STAGE=$BRAIN/private/runtime/gmgnrepeat-website/airdrop/index.html
+T=$(cat ~/.config/bbgp/cf-token | tr -d '\n'); ACC=8ffb31f1fc753495184e15e75f2f3a79
+WORK=$(mktemp -d)
+
+python3 - "$SRC" "$STAGE" <<'PY'
+import sys
+src, stage = sys.argv[1], sys.argv[2]
+s = open(src, encoding="utf-8").read()
+banner = """<main>
+  <div class="card" style="border-color:var(--warn)">
+    <h2 style="color:var(--warn)">Testnet only, for now</h2>
+    <p style="margin:0;font-size:13.5px">This is live on Robinhood Chain <b>testnet</b> so you can try it end to end with test tokens. The mainnet contract is not deployed yet. The contract holds nothing, takes no fee, and can only move what you approve in the transaction you sign; its source is verified on the explorer. Built from a request in the Robinhood Chain community.</p>
+  </div>
+"""
+assert s.count("<main>\n") == 1
+open(stage, "w", encoding="utf-8").write(s.replace("<main>\n", banner, 1))
+print("staged", stage)
+PY
+
+python3 - "$STAGE" "$WORK/worker.js" <<'PY'
+import json, sys
+html = open(sys.argv[1], encoding="utf-8").read()
+open(sys.argv[2], "w", encoding="utf-8").write("""// airdrop.gmgnrepeat.com - serves the BulkSend page from Cloudflare's edge.
+const HTML = %s;
+export default { fetch(request) {
+  const url = new URL(request.url);
+  if (url.pathname !== '/' && url.pathname !== '/index.html') return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+  return new Response(HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300', 'x-content-type-options': 'nosniff', 'referrer-policy': 'strict-origin-when-cross-origin' } });
+} };
+""" % json.dumps(html))
+PY
+
+curl -s -m 90 -X PUT -H "Authorization: Bearer $T" \
+  -F 'metadata={"main_module":"worker.js","compatibility_date":"2026-09-01"};type=application/json' \
+  -F "worker.js=@$WORK/worker.js;type=application/javascript+module" \
+  "https://api.cloudflare.com/client/v4/accounts/$ACC/workers/scripts/gmgn-airdrop" \
+  | python3 -c "import sys,json;d=json.load(sys.stdin);print('worker:',d.get('success'), [(e.get('code'),e.get('message')) for e in d.get('errors',[])][:2])"
+
+"$BRAIN/scripts/bin/gmgnrepeat-deploy" airdrop/index.html | tail -2
+rm -rf "$WORK"
+sleep 8
+curl -s -o /dev/null -w "airdrop.gmgnrepeat.com -> %{http_code}\n" -m 25 https://airdrop.gmgnrepeat.com/
+curl -s -o /dev/null -w "gmgnrepeat.com/airdrop/ -> %{http_code}\n" -m 25 https://gmgnrepeat.com/airdrop/
