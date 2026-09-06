@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Publish the BulkSend page to airdrop.gmgnrepeat.com (Cloudflare Worker) and gmgnrepeat.com/airdrop/ (origin copy).
+# Publish the BulkSend page to rhairdrop.gmgnrepeat.com (Cloudflare Worker) and gmgnrepeat.com/rhairdrop/ (origin copy).
 # The Porkbun origin 301s unknown subdomains to the apex, so the subdomain is served from the edge, not the host.
 set -euo pipefail
 BRAIN=/home/arson/gmgn-brain
 SRC=/home/arson/rh-airdrop/web/index.html
-STAGE=$BRAIN/private/runtime/gmgnrepeat-website/airdrop/index.html
+STAGE=$BRAIN/private/runtime/gmgnrepeat-website/rhairdrop/index.html
 T=$(cat ~/.config/bbgp/cf-token | tr -d '\n'); ACC=8ffb31f1fc753495184e15e75f2f3a79
 WORK=$(mktemp -d)
 
@@ -26,7 +26,7 @@ PY
 python3 - "$STAGE" "$WORK/worker.js" <<'PY'
 import json, sys
 html = open(sys.argv[1], encoding="utf-8").read()
-open(sys.argv[2], "w", encoding="utf-8").write("""// airdrop.gmgnrepeat.com - serves the BulkSend page from Cloudflare's edge.
+open(sys.argv[2], "w", encoding="utf-8").write("""// rhairdrop.gmgnrepeat.com - serves the BulkSend page from Cloudflare's edge.
 const HTML = %s;
 export default { fetch(request) {
   const url = new URL(request.url);
@@ -42,8 +42,8 @@ curl -s -m 90 -X PUT -H "Authorization: Bearer $T" \
   "https://api.cloudflare.com/client/v4/accounts/$ACC/workers/scripts/gmgn-airdrop" \
   | python3 -c "import sys,json;d=json.load(sys.stdin);print('worker:',d.get('success'), [(e.get('code'),e.get('message')) for e in d.get('errors',[])][:2])"
 
-"$BRAIN/scripts/bin/gmgnrepeat-deploy" airdrop/index.html | tail -2
+"$BRAIN/scripts/bin/gmgnrepeat-deploy" rhairdrop/index.html | tail -2
 rm -rf "$WORK"
 sleep 8
-curl -s -o /dev/null -w "airdrop.gmgnrepeat.com -> %{http_code}\n" -m 25 https://airdrop.gmgnrepeat.com/
-curl -s -o /dev/null -w "gmgnrepeat.com/airdrop/ -> %{http_code}\n" -m 25 https://gmgnrepeat.com/airdrop/
+curl -s -o /dev/null -w "rhairdrop.gmgnrepeat.com -> %{http_code}\n" -m 25 https://rhairdrop.gmgnrepeat.com/
+curl -s -o /dev/null -w "gmgnrepeat.com/rhairdrop/ -> %{http_code}\n" -m 25 https://gmgnrepeat.com/rhairdrop/
