@@ -13,3 +13,8 @@
 {"label": "nr20.approve", "tx": "0x9ed2a0c9dacc222e8cc14854911b2b049e7f4a736a05148430d09ce5bd7f3c24", "status": "0x1", "gasUsed": 49388, "logs": 0, "block": 113990195}
 {"label": "nr20.airdrop20.strict", "tx": "0x91f0aa58e374b8f4071d20f29014516ee4fde39a6e08d38113add2dd0b670cb1", "status": "0x1", "gasUsed": 103885, "logs": 3, "block": 113990213}
 {"label": "oz721.airdrop721.strict.expect-revert", "tx": null, "status": null, "gasUsed": 0, "logs": 0, "block": 0}
+{"label": "v2.a721.setApprovalForAll", "bulk": "v2", "tx": "0xf5da863625048d27851e8078bdf11106fc4080ae8afdcbd655358cfd66fd039c", "status": "0x1", "gasUsed": 51921, "logs": 1}
+{"label": "v2.a721.airdrop721.safe.lenient.100.with-deaf-at-1", "bulk": "v2", "tx": "0x7155804bd30ece8ba38b91706fcff926d39490e5b0e10386815169bdd04a6f77", "status": "0x1", "gasUsed": 5653371, "logs": 101}
+{"label": "v2.oz1155.setApprovalForAll", "bulk": "v2", "tx": "0x97be0910406fafc56684520d6bc6a3fbba173269b232dba5d5dd7dccb030fabc", "status": "0x1", "gasUsed": 51983, "logs": 1}
+{"label": "v2.oz1155.airdrop1155.lenient.deaf+wallets", "bulk": "v2", "tx": "0xc3eea6c1e9c5c1670e6a7c0d4759f141dc258c3f8141a39dd70bf7bda39b69b0", "status": "0x1", "gasUsed": 154138, "logs": 4}
+{"label": "v2.oz721.setApprovalForAll", "bulk": "v2", "tx": "0xef5547ab1241aecfeef05802ed845a12ac29264f41e367fbf361b64fec098069", "status": "0x1", "gasUsed": 51931, "logs": 1}
