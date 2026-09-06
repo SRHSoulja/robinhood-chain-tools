@@ -1,12 +1,12 @@
 // Deterministic browser tests for web/check.html. Every chain and explorer answer is mocked, so a failure
 // here is the page's fault and nothing else.
 //
-//   cd /mnt/c/GMGNRepeat/baby-bananza-grand-prix && node /home/arson/rh-airdrop/test/web/check.test.mjs
+//   npm install && node test/web/check.test.mjs        (from the repository root)
 //
-const { chromium } = await import('/mnt/c/GMGNRepeat/baby-bananza-grand-prix/node_modules/playwright/index.mjs')
-  .catch(() => import('playwright'));
+import { chromium } from 'playwright';
+import { pathToFileURL } from 'node:url';
 
-const PAGE = 'file:///home/arson/rh-airdrop/web/check.html';
+const PAGE = pathToFileURL(new URL('../../web/check.html', import.meta.url).pathname).href;
 const A = (n) => '0x' + n.toString(16).padStart(40, '0');
 const NFT = A(0x721), TOK = A(0x20), PROXY = A(0x9), IMPL = A(0x99), WALLET = A(0xeee), NASTY = A(0xbad);
 const ME = A(0xdead);

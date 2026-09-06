@@ -1,5 +1,16 @@
+# Foundry build output and local run artifacts
 out/
 cache/
 broadcast/
+
+# Anything holding a credential, or pointing at one, stays local
 .env
+*.env
+!deploy/local.env.example
 *.key
+deploy/local.env
+deploy/local-*.sh
+!deploy/local.env.example
+
+# Node, for the browser tests only
+node_modules/

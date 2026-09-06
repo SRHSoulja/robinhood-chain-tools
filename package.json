@@ -1,0 +1,17 @@
+{
+  "name": "rh-airdrop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser tests for the BulkSend airdrop page and the Check page. The contracts are built and tested with Foundry; this package exists only so the page tests have a browser.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node test/web/client.test.mjs && node test/web/check.test.mjs",
+    "test:airdrop": "node test/web/client.test.mjs",
+    "test:check": "node test/web/check.test.mjs",
+    "postinstall": "playwright install chromium --only-shell || true"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}

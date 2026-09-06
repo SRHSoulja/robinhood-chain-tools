@@ -1,64 +1,138 @@
-# rh-airdrop: bulk NFT and token airdrops on Robinhood Chain
+# rh-airdrop
 
-`BulkSend` sends ERC-721, ERC-1155, or ERC-20 to many wallets in one transaction.
+Two tools for [Robinhood Chain](https://robinhoodchain.com), built from two requests made by people in that
+community. Both are free, both are open source, and neither takes a fee.
 
-It holds nothing. Every transfer is `transferFrom(msg.sender, ...)`, so the contract can only move what
-the caller approved, inside the transaction the caller signed. No owner, no upgrade path, no fees, no pause.
+| | what it does | live | source |
+|---|---|---|---|
+| **BulkSend** | send an NFT or a token to hundreds of wallets in a few transactions | [rhairdrop.gmgnrepeat.com](https://rhairdrop.gmgnrepeat.com/) | `src/BulkSend.sol`, `web/index.html` |
+| **Check** | read a transaction or a contract in plain English before you sign it | [rhcheck.gmgnrepeat.com](https://rhcheck.gmgnrepeat.com/) | `web/check.html` |
 
-## Modes
+> **Testnet only.** `BulkSend` is deployed and verified on Robinhood Chain testnet (46630) and nowhere else.
+> Mainnet is switched off in the page, in code, not just by intent. Check is read-only and works on both
+> networks because it never signs anything.
 
-- strict (`lenient=false`): one bad recipient reverts the whole batch, nothing moves. The token's own error
-  bubbles up, and each transfer gets the whole transaction's gas, so a recipient with a heavy receive hook works.
-- lenient (`lenient=true`): a recipient that cannot receive (a contract with no receiver hook, an id you
-  no longer own, a paused token) is skipped and logged with a `Skipped` event; the rest is delivered.
-  The call returns `(sent, skipped)`. Each transfer gets at most a gas stipend and at most 128 bytes of its
-  revert data is kept, so no single recipient can starve the batch or inflate its cost. The stipend is
-  `DEFAULT_GAS` (400,000) through `airdrop721` / `airdrop1155` / `airdrop20`, or a number you choose between
-  `MIN_GAS` (100,000) and `MAX_GAS` (5,000,000) through `airdrop721WithGas` / `airdrop1155WithGas` /
-  `airdrop20WithGas`. There is no constant that separates an honest receiver from a hostile one, so the
-  default is a measured guess and the parameter is there for callers who know their recipients better.
-  A stipend is refused in strict mode, which forwards everything: accepting it and ignoring it would
-  describe a transaction that does not exist.
-- safe (721 only): use `safeTransferFrom`, so contract recipients must implement `onERC721Received`.
+---
 
-A wallet skipped in lenient mode with an empty reason has either failed or run past the stipend; the two look
-identical from outside. Raise the stipend, or send that one on its own in strict mode, where the whole
-transaction's gas is available to it.
+## BulkSend
 
-If a batch cannot afford to give every recipient its full stipend, the contract reverts `OutOfGasForBatch`
-rather than silently skipping the last wallets and blaming them. That also keeps `eth_estimateGas` honest,
-since "skip everyone" is no longer a cheaper way to succeed.
+One contract, three functions. It holds nothing: every transfer is `transferFrom(msg.sender, …)`, so it can
+only move what you approved, inside the transaction you signed. **No owner, no upgrade path, no fees, no
+pause.** If you want it to stop, stop calling it.
 
-The zero address is refused as a recipient in both modes: burning a token is not something a bulk sender
-should do by accident.
+Deployed at [`0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74`](https://explorer.testnet.chain.robinhood.com/address/0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74),
+verified, runtime bytecode byte-for-byte equal to what this repository builds.
 
-## Before you send
+### Modes
 
-The page runs a free test run first: it simulates every batch against live chain state with `eth_call`,
-so you learn exactly how many would be delivered before anything is signed. Some collections use a creator
-transfer validator and only allow transfers through operators the creator approved; those cannot be moved by
-any bulk sender, and the test run says so instead of wasting a transaction.
+- **All or nothing** (`lenient = false`): one bad recipient reverts the whole batch and nothing moves. The
+  token's own error bubbles up, and each transfer gets the whole transaction's gas, so a recipient with an
+  expensive receive hook still works. Only meaningful inside one transaction, so the page refuses to split a
+  list across several in this mode.
+- **Keep going** (`lenient = true`): a recipient that cannot receive is skipped, logged with a `Skipped` event
+  carrying the revert reason, and the rest is delivered. The call returns `(sent, skipped)`.
+- **Safe** (721 only): `safeTransferFrom`, so a contract recipient has to say it can hold NFTs. On by default.
 
-## The other half: Check
+### The gas stipend, and why it is a parameter
 
-`web/check.html` is a separate read-only page, live at
-[rhcheck.gmgnrepeat.com](https://rhcheck.gmgnrepeat.com/), built from the second request in the same
-community thread: human-readable transaction previews and better contract verification. Paste a transaction
-hash, a contract address, or the calldata a wallet is about to sign, and it says in a sentence what that does,
-what would move, whether it would fail and why, and what powers the contract holds over the people who own it.
+In "keep going" mode each transfer gets a limited amount of gas. Without a cap, EIP-150 hands a callee 63/64
+of what is left, so one recipient whose hook burns everything starves the rest of the batch, which is exactly
+what that mode promises not to do.
 
-It signs nothing and writes nothing. Previews come from `eth_simulateV1`, which Robinhood Chain supports on
-both networks and which returns the logs a call *would* emit, so the preview is what actually moves rather
-than what the function is named. Where a contract has published no source, the powers are read from the
-function selectors in its own bytecode, which is a floor rather than a ceiling, and the page says so.
+There is no number that separates an honest receiver from a hostile one. `DEFAULT_GAS` is 400,000, which is
+comfortably above every honest recipient measured (OpenZeppelin ERC-721/1155, ERC721A crossing an
+uninitialised ownership slot, smart-contract wallets). If your recipients are more expensive than that, the
+`…WithGas` entry points take your own number between `MIN_GAS` (100,000) and `MAX_GAS` (5,000,000). A stipend
+passed with all-or-nothing mode is refused rather than silently ignored, because that mode forwards everything
+and accepting the number would describe a transaction that does not exist.
 
-The mainnet explorer answers browsers and challenges everything else, so the page's own Cloudflare Worker
-carries a small read-only passthrough at `/x/<chain id>/<api path>`. When the explorer will not answer at all,
-the page says the source status is unknown; it never reports "no source published" for a question it could
-not ask.
+A wallet skipped with an empty reason has either failed or run past the stipend, and the two are
+indistinguishable from outside. The page says exactly that instead of guessing.
 
-    ./deploy-check.sh          # worker + origin copy, both verified
-    cd /mnt/c/GMGNRepeat/baby-bananza-grand-prix && node test/web/check.test.mjs
+### Cost
+
+Measured on the live testnet, not estimated: about **35k gas per recipient** for a plain ERC-721 transfer, 38k
+with a receive hook, 32k for ERC-1155, 28k for ERC-20. BulkSend's own share is 2.0k to 2.9k of that, roughly 6
+to 9%; the rest is the token's own transfer, which no batch sender can avoid.
+
+**Delivery order matters more than any of that.** Collections built on ERC721A store ownership lazily, so
+moving a token scans backwards through unwritten slots and charges the sender for it. The page delivers in
+ascending token id order, which makes each scan trivial. Measured on chain with the same 20 ids: descending
+65,358 gas per recipient, ascending 54,615. On a freshly minted 200-token collection the gap is wider, and in
+lenient mode a descending list can push honest recipients past the stipend so they are skipped. Everyone still
+receives exactly the id listed for them; only the order changes.
+
+### Before you send
+
+The page simulates every batch against live chain state with `eth_call` first, so you learn how many would be
+delivered before anything is signed. Some collections use a creator transfer validator and only allow
+transfers through operators the creator approved; no bulk sender can move those, and the test run says so
+rather than wasting a transaction. If your wallet can run several calls as itself (EIP-5792), the page uses
+that instead: no approval to grant, nothing to revoke, and validator-gated collections work.
+
+### Sending twice is the thing to be afraid of
+
+The page keeps a record, in your browser and for your account only, of what it has already delivered, keyed on
+parsed values with an occurrence number so two identical lines are two payments rather than one. A batch that
+was signed but never confirmed is written down **before** the wait and read back from the chain next time, so
+closing the tab mid-airdrop does not mean paying everyone again; those recipients are held back until the
+transaction can be read. There is a cross-tab lock. None of that can help another browser, another device, or
+a cleared cache, and the page says so. What was actually sent is on the chain, and that is the record to
+trust.
+
+---
+
+## Check
+
+Paste a transaction hash, a contract address, the calldata your wallet is about to sign, or the whole JSON
+blob a wallet shows under "raw data". It answers in a sentence.
+
+- **A sent transaction:** what it did, what moved (decoded from the receipt's logs, with token names), the gas
+  actually paid, and for a failure the contract's own reason in words, with its arguments.
+- **A contract:** verified or not, proxy or not, token facts, current owner, whether transfers are paused, a
+  creator transfer validator if one is set, and **what whoever controls it can do to the people holding it**:
+  mint, burn yours, pause, blacklist, retax, replace the code. Read from the published ABI where there is one,
+  and from the function selectors in the bytecode where there is not.
+- **An unsent call:** what it means, plus a real `eth_simulateV1` run that reports the logs it *would* emit, so
+  the preview is what actually moves rather than what the function is named. With the warnings that matter:
+  unlimited approvals, `setApprovalForAll`, ownership changes, calls to an address with no code, and calls
+  that would fail right now.
+
+Three things it does that a block explorer does not: it previews a transaction that has not been sent, it
+reads contracts that never published their source, and it says whether a contract's owners can do something to
+you. One thing it is careful about: **an explorer that will not answer is not a contract without a source.**
+Verification status is three-valued, and "could not check" is reported as itself.
+
+---
+
+## Build, test, deploy
+
+    forge build
+    forge test                 # 75 contract tests
+    npm install && npm test    # 70 browser tests, every answer mocked, no network
+    ./test.sh                  # all of it
+
+The browser tests drive the real pages in headless Chromium and answer every RPC, explorer and price request
+from the test file, so a failure is the page's fault and nothing else.
+
+Deploying publishes each page as a Cloudflare Worker with the HTML inlined, so the live page is byte-identical
+to the file in this repository:
+
+    cp deploy/local.env.example deploy/local.env    # then fill it in; it is gitignored
+    ./deploy/publish.sh airdrop
+    ./deploy/publish.sh check
+
+Contracts, testnet only:
+
+    export RH_RPC=https://rpc.testnet.chain.robinhood.com
+    forge script script/Deploy.s.sol:DeployBulkSend --rpc-url $RH_RPC --private-key $PK --broadcast
+    forge verify-contract <address> src/BulkSend.sol:BulkSend --chain-id 46630 --rpc-url $RH_RPC \
+      --verifier blockscout --verifier-url https://explorer.testnet.chain.robinhood.com/api/
+
+Rehearse against a fork with no funds first:
+
+    anvil --fork-url $RH_RPC --port 8555
+    cast rpc --rpc-url http://127.0.0.1:8555 anvil_setBalance <deployer> 0x8AC7230489E80000
 
 ## Networks
 
@@ -67,47 +141,27 @@ not ask.
 | testnet | 46630 | https://rpc.testnet.chain.robinhood.com | https://explorer.testnet.chain.robinhood.com |
 | mainnet | 4663 | https://rpc.mainnet.chain.robinhood.com | https://robinhoodchain.blockscout.com |
 
-Gas token is ETH. Testnet faucet: https://faucet.testnet.chain.robinhood.com/ (browser only, blocks automation).
-
-## Build and test
-
-    forge build
-    forge test -vv
-
-Gas, measured on the live testnet rather than estimated: about 35k per recipient for a plain ERC-721
-transfer, 38k with a receive hook, 32k for ERC-1155, 28k for ERC-20. BulkSend's own share of that is 2.0k to
-2.9k, roughly 6 to 9%; the rest is the token's own transfer, which no batch sender can avoid.
-
-**Delivery order matters more than any of that.** Collections built on ERC721A store ownership lazily, so
-moving a token scans backwards through unwritten slots and charges the sender for it. The page therefore
-delivers in ascending token id order, which makes each scan trivial. Measured on the live chain with the same
-20 ids: descending 65,358 gas per recipient, ascending 54,615. On a freshly minted 200-token collection the
-gap is wider still, and in lenient mode a descending list can push honest recipients past the per-transfer
-allowance so they are skipped. Everyone still receives exactly the id listed for them; only the order changes.
-
-## Deploy
-
-    export RH_RPC=https://rpc.testnet.chain.robinhood.com
-    forge script script/Deploy.s.sol:DeployBulkSend --rpc-url $RH_RPC --private-key $PK --broadcast
-    forge verify-contract <address> src/BulkSend.sol:BulkSend --chain-id 46630 --rpc-url $RH_RPC \
-      --verifier blockscout --verifier-url https://explorer.testnet.chain.robinhood.com/api/
-
-Testnet first, always. Rehearse on a local fork with no funds:
-
-    anvil --fork-url $RH_RPC --port 8555
-    cast rpc --rpc-url http://127.0.0.1:8555 anvil_setBalance <deployer> 0x8AC7230489E80000
+Gas token is ETH. Testnet faucet: https://faucet.testnet.chain.robinhood.com/ (browser only, blocks
+automation). `eth_simulateV1` is available on both networks and returns the logs a call would emit, which is
+what makes Check's previews real; `debug_traceCall` and `eth_createAccessList` are not exposed.
 
 ## Reviews
 
-Six internal reviews and one external audit run by a different model with no knowledge of how this was
-built. The external audit returned 8 High, 4 Medium and 3 Low; all fifteen are fixed, and the tests name the
-finding each one guards. Findings and what changed are recorded in the project's wiki page in the brain.
-Nothing here has been reviewed by a human audit team.
+Six internal review passes and one external audit by a different model given the code and no other context:
+8 High, 4 Medium, 3 Low, all fixed. The audit is published unedited in
+[`docs/audit-2026-09-06-external.md`](docs/audit-2026-09-06-external.md), including the finding that a bug I
+had previously dismissed in a code comment as deliberate was in fact a double-payment path.
 
-Deployed on testnet 46630 at `0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74`, source verified, runtime bytecode
-byte-for-byte equal to a local build. Mainnet is deliberately not deployed.
+No human audit firm has reviewed this. If you are reviewing it, start with
+[`docs/for-reviewers.md`](docs/for-reviewers.md).
 
-## Keys
+## Secrets
 
-The deployer key is a throwaway with no value. It lives outside the repo in a 600-permission file
-and is never committed. Nothing in this repo contains a secret.
+There are none in this repository, and there never have been: the history has been scanned for the deployer
+key and for API tokens. Deploy configuration lives in `deploy/local.env`, which is gitignored; the deployer
+key lives outside the repository in a 600-permission file. The WalletConnect project id in `web/index.html` is
+public by design, as it is in every WalletConnect-enabled page.
+
+## Licence
+
+MIT, including the vendored dependencies under `lib/` (MIT and Apache-2.0, each with its own licence file).

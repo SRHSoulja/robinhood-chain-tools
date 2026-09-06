@@ -1,13 +1,12 @@
 // Deterministic browser tests for web/index.html. No network, no testnet: every chain answer is mocked, so a
 // failure here is the page's fault and nothing else. Each test names the audit finding it guards.
 //
-//   cd /mnt/c/GMGNRepeat/baby-bananza-grand-prix && node /home/arson/rh-airdrop/test/web/client.test.mjs
+//   npm install && node test/web/client.test.mjs        (from the repository root)
 //
-// playwright lives in the bbgp checkout on this machine; resolve it from there so this file can sit in the repo
-const { chromium } = await import('/mnt/c/GMGNRepeat/baby-bananza-grand-prix/node_modules/playwright/index.mjs')
-  .catch(() => import('playwright'));
+import { chromium } from 'playwright';
+import { pathToFileURL } from 'node:url';
 
-const PAGE = 'file:///home/arson/rh-airdrop/web/index.html';
+const PAGE = pathToFileURL(new URL('../../web/index.html', import.meta.url).pathname).href;
 const NFT = '0x1111111111111111111111111111111111111111';
 const TOK = '0x2222222222222222222222222222222222222222';
 const ED  = '0x3333333333333333333333333333333333333333';
