@@ -20,7 +20,7 @@ here:
 ## Running everything
 
     forge test                    # 82 contract tests
-    npm install && npm test       # 129 browser tests, all answers mocked, no network
+    npm install && npm test       # 140 browser tests, all answers mocked, no network
     ./test.sh                     # both of the above
 
 The browser tests answer every RPC, explorer and price request from the test file itself, so a failure is the
@@ -67,9 +67,10 @@ These are choices, not accidents, and a reviewer disagreeing with one is useful.
 ## Previous review
 
 - Six internal review passes.
-- Four external audits, each by a different model with no prior context, all published unedited:
+- Five external audits, each by a different model with no prior context, all published unedited:
   [the first](audit-2026-09-06-external.md) (8 High, 4 Medium, 3 Low),
   [the second](audit-2026-09-06-second-external.md) (6 High, 5 Medium, 1 Low),
   [the third](audit-2026-09-06-third-external.md) (4 High, 1 Medium) and
-  [the fourth](audit-2026-09-06-fourth-external.md) (6 High, 2 Medium, 1 Low). All fixed.
+  [the fourth](audit-2026-09-06-fourth-external.md) (6 High, 2 Medium, 1 Low) and
+  [the fifth](audit-2026-09-06-fifth-external.md) (5 High, 2 Medium, 2 Low). All fixed.
 - No human audit firm has looked at this.

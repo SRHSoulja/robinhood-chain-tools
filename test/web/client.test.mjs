@@ -20,6 +20,7 @@ const BULK_FOR_MOCK = '0x91949d7328387a3613b29e56f6979ae893ccd23c';
 const padAddr = (a) => '0x' + a.slice(2).padStart(64, '0');
 // The batch summary BulkSend emits. The page now requires exactly one, naming the right token and sender,
 // before it will read a receipt at all, so a mocked send has to produce a real-shaped one.
+const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const SUMMARY_TOPIC = {
   '721': '0x0650ec14a2586ec091c567c013a2e3ee5a6aac789d20c75c67208e1d8c9e69df',
   '1155': '0x9bbedf900ea620d4c4355552ede90c302d1ada0fedc6a5537745ebd405c5502e',
@@ -62,7 +63,10 @@ function chainAnswer(O) {
       case 'eth_gasPrice': return '0x989680';
       case 'eth_blockNumber': return '0x' + (0x1000 + (O.blockMoves ? ++blockTick : 0)).toString(16);
       case 'eth_getBlockByNumber': return { number: '0x1000', hash: '0x' + '11'.repeat(32), parentHash: '0x' + '22'.repeat(32), timestamp: '0x1', gasLimit: '0x1', gasUsed: '0x0', miner: A(0), baseFeePerGas: '0x989680', transactions: [] };
-      case 'wallet_getCapabilities': return O.walletBatch ? { '0xb626': { atomic: { status: 'supported' } } } : {};
+      case 'wallet_getCapabilities':
+        // EIP-5792 lets a wallet declare a capability once, under 0x0, for every chain it supports.
+        if (O.walletBatchAllChains) return { '0x0': { atomic: { status: 'supported' } } };
+        return O.walletBatch ? { '0xb626': { atomic: { status: 'supported' } } } : {};
       case 'wallet_switchEthereumChain': case 'wallet_addEthereumChain': return null;
       case 'wallet_sendCalls': {
         if (O.tooLarge) { const e = new Error('batch too large'); e.code = 5740; throw e; }
@@ -97,7 +101,16 @@ function chainAnswer(O) {
           blockHash: '0x' + '11'.repeat(32), from: me, to: A(0xb01c), contractAddress: null,
           cumulativeGasUsed: '0x1', gasUsed: '0x1', effectiveGasPrice: '0x989680', type: '0x2',
           logsBloom: '0x' + '00'.repeat(256),
-          logs: O.summary ? [summaryLog(O.summary.bulk, O.summary.std, O.summary.token, me, O.summary.sent, O.summary.skipped)] : (O.receiptLogs || []),
+          logs: [
+            ...(O.summary ? [summaryLog(O.summary.bulk, O.summary.std, O.summary.token, me, O.summary.sent, O.summary.skipped)] : []),
+            ...(O.tokenTransfers || []).map((t) => Object.assign(
+              { blockNumber: '0x1000', transactionHash: '0x' + 'cd'.repeat(32), transactionIndex: '0x0',
+                blockHash: '0x' + '11'.repeat(32), logIndex: '0x1', removed: false, address: t.token },
+              t.id !== undefined
+                ? { topics: [TRANSFER, padAddr(me), padAddr(t.to), '0x' + BigInt(t.id).toString(16).padStart(64, '0')], data: '0x' }
+                : { topics: [TRANSFER, padAddr(me), padAddr(t.to)], data: '0x' + BigInt(t.amount).toString(16).padStart(64, '0') })),
+            ...(O.receiptLogs || []),
+          ],
         };
       }
       case 'eth_estimateGas': return '0x186a0';
@@ -428,8 +441,9 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
 }
 
 // ---- M-01: a batch this browser cannot account for holds its rows back --------
+// (recipientBalance makes the after-the-fact arrival check answerable, so the run reaches its end)
 {
-  const page = await open(browser, { approved: true, noReceipt: true });
+  const page = await open(browser, { approved: true, noReceipt: true, recipientBalance: '3000000000000000000' });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, TOK, '20');
   await setList(page, A(0x91) + ',1\n' + A(0x92) + ',2\n');
@@ -464,7 +478,8 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   await page.click('#send'); await page.waitForTimeout(6000);
   const logText = await text(page, '#log');
   check('M-01 a batch that did land is caught up and recorded', logText.includes('Caught up'), logText.slice(0, 240));
-  check('M-01 so its recipients are not paid twice', logText.includes('already delivered'), logText.slice(-240));
+  check('M-01 and a row it cannot confirm is held rather than sent again',
+    /held back|holding back/.test(logText), logText.slice(0, 400));
   await page.close();
 }
 
@@ -594,7 +609,7 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
 
 // ---- M-03: the delivered ledger is never silently trimmed ------------------------
 {
-  const page = await open(browser, { walletBatch: true });
+  const page = await open(browser, { walletBatch: true, ownerOf: A(0xe1) });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
   await setList(page, A(0xe1) + ',1\n');
@@ -757,13 +772,82 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   await page.click('#send'); await page.waitForTimeout(7000);
   const logText = await text(page, '#log');
   check('H-06 a transfer the token reported but the chain did not make is not recorded',
-    /have not arrived/.test(logText) && /NOT being recorded/.test(logText), logText.slice(-320));
-  check('H-06 and it is named as what it is', /accepts a transfer and moves nothing/.test(logText), logText.slice(-320));
+    /have not appeared at their destination/.test(logText) && /NOT recorded as delivered/.test(logText), logText.slice(-360));
+  check('H-06 and it is held rather than offered for another attempt',
+    /NOT released for another attempt/.test(logText) && /unsettled and held/.test(logText), logText.slice(-360));
   const stillFresh = await page.evaluate(() => {
     const k = Object.keys(localStorage).find((x) => x.startsWith('bulksend:46630:'));
     return k ? JSON.parse(localStorage.getItem(k) || '[]').length : 0;
   });
   check('H-06 so the row is not suppressed on the next run', stillFresh === 0, 'delivered keys: ' + stillFresh);
+  await page.close();
+}
+
+// ---- a reload confirms from the token's own events in that transaction ----------
+{
+  const paid = A(0x95);
+  const page = await open(browser, { approved: true, tokenTransfers: [{ token: TOK, to: paid, amount: '1000000000000000000' }] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await page.evaluate(([acct, tok, to]) => {
+    const run = 'bulksend:46630:' + acct.toLowerCase() + ':' + tok.toLowerCase() + ':20';
+    localStorage.setItem('bulksend:pending:p9', JSON.stringify({
+      pid: 'p9', run, chain: 46630, bulk: '0x91949d7328387a3613b29e56f6979ae893ccd23c',
+      hash: '0x' + 'ab'.repeat(32), at: Date.now() - 60000, via: 'wallet',
+      rows: [{ to, id: null, amount: '1000000000000000000', k: to.toLowerCase() + '::1000000000000000000#1' }],
+    }));
+  }, [RUN_ME, TOK, paid]);
+  await useToken(page, TOK, '20');
+  await setList(page, paid + ',1\n' + A(0x96) + ',2\n');
+  await page.click('#send'); await page.waitForTimeout(7000);
+  const logText = await text(page, '#log');
+  check('a row the token itself says it transferred is confirmed on reload',
+    /confirmed at their destination/.test(logText), logText.slice(0, 400));
+  check('and is then treated as already delivered', /already delivered/.test(logText), logText.slice(0, 400));
+  await page.close();
+}
+
+// ---- H-04: two rows to one wallet are judged together, not twice over ------------
+{
+  // one wallet, two rows of 1 each, and only 1 arrives: neither may be recorded
+  const both = A(0x97);
+  const page = await open(browser, { approved: true, recipientBalance: '1000000000000000000',
+                                     summary: { bulk: BULK_FOR_MOCK, std: '20', token: TOK, sent: 2 } });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, TOK, '20');
+  await setList(page, both + ',1\n' + both + ',1\n');
+  await page.click('#send'); await page.waitForTimeout(7000);
+  const logText = await text(page, '#log');
+  check('H-04 two rows to one wallet share one balance and are judged as a group',
+    /unsettled and held/.test(logText) && !/2 arrived/.test(logText), logText.slice(-320));
+  await page.close();
+}
+
+// ---- H-02/H-03: a read that fails settles nothing, and holds ---------------------
+{
+  const page = await open(browser, { approved: true, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 } });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x98) + ',4\n');
+  await page.click('#send'); await page.waitForTimeout(7000);
+  const logText = await text(page, '#log');
+  check('H-02 a chain that will not answer is not counted as arrival',
+    /could not be checked/.test(logText) && /unsettled and held/.test(logText), logText.slice(-320));
+  const ledger = await page.evaluate(() => {
+    const k = Object.keys(localStorage).find((x) => x.startsWith('bulksend:46630:'));
+    return k ? JSON.parse(localStorage.getItem(k) || '[]').length : 0;
+  });
+  check('H-02 and nothing is written to the delivered ledger on no evidence', ledger === 0, 'ledger rows: ' + ledger);
+  await page.close();
+}
+
+// ---- L-01: a wallet that declares batching for every chain at once --------------
+{
+  const page = await open(browser, { walletBatchAllChains: true });
+  await page.click('#connect'); await page.waitForTimeout(900);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0xf9) + ',1\n');
+  check('L-01 capabilities declared under the all-chain key are honoured',
+    (await text(page, '#plan')).includes('as itself'), await text(page, '#plan'));
   await page.close();
 }
 

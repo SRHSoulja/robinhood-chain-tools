@@ -147,7 +147,7 @@ moved".
 
     forge build
     forge test                 # 82 contract tests
-    npm install && npm test    # 129 browser tests, every answer mocked, no network
+    npm install && npm test    # 140 browser tests, every answer mocked, no network
     ./test.sh                  # all of it
 
 The browser tests drive the real pages in headless Chromium and answer every RPC, explorer and price request
@@ -185,9 +185,9 @@ what makes Check's previews real; `debug_traceCall` and `eth_createAccessList` a
 
 ## Reviews
 
-Six internal review passes and four external audits, each by a different model given the code and no other
-context: 8/4/3, then 6/5/1, then 4/1/0, then 6/2/1 (High/Medium/Low). Every finding is fixed, and all four are
-published unedited in [`docs/`](docs/) — including the first audit's
+Six internal review passes and five external audits, each by a different model given the code and no other
+context: 8/4/3, then 6/5/1, then 4/1/0, then 6/2/1, then 5/2/2 (High/Medium/Low). Every finding is fixed, and
+all five are published unedited in [`docs/`](docs/) — including the first audit's
 finding that a bug I had dismissed in a code comment as deliberate was in fact a double-payment path, and the
 second's finding that the Check page was printing safety conclusions on the strength of function names.
 

@@ -293,16 +293,23 @@
     if (out.proxy && out.proxy.target) {
       // A beacon is not the code either: it names the implementation, so follow one more step.
       if (String(out.proxy.kind).startsWith('beacon')) {
-        try {
-          const impl = await new ethers.Contract(out.proxy.target, ['function implementation() view returns (address)'], p).implementation();
-          if (impl && impl !== ethers.ZeroAddress) { out.proxy.beacon = out.proxy.target; out.proxy.target = ethers.getAddress(impl); }
-        } catch (e) { out.proxy.beaconUnread = true; }
+        let impl = null;
+        try { impl = await new ethers.Contract(out.proxy.target, ['function implementation() view returns (address)'], p).implementation(); } catch (e) {}
+        if (impl && impl !== ethers.ZeroAddress) { out.proxy.beacon = out.proxy.target; out.proxy.target = ethers.getAddress(impl); }
+        else {
+          // The beacon is a pointer, not the application code. Reading it as though it were would decode calls
+          // against the wrong contract and call the beacon's own source "the code it runs".
+          out.proxy.beacon = out.proxy.target; out.proxy.target = null;
+          out.proxy.beaconUnread = true; out.proxy.verified = null;
+          out.abi = null; out.implUnknown = true;
+        }
       }
       // The forwarder's ABI describes the forwarder. Once this is known to be a proxy, that ABI is set aside
       // rather than left in place as a fallback: decoding a call against code that does not run it, and
       // labelling the result "the contract's published source", is worse than saying nothing.
       out.proxyOwnAbi = out.abi; out.abi = null;
-      const res = await explorerJson('/smart-contracts/' + out.proxy.target);
+      if (!out.proxy.target) { out.proxy.code = '0x'; }
+      const res = out.proxy.target ? await explorerJson('/smart-contracts/' + out.proxy.target) : { ok: false, data: null };
       const impl = res.data;
       out.proxy.verified = res.ok ? !!(impl && impl.is_verified) : null;
       if (impl) {
@@ -311,8 +318,10 @@
         // can do, and every piece of calldata it decodes, has to come from the code that actually runs.
         if (impl.abi && impl.abi.length) { out.abi = impl.abi; out.abiFrom = 'implementation'; }
       }
-      out.proxy.code = await p.getCode(out.proxy.target).then((c) => c, () => null);
-      if (out.proxy.code === null) { out.proxy.codeUnreadable = true; out.proxy.code = '0x'; }
+      if (out.proxy.target) {
+        out.proxy.code = await p.getCode(out.proxy.target).then((c) => c, () => null);
+        if (out.proxy.code === null) { out.proxy.codeUnreadable = true; out.proxy.code = '0x'; }
+      }
       if (!out.abi) out.implUnknown = true;   // nothing to decode against but conventions
     }
 
@@ -745,7 +754,7 @@
         o.owner ? ['Owner', o.owner === ethers.ZeroAddress ? 'nobody: ownership has been given up' : link(o.owner, short(o.owner))] : null,
         o.proxy ? ['Proxy', h('span', {},
           document.createTextNode(o.proxy.kind + (o.proxy.beacon ? ' via beacon ' + short(o.proxy.beacon) : '') + ' \u2192 '),
-          link(o.proxy.target, short(o.proxy.target)),
+          o.proxy.target ? link(o.proxy.target, short(o.proxy.target)) : h('span', { class: 'bad', text: 'unknown: the beacon would not name the code it points at' }),
           document.createTextNode(o.proxy.verified === false ? '  (the code it runs has no published source)'
             : o.proxy.verified === null ? '  (could not check whether that code has published source)' : ''),
           o.proxy.beaconUnread ? document.createTextNode('  (the beacon would not say which implementation it points at)') : null)] : null,
@@ -796,6 +805,41 @@
     out(contractCard(o, o.isContract ? 'This contract' : 'This address'));
   }
 
+  // Everything worth saying about one call, in one place, so the single-call view, a call inside a pasted
+  // batch and a call carried inside another all say the same things about the same bytes.
+  function callWarnings(parsed, target, sim, from) {
+    const w = [];
+    if (parsed.signature === 'approve(address,uint256)' && UNLIMITED(parsed.args[1]))
+      w.push(['bad', 'This is an unlimited approval', 'It lets ' + short(parsed.args[0]) + ' take that token out of your wallet at any point in the future, in any amount, without asking again. Approving only what you are spending right now costs the same gas.']);
+    if (parsed.signature === 'setApprovalForAll(address,bool)' && parsed.args[1])
+      w.push(['bad', 'This hands over the whole collection', 'Not one NFT: every one you hold now and every one you ever hold in this collection, until you revoke it.']);
+    if (parsed.signature && /^(transferOwnership|renounceOwnership|upgradeTo)/.test(parsed.signature))
+      w.push(['warn', 'This changes who controls the contract', 'Read the address it is being handed to before signing.']);
+    if (parsed.extra)
+      w.push(['bad', 'This call carries ' + parsed.extra + ' bytes nobody is shown', 'The arguments account for all of it except those bytes. A contract that reads its own calldata directly can act on them, and no wallet or explorer will show them to you.']);
+    if (parsed.signature === 'multicall(bytes[])' || parsed.signature === 'execute(address,uint256,bytes)')
+      w.push(['warn', 'This call carries other calls inside it', 'They are listed below, decoded the same way. Read those, not just this one.']);
+    if (target && target.codeUnreadable)
+      w.push(['bad', 'The code at that address could not be read', 'The node did not answer, so nothing on this page can tell you what is there. Try again in a moment rather than acting on this.']);
+    else if (target && !target.isContract && !target.delegated)
+      w.push(['bad', 'There is no contract at that address', 'A call to an address with no code does nothing at all and still costs gas. Check the address.']);
+    if (target && target.isContract && target.verified === false)
+      w.push(['warn', 'The contract you are calling has published no source', 'You can still see what it did in the simulation, but not what it will do under other conditions.']);
+    if (target && target.isContract && target.verified === null)
+      w.push(['warn', 'Nobody could check whether this contract\u2019s source is published', 'The block explorer did not answer.']);
+    if (target && target.proxy)
+      w.push(['warn', 'This contract can be replaced', target.proxy.target
+        ? 'It forwards to ' + short(target.proxy.target) + ', and whoever controls it can point it somewhere else after you sign.'
+        : 'It forwards to code this page could not identify, so what it would run is unknown.']);
+    if (target && target.implUnknown)
+      w.push(['warn', 'The code behind this proxy published nothing to read against', 'The sentence above is a reading of conventions, not of the code that would run.']);
+    if (sim && !sim.ok)
+      w.push(['bad', 'This would fail right now', decodeRevert(sim.reason, target && target.abi ? new ethers.Interface(target.abi) : null)]);
+    if (!from)
+      w.push(['warn', 'Nobody was named as the sender', 'The preview ran as the zero address, so anything that depends on who is asking may come out differently for you. Put your address in the box above.']);
+    return w;
+  }
+
   async function showCall(to, data, from, value, seq) {
     say('Working out what that would do…');
     const target = await readAddress(to);
@@ -805,34 +849,8 @@
     let sim = null, simErr = null;
     try { sim = await simulate({ to, data, from, value }); } catch (e) { simErr = String(e.message || e).slice(0, 160); }
     const moves = sim ? await movements(sim.logs, ctx) : [];
-    const iface = target.abi ? new ethers.Interface(target.abi) : null;
-    const warnings = [];
-    if (parsed.signature === 'approve(address,uint256)' && UNLIMITED(parsed.args[1]))
-      warnings.push(['bad', 'This is an unlimited approval', 'It lets ' + short(parsed.args[0]) + ' take that token out of your wallet at any point in the future, in any amount, without asking again. Approving only what you are spending right now costs the same gas.']);
-    if (parsed.signature === 'setApprovalForAll(address,bool)' && parsed.args[1])
-      warnings.push(['bad', 'This hands over the whole collection', 'Not one NFT: every one you hold now and every one you ever hold in this collection, until you revoke it.']);
-    if (parsed.signature && /^(transferOwnership|renounceOwnership|upgradeTo)/.test(parsed.signature))
-      warnings.push(['warn', 'This changes who controls the contract', 'Read the address it is being handed to before signing.']);
-    if (target.codeUnreadable)
-      warnings.push(['bad', 'The code at that address could not be read', 'The node did not answer, so nothing on this page can tell you what is there. Anything below was worked out without knowing whether this address holds a contract at all. Try again in a moment rather than acting on this.']);
-    else if (!target.isContract && !target.delegated)
-      warnings.push(['bad', 'There is no contract at that address', 'A call to an address with no code does nothing at all and still costs gas. Check the address.']);
-    if (target.isContract && target.verified === false)
-      warnings.push(['warn', 'The contract you are calling has published no source', 'You can still see what it did in the simulation below, but not what it will do under other conditions.']);
-    if (target.isContract && target.verified === null)
-      warnings.push(['warn', 'Nobody could check whether this contract’s source is published', 'The block explorer did not answer. What follows was read from the chain, which is enough to say what this call would do right now, and not enough to say what the contract is.']);
-    if (target.proxy)
-      warnings.push(['warn', 'This contract can be replaced', 'It forwards to ' + short(target.proxy.target) + ', and whoever controls it can point it somewhere else after you sign.']);
-    if (sim && !sim.ok)
-      warnings.push(['bad', 'This would fail right now', decodeRevert(sim.reason, iface)]);
+    const warnings = callWarnings(parsed, target, sim, from);
     if (stale(seq)) return;
-    if (parsed.extra)
-      warnings.push(['bad', 'This call carries ' + parsed.extra + ' bytes nobody is shown',
-        'The arguments above account for all of it except those bytes. A contract that reads its own calldata directly can act on them, and no wallet or explorer will show them to you. Treat this as a call that means more than it says.']);
-    if (parsed.signature === 'multicall(bytes[])' || parsed.signature === 'execute(address,uint256,bytes)')
-      warnings.push(['warn', 'This call carries other calls inside it', 'They are listed below, decoded the same way. Read those, not just this one.']);
-    if (!from)
-      warnings.push(['warn', 'Nobody was named as the sender', 'The preview ran as the zero address, so anything that depends on who is asking, an allowance, a balance, an owner check, may come out differently for you. Put your address in the box above.']);
     say('');
     out(
       card(null,
@@ -874,12 +892,16 @@
     if (s.startsWith('{') || s.startsWith('[')) {
       try {
         const j = JSON.parse(s);
-        const list = Array.isArray(j) ? j : (Array.isArray(j.params) ? j.params : (Array.isArray(j.calls) ? j.calls : [j]));
+        // A wallet_sendCalls request is {method, params:[{version, chainId, from, calls:[…]}]}, so the array
+        // of calls sits two levels down. Reading params[0] as a call gave one entry with no destination and
+        // dropped the whole batch, which is the shape a real wallet actually shows someone.
+        const unwrap = (o) => (o && Array.isArray(o.calls) ? o.calls.map((c) => Object.assign({ from: o.from }, c)) : [o]);
+        const level1 = Array.isArray(j) ? j : (Array.isArray(j.params) ? j.params : (Array.isArray(j.calls) ? j.calls : [j]));
+        const list = level1.flatMap((o) => (o && o.params && Array.isArray(o.params) ? o.params.flatMap(unwrap) : unwrap(o)));
         // Every entry is kept. Filtering out the ones that do not look like calls is how a second entry
         // written as {input, value} with no `to` (a contract creation, say) vanished and left the request
         // looking like one benign call.
         const calls = list
-          .map((o) => (o && o.params && Array.isArray(o.params) ? o.params[0] : o))
           .filter((o) => o && typeof o === 'object')
           .map((o) => ({ to: o.to || null, data: o.data || o.input || '0x', from: o.from, value: o.value }));
         if (calls.length === 1 && calls[0].to) return Object.assign({ kind: 'call' }, calls[0]);
@@ -918,6 +940,7 @@
           'Everything below is part of the same request. A batch is only as safe as its most dangerous call, and that is rarely the first one.')];
         for (let i = 0; i < parsedInput.calls.length && i < 20; i++) {
           const c = parsedInput.calls[i];
+          void c;
           if (!ethers.isAddress(String(c.to || ''))) {
             cards.push(card('Call ' + (i + 1) + ' of ' + parsedInput.calls.length, [
               note('bad', 'This call has no destination this page can read',
@@ -941,12 +964,18 @@
               h('span', { class: 'pill', text: 'to ' + short(String(c.to)) }),
               c.value && BigInt(c.value) > 0n ? h('span', { class: 'pill warn', text: ethers.formatEther(BigInt(c.value)) + ' ETH attached' }) : null,
             ]),
-            (p.signature === 'approve(address,uint256)' && UNLIMITED(p.args[1]))
-              ? note('bad', 'This call is an unlimited approval', 'It lets ' + short(p.args[0]) + ' take that token at any point in future, in any amount.') : null,
-            (p.signature === 'setApprovalForAll(address,bool)' && p.args[1])
-              ? note('bad', 'This call hands over a whole collection', 'Every one you hold now and every one you ever hold.') : null,
-            p.extra ? note('bad', 'This call carries ' + p.extra + ' bytes nobody is shown', 'The arguments account for all of it except those bytes.') : null,
+            // The same disclosures a call gets when it is pasted on its own. Two byte-identical calls must not
+            // be described differently because one of them happened to arrive inside a batch.
+            ...callWarnings(p, t, sim, from).map(([cls, title, body]) => note(cls, title, body)),
+            t ? kv([
+              ['Destination', h('span', {}, link(String(c.to), short(String(c.to))), document.createTextNode('  '),
+                h('span', { class: 'mut', text: t.codeUnreadable ? 'code unreadable' : t.isContract ? (t.proxy ? 'a proxy' : 'a contract') : t.delegated ? 'an upgraded wallet' : 'a wallet' }))],
+              t.isContract ? ['Source', t.proxy
+                ? (t.proxy.verified ? 'the code it runs has published source' : t.proxy.verified === null ? 'could not check the code it runs' : 'the code it runs has published no source')
+                : (t.verified ? 'published' : t.verified === null ? 'could not check' : 'none published')] : null,
+            ]) : note('bad', 'Nothing could be read about this destination', 'The chain would not answer, so nothing below is settled.'),
             await renderInner(p, t, 0),
+            h('details', {}, [h('summary', { class: 'mut', text: 'raw call' }), h('pre', { text: (String(c.data).slice(2).match(/.{1,64}/g) || []).join('\n') })]),
           ]));
         }
         if (parsedInput.calls.length > 20) cards.push(note('warn', 'Only the first 20 calls are shown', 'There are ' + parsedInput.calls.length + ' in total.'));

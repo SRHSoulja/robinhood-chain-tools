@@ -41,7 +41,12 @@ function answer(O) {
         if (p0 === WALLET) return '0xef0100' + IMPL.slice(2);
         return '0x';
       }
-      case 'eth_getStorageAt': return '0x' + '0'.repeat(64);
+      case 'eth_getStorageAt': {
+        const slot = String(params[1] || '').toLowerCase();
+        if (O.beaconProxy && slot === '0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50')
+          return '0x' + O.beaconProxy.slice(2).padStart(64, '0');
+        return '0x' + '0'.repeat(64);
+      }
       case 'eth_call': {
         const to = String(params[0].to || '').toLowerCase(), data = String(params[0].data || ''), sel = data.slice(0, 10);
         if (sel === '0x01ffc9a7') { const id = data.slice(10, 18);
@@ -53,6 +58,7 @@ function answer(O) {
         if (sel === '0x18160ddd') return word(1000);
         if (sel === '0x8da5cb5b') return O.owner === null ? null : '0x' + (O.owner || A(0x0117)).slice(2).padStart(64, '0');
         if (sel === '0x5c975abb') return word(O.paused ? 1 : 0);
+        if (sel === '0x5c60da1b') { if (O.beaconSilent) throw new Error('beacon will not say'); return word(0); }
         if (sel === '0xa2b4bdcb') return O.validator ? '0x' + O.validator.slice(2).padStart(64, '0') : null;
         return word(1);
       }
@@ -447,6 +453,42 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   const t = await ask(page, PROXY, null, 6000);
   check('M-02 a proxy whose implementation published nothing does not borrow the forwarder source',
     /the code it runs has published no source/.test(t) && !/source published and matched/.test(t), t.slice(0, 500));
+  await page.close();
+}
+
+// ---- H-05: the shape a wallet actually shows you --------------------------------
+{
+  const page = await open(browser, {});
+  const approval = '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + 'f'.repeat(64);
+  const t = await ask(page, JSON.stringify({
+    method: 'wallet_sendCalls',
+    params: [{ version: '2.0.0', chainId: '0xb626', from: ME, atomicRequired: true,
+               calls: [{ to: NFT, data: '0x06fdde03' }, { to: TOK, data: approval }] }],
+  }), ME, 7000);
+  check('H-05 a canonical wallet_sendCalls request is read as the batch it is',
+    /is 2 calls, not one/.test(t), t.slice(0, 300));
+  check('H-05 and the approval buried in its second call is found',
+    /unlimited approval/i.test(t), t.slice(0, 600));
+  await page.close();
+}
+
+// ---- M-01: a call in a batch is disclosed like a call on its own -----------------
+{
+  const page = await open(browser, { codeUnreadable: [NASTY] });
+  const t = await ask(page, JSON.stringify([{ to: NFT, data: '0x06fdde03' }, { to: NASTY, data: '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + 'f'.repeat(64) }]), ME, 8000);
+  check('M-01 an unreadable destination inside a batch is reported there too',
+    /could not be read/.test(t), t.slice(0, 500));
+  check('M-01 and the raw call is available for every element', /raw call/.test(t), t.slice(0, 500));
+  await page.close();
+}
+
+// ---- M-02: a beacon that will not answer is not the implementation ---------------
+{
+  const beacon = A(0xbea);
+  const page = await open(browser, { beaconProxy: beacon, beaconSilent: true });
+  const t = await ask(page, NASTY, null, 6000);
+  check('M-02 a silent beacon leaves the implementation unknown rather than standing in for it',
+    /beacon would not name the code/.test(t), t.slice(0, 500));
   await page.close();
 }
 
