@@ -625,6 +625,61 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   await page.close();
 }
 
+// ---- S-01: a near-miss request is not tidied into a clean answer -----------------
+// A wallet may refuse anything that does not match the EIP-5792 schema, so a page that coerces the value into
+// something readable is describing a request that will not necessarily run, in the voice it uses for ones
+// that will. Each of these is the auditor's own input.
+{
+  const page = await open(browser, {});
+  const t = await ask(page, JSON.stringify({
+    method: 'wallet_sendCalls',
+    params: [{ version: '2.0.0', chainId: '0xb626', from: ME, atomicRequired: 'false',
+               calls: [{ to: NFT, data: '0x06fdde03' }, { to: TOK, data: '0x06fdde03' }] }],
+  }), ME, 7000);
+  check('S-01 atomicRequired as the string "false" is not read as true',
+    /does not say whether this is all-or-nothing/.test(t) && !/all of it, or none of it/.test(t), t.slice(0, 500));
+  check('S-01 and the request is named as one a wallet may refuse',
+    /not a valid wallet_sendCalls request/.test(t), t.slice(0, 400));
+  await page.close();
+}
+{
+  const page = await open(browser, {});
+  const t = await ask(page, JSON.stringify({
+    method: 'wallet_sendCalls',
+    params: [{ chainId: 46630, from: ME, atomicRequired: true, calls: [{ to: NFT, data: '0x06fdde03' }] }],
+  }), ME, 6000);
+  check('S-01 a numeric chainId is not accepted in place of the required hex string',
+    /names a network that cannot be read/.test(t), t.slice(0, 400));
+  check('S-01 and nothing about the destination is presented',
+    !/Test/.test(t), t.slice(0, 400));
+  await page.close();
+}
+{
+  const page = await open(browser, {});
+  const t = await ask(page, JSON.stringify([{ to: NFT, data: '0x06fdde03' }, null, 'junk']), ME, 7000);
+  check('S-01 a broken member of a pasted list is named by its position, not skipped',
+    /Entry 2 of that JSON is null/.test(t) && /Entry 3 of that JSON is the text "junk"/.test(t), t.slice(0, 500));
+  check('S-01 and the page says what is shown is not all of what was pasted',
+    /not the whole of what was pasted/.test(t), t.slice(0, 500));
+  await page.close();
+}
+{
+  // the same thing one level down, where the list is the request's own calls array
+  const page = await open(browser, {});
+  const t = await ask(page, JSON.stringify({
+    method: 'wallet_sendCalls',
+    params: [{ version: '2.0.0', chainId: '0xb626', from: ME, atomicRequired: true,
+               calls: [{ to: NFT, data: '0x06fdde03' }, null, 'junk'] }],
+  }), ME, 7000);
+  check('S-01 a broken call is kept at its own index inside a request',
+    /3 calls, not one/.test(t) && /call 2 of 3/.test(t) && /call 3 of 3/.test(t), t.slice(0, 600));
+  check('S-01 and it says what each one was instead of a call',
+    /could not be read as a call/.test(t) && /Entry 2 is null, not a call/.test(t), t.slice(0, 1200));
+  check('S-01 so no verdict is offered for the sequence',
+    !/every call succeeds/.test(t) && /cannot be checked as a sequence/.test(t), t.slice(0, 900));
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

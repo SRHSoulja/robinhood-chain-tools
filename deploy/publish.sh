@@ -15,7 +15,10 @@
 #   URL_AIRDROP          the URL to verify after publishing, if the worker has a custom domain
 #   URL_CHECK            likewise for the check page
 #   ORIGIN_PUBLISH_CMD   optional. Run for an origin copy as: $ORIGIN_PUBLISH_CMD <built file> <target name>
+#   ORIGIN_PUBLISH_WC_CMD  optional. Same, for web/wc.js: $ORIGIN_PUBLISH_WC_CMD <web/wc.js> <target name>.
+#                        Without it the connector has to reach WC_BUNDLE_URL some other way before publishing.
 #   WC_BUNDLE_URL        optional. Where the worker fetches the WalletConnect bundle for /wc.js.
+#   ALLOW_CONNECTOR_GAP  set to 1 only for a first-ever deploy, where no origin copy can exist yet.
 #
 # Attaching a hostname to a worker is a one-off, separate from publishing:
 #   PUT https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/domains
@@ -77,8 +80,16 @@ assert m, "no CSP meta tag"
 policy = m.group(2)
 # This checks; it does not repair. A publisher that edits the file it is about to ship is a publisher that
 # ships bytes no commit contains, which is exactly what the dirty-tree guard above exists to prevent.
-if want not in policy:
-    raise SystemExit("the page's CSP does not name its script's hash (%s).\nRun web/sync.sh and commit the result." % want)
+# Presence is not the invariant. A policy naming this hash *and* an older one still authorizes the older
+# inline script, so what is required is that the hash set in script-src is exactly this one.
+src = re.search(r"script-src ([^;]*)", policy)
+if not src:
+    raise SystemExit("the page's CSP has no script-src")
+hashes = sorted(t for t in src.group(1).split() if t.startswith("'sha256-"))
+if hashes != ["'%s'" % want]:
+    raise SystemExit(
+        "the page's CSP must name exactly one script hash, its own.\n  script-src hashes: %s\n  this page's script: '%s'\nRun web/sync.sh and commit the result."
+        % (", ".join(hashes) or "(none)", want))
 # Only the hash is managed here. Rewriting the whole directive would silently drop any other source the
 # policy deliberately allows, which it did once.
 PY
@@ -92,9 +103,17 @@ WC_SHA256=""
 if [ "$TARGET" = "airdrop" ] && [ -n "${WC_BUNDLE_URL:-}" ]; then
   [ -f "$ROOT/web/wc.js" ] || { echo "WC_BUNDLE_URL is set but web/wc.js is missing: refusing to publish a connector nobody can check" >&2; exit 1; }
   WC_SHA256="$(sha256sum "$ROOT/web/wc.js" | cut -d' ' -f1)"
-  # The digest reviewers were given, not merely whatever file is sitting here at publish time.
+  # The digest reviewers were given, not merely whatever file is sitting here at publish time. A missing or
+  # empty expected digest used to skip the comparison, which pins whatever happens to be on disk: the check
+  # that exists to catch an unreviewed bundle would be silently absent exactly when it was needed.
   EXPECTED="$(cat "$ROOT/web/wc-build/EXPECTED-SHA256" 2>/dev/null | tr -d '[:space:]')"
-  if [ -n "$EXPECTED" ] && [ "$EXPECTED" != "$WC_SHA256" ]; then
+  if ! printf '%s' "$EXPECTED" | grep -Eq '^[0-9a-f]{64}$'; then
+    echo "web/wc-build/EXPECTED-SHA256 is missing, empty, or not a sha256 digest." >&2
+    echo "  read: '${EXPECTED}'" >&2
+    echo "Refusing to publish: there is nothing to check the connector against." >&2
+    exit 1
+  fi
+  if [ "$EXPECTED" != "$WC_SHA256" ]; then
     echo "web/wc.js does not match web/wc-build/EXPECTED-SHA256" >&2
     echo "  file     $WC_SHA256" >&2
     echo "  expected $EXPECTED" >&2
@@ -119,17 +138,17 @@ wc_route = """
   // The WalletConnect bundle is served from this same origin, so importing it needs no CORS and the page
   // never takes signing code from a third party.
   if (url.pathname === '/wc.js') {
-    if (!WC_BUNDLE) return new Response('connector not configured', { status: 404 });
+    if (!WC_BUNDLE) return new Response('connector not configured', { status: 404, headers: secure() });
     // The digest is in the URL, so the edge cache is keyed on the exact bundle. Without it a changed bundle
     // is fetched from a day-old cache, fails its own digest check, and the connector goes dark until the
     // cache expires: the check is right and the input to it is stale.
     const upstream = await fetch(WC_BUNDLE + (WC_BUNDLE.includes('?') ? '&' : '?') + 'v=' + (WC_SHA256 || ''), { cf: { cacheEverything: true, cacheTtl: 86400 } });
-    if (!upstream.ok) return new Response('connector unavailable', { status: 502 });
+    if (!upstream.ok) return new Response('connector unavailable', { status: 502, headers: secure() });
     // Read it, hash it, and serve it only if it is the file this deployment was built against. Without this
     // the page's own signing code could change after review without anything here changing.
     const bytes = await upstream.arrayBuffer();
     const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
-    if (WC_SHA256 && digest !== WC_SHA256) return new Response('connector digest mismatch', { status: 502 });
+    if (WC_SHA256 && digest !== WC_SHA256) return new Response('connector digest mismatch', { status: 502, headers: secure() });
     return new Response(bytes, { headers: Object.assign(secure(), { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'public, max-age=86400' }) });
   }
 """ if target == "airdrop" else ""
@@ -140,7 +159,7 @@ x_route = """
   const x = url.pathname.match(/^\\/x\\/(4663|46630)(\\/[A-Za-z0-9_\\-\\/.]{1,200})$/);
   if (x) {
     const base = EXPLORERS[x[1]];
-    if (!base || x[2].includes('..')) return new Response('bad path', { status: 400 });
+    if (!base || x[2].includes('..')) return new Response('bad path', { status: 400, headers: secure() });
     // The mainnet explorer answers browsers and challenges everything else, so ask the way a browser does.
     // One reader's lookup at a time, cached at the edge for a minute so it stays that way.
     const upstream = await fetch(base + '/api/v2' + x[2] + url.search, {
@@ -162,6 +181,9 @@ const EXPLORERS = { '4663': 'https://robinhoodchain.blockscout.com', '46630': 'h
 // before any of its own protections exist, so the first request is redirected and the browser is told never
 // to try HTTP again. No preload: that is a decision about every subdomain, not just this one.
 const HSTS = 'max-age=31536000; includeSubDomains';
+// Every response this worker constructs goes through here, the failures included. A visitor whose first
+// contact with the host is a 400 or a 502 is exactly the visitor who has not been pinned to HTTPS yet, and
+// leaving those bare made "on every response" untrue in the one case where it mattered most.
 const secure = () => ({
   'strict-transport-security': HSTS,
   'x-content-type-options': 'nosniff',
@@ -188,10 +210,37 @@ PY
 
 node --check "$WORK/worker.js" 2>/dev/null || { echo "the generated worker does not parse" >&2; exit 1; }
 
-# The origin copy goes first. The worker refuses a connector whose digest does not match, so activating a new
-# worker before its bundle is published takes the connector offline for as long as that gap lasts.
+# The origin copies go first, connector included, and the connector is then checked at the exact URL the
+# worker will ask for. The worker refuses any bundle whose digest is not the one it was built against, so
+# activating it while the origin still serves the previous bundle turns /wc.js into a 502 and takes phone
+# wallets offline for as long as the gap lasts. Ordering the steps was not enough on its own: nothing was
+# passing the connector to the hook, and nothing was confirming it had arrived.
 if [ -n "${ORIGIN_PUBLISH_CMD:-}" ]; then
   $ORIGIN_PUBLISH_CMD "$SRC" "$ORIGIN_NAME"
+fi
+if [ "$TARGET" = "airdrop" ] && [ -n "${WC_BUNDLE_URL:-}" ]; then
+  if [ -n "${ORIGIN_PUBLISH_WC_CMD:-}" ]; then
+    $ORIGIN_PUBLISH_WC_CMD "$ROOT/web/wc.js" "$ORIGIN_NAME"
+  fi
+  case "$WC_BUNDLE_URL" in *\?*) WC_PROBE="$WC_BUNDLE_URL&v=$WC_SHA256" ;; *) WC_PROBE="$WC_BUNDLE_URL?v=$WC_SHA256" ;; esac
+  WC_LIVE=""
+  for _ in 1 2 3 4 5 6; do
+    WC_LIVE="$(curl -s -m 60 "$WC_PROBE" | sha256sum | cut -d' ' -f1 || true)"
+    [ "$WC_LIVE" = "$WC_SHA256" ] && break
+    sleep 5
+  done
+  if [ "$WC_LIVE" = "$WC_SHA256" ]; then
+    echo "connector reachable at $WC_PROBE  ($WC_SHA256)"
+  elif [ "${ALLOW_CONNECTOR_GAP:-}" = "1" ]; then
+    echo "connector NOT yet reachable at $WC_PROBE; publishing anyway by request." >&2
+    echo "  /wc.js will 502 until the origin serves $WC_SHA256." >&2
+  else
+    echo "Refusing to publish: the worker would be built against a connector the origin does not serve." >&2
+    echo "  wanted $WC_SHA256" >&2
+    echo "  served ${WC_LIVE:-(nothing)}  from $WC_PROBE" >&2
+    echo "Publish web/wc.js to the origin first (see ORIGIN_PUBLISH_WC_CMD), or set ALLOW_CONNECTOR_GAP=1 for a first deploy." >&2
+    exit 1
+  fi
 fi
 
 curl -s -m 90 -X PUT -H "Authorization: Bearer $CF_API_TOKEN" \

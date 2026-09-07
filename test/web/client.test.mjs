@@ -5,6 +5,9 @@
 //
 import { chromium } from 'playwright';
 import { pathToFileURL } from 'node:url';
+import { mkdtempSync, copyFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const PAGE = pathToFileURL(new URL('../../web/index.html', import.meta.url).pathname).href;
 const NFT = '0x1111111111111111111111111111111111111111';
@@ -166,6 +169,31 @@ function chainAnswer(O) {
   };
 }
 
+// The phone-wallet connector is imported from the page's own directory. A copy of the page next to a
+// stand-in module is the only way to reach that code path without a WalletConnect relay, and the disconnect
+// handler behind it is where a delivery once went missing.
+const WC_DIR = (() => {
+  const d = mkdtempSync(join(tmpdir(), 'bulksend-wc-'));
+  copyFileSync(new URL('../../web/index.html', import.meta.url).pathname, join(d, 'index.html'));
+  writeFileSync(join(d, 'wc.js'), `
+    export const EthereumProvider = {
+      async init() {
+        const handlers = {};
+        const p = {
+          on(ev, fn) { (handlers[ev] = handlers[ev] || []).push(fn); },
+          removeListener(ev, fn) { handlers[ev] = (handlers[ev] || []).filter((f) => f !== fn); },
+          async connect() {},
+          async disconnect() {},
+          request(a) { return window.ethereum.request(a); },
+        };
+        window.__wcDisconnect = () => (handlers.disconnect || []).slice().forEach((f) => f());
+        return p;
+      },
+    };
+  `);
+  return pathToFileURL(join(d, 'index.html')).href;
+})();
+
 async function open(browser, opts = {}) {
   const answer = chainAnswer(opts);
   // Web Locks are shared between the tabs of one browser profile, not between browser contexts. A test that
@@ -194,7 +222,10 @@ async function open(browser, opts = {}) {
   });
 
   // the wallet object, answered by the same function
-  await page.exposeFunction('__chain', (method, params) => {
+  await page.exposeFunction('__chain', async (method, params) => {
+    // Holds one method open, so a test can act while a send is genuinely mid-flight rather than before or
+    // after it. Nothing else about the answer changes.
+    if (opts.slowMethod && method === opts.slowMethod.method) await new Promise((r) => setTimeout(r, opts.slowMethod.ms));
     try { return { ok: true, result: answer(method, params) }; }
     catch (e) { return { ok: false, code: e.code || 3, message: String(e.message || e), data: e.revertData }; }
   });
@@ -205,8 +236,12 @@ async function open(browser, opts = {}) {
   });
   await page.addInitScript(() => {
     window.__sent = [];
+    const __listeners = {};
+    window.__emit = (ev, arg) => (__listeners[ev] || []).slice().forEach((f) => { try { f(arg); } catch (e) {} });
     window.ethereum = {
-      isMetaMask: true, on() {}, removeListener() {},
+      isMetaMask: true,
+      on(ev, fn) { (__listeners[ev] = __listeners[ev] || []).push(fn); },
+      removeListener(ev, fn) { __listeners[ev] = (__listeners[ev] || []).filter((f) => f !== fn); },
       async request({ method, params }) {
         if (method === 'wallet_sendCalls' || method === 'eth_sendTransaction') window.__sent.push((params || [])[0]);
         const r = await window.__chain(method, params || []);
@@ -216,7 +251,7 @@ async function open(browser, opts = {}) {
     };
   });
 
-  await page.goto(PAGE, { waitUntil: 'load' });
+  await page.goto(opts.url || PAGE, { waitUntil: 'load' });
   await page.waitForTimeout(500);
   page.__errs = errs;
   return page;
@@ -240,7 +275,9 @@ const useToken = async (page, addr, std) => {
 const text = (page, sel) => page.evaluate((s) => (document.querySelector(s) || {}).textContent || '', sel);
 const val = (page, sel) => page.evaluate((s) => (document.querySelector(s) || {}).value || '', sel);
 
-const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+// --allow-file-access-from-files: the page imports its phone-wallet connector as a module from its own
+// directory, which a file:// origin otherwise refuses. Nothing here is ever served over the network.
+const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--allow-file-access-from-files'] });
 
 // ---- H-04: a real CSV reader ------------------------------------------------
 {
@@ -921,6 +958,38 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   check('B-05 changing the collection drops the holdings rather than reusing them',
     await page.evaluate(() => document.querySelector('#weightRow').style.display === 'none'));
   check('B-05 and says so', /holdings reading has been dropped/.test(await text(page, '#log')), (await text(page, '#log')).slice(-200));
+  await page.close();
+}
+
+// ---- B-04: a phone wallet that drops mid-send cannot move the key the ledger is written under ----
+// The disconnect handler used to clear the sender while a batch was still being watched for arrival. The key
+// is built from the sender, so the delivery was written under `anon`: a ledger the next run never reads, and
+// every wallet in that batch payable a second time on the next connect. Two things stop it now, and both are
+// checked here: no handler blanks the sender mid-send, and the key is frozen to the one the run lock was
+// taken for regardless.
+{
+  const paid = A(0xb04);
+  const page = await open(browser, {
+    url: WC_DIR, approved: true, ownerOf: paid,
+    summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 },
+    slowMethod: { method: 'eth_getTransactionReceipt', ms: 2500 },
+  });
+  await page.click('#connectWc'); await page.waitForTimeout(900);
+  const viaPhone = await page.evaluate(() => (document.querySelector('#walletBox') || {}).textContent || '');
+  check('B-04 the phone-wallet path connects in the test', /phone wallet/i.test(viaPhone) && /dEaD/.test(viaPhone), viaPhone.slice(0, 120));
+  await useToken(page, NFT, '721');
+  await setList(page, paid + ',4\n');
+  await page.click('#send');
+  await page.waitForTimeout(2200);                       // signed, waiting on the receipt
+  await page.evaluate(() => window.__wcDisconnect());     // the phone drops here
+  await page.waitForTimeout(11000);
+  const keys = await page.evaluate(() => Object.keys(localStorage).filter((k) => /^bulksend:46630:/.test(k) && JSON.parse(localStorage.getItem(k) || '[]').length));
+  const expected = 'bulksend:46630:' + RUN_ME.toLowerCase() + ':' + NFT.toLowerCase() + ':721';
+  check('B-04 the delivery is recorded under the run the lock was taken for',
+    keys.length === 1 && keys[0] === expected, JSON.stringify(keys) + ' want ' + expected);
+  check('B-04 and never under anon', keys.length > 0 && !keys.some((k) => k.includes(':anon:')), JSON.stringify(keys));
+  check('B-04 the sender is not blanked while a send is in flight',
+    /disconnected mid-airdrop/.test(await text(page, '#log')), (await text(page, '#log')).slice(-300));
   await page.close();
 }
 

@@ -62,6 +62,29 @@ jobs:
             echo "  ok    $host redirects and sends HSTS"
           done
 
+      - name: the error paths are hardened too, not just the healthy ones
+        run: |
+          set -euo pipefail
+          # A visitor whose first contact with the host is a mistyped path or a bad request is exactly the
+          # visitor who has not been pinned to HTTPS yet. "Every response" has to include the ones that
+          # went wrong, so each of these is checked rather than assumed.
+          hardened () {
+            local url="$1" want_code="$2" h
+            h="$(curl -s -o /dev/null -D - --max-time 25 "$url")"
+            local code; code="$(printf '%s' "$h" | head -1 | awk '{print $2}')"
+            [ "$code" = "$want_code" ] || { echo "  $url answered $code, expected $want_code"; return 1; }
+            for header in strict-transport-security x-content-type-options referrer-policy cross-origin-opener-policy; do
+              printf '%s' "$h" | grep -qi "^$header:" || { echo "  $url ($code) sent no $header"; return 1; }
+            done
+            echo "  ok    $url -> $code, hardened"
+          }
+          fail=0
+          hardened https://rhcheck.gmgnrepeat.com/x/46630/a..b 400 || fail=1
+          hardened https://rhcheck.gmgnrepeat.com/nothing-here 302 || fail=1
+          hardened https://rhairdrop.gmgnrepeat.com/nothing-here 302 || fail=1
+          hardened https://rhairdrop.gmgnrepeat.com/wc.js 200 || fail=1
+          exit $fail
+
       - name: the page still points at the reviewed contract, and mainnet is still off
         run: |
           set -euo pipefail
@@ -74,6 +97,11 @@ jobs:
           echo "  ok    contract $want, mainnet disabled"
 
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09   # v1
+        # Pinned to the same toolchain the test workflow uses. Left to its default this action installs
+        # whatever `stable` is on the day it runs, so a monitor that is supposed to prove the deployed
+        # runtime still matches this source would be comparing against a compiler nobody reviewed.
+        with:
+          version: v1.4.1
       - name: the deployed contract is byte-for-byte what this source builds
         run: |
           set -euo pipefail

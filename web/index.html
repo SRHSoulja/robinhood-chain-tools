@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-0mgO49Pmlkb1nufbhJi2upQYFNv76HAXpKUEve5WhMI='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-g84GqPJV3pHxdB51kuWSaTqvEARl2F+izyIBX3x0G4w='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -181,6 +181,7 @@
 
   let eth = null;   // the wallet the user chose, discovered through EIP-6963 rather than assumed
   let provider, signer, me, rows = [], stopFlag = false, decimals = null, tokenLoadedFor = null, skippedRows = [], sending = false;
+  let sendRunKey = null;   // set only while a send holds its run lock; see runKey() and ledgerKey()
   let badLines = 0, badLinesOk = false;
   let walletBatch = null;   // does the wallet run several calls as itself, in one transaction (EIP-5792)
   let walletBatchReady = false;   // 'ready' means it will prompt to upgrade the account before the first batch
@@ -340,6 +341,14 @@
       say('msgTop', 'Scan the code with your wallet app, or pick your wallet from the list.');
       await wcProvider.connect();
       wcProvider.on('disconnect', () => {
+        // Mid-send this must not clear `me`. A batch already signed is still being watched for arrival, and
+        // that record has to be written under the wallet that paid for it, not under nobody.
+        if (sending) {
+          stopFlag = true;
+          log('Your phone wallet disconnected mid-airdrop. Stopping after this batch; what has already gone out is still being recorded.', 'bad');
+          say('msgTop', 'Your phone wallet disconnected. Finishing the batch already sent, then stopping.', 'warn');
+          return;
+        }
         me = null; provider = null; signer = null; wcProvider = null; connectedVia = null;
         renderWalletChoice();
         say('msgTop', 'Your phone wallet disconnected.', 'warn'); plan();
@@ -714,7 +723,12 @@
   // ---- a record of what already went out, so closing the tab mid-airdrop cannot pay anyone twice ----
   // Scoped to the sending account as well as the chain, token and standard: two accounts airdropping the same
   // collection from one browser are separate runs, and must not filter each other.
-  const runKey = () => 'bulksend:' + chainId() + ':' + (me || 'anon').toLowerCase() + ':' + ($('token').value.trim().toLowerCase()) + ':' + std();
+  const computeRunKey = () => 'bulksend:' + chainId() + ':' + (me || 'anon').toLowerCase() + ':' + ($('token').value.trim().toLowerCase()) + ':' + std();
+  // While a send holds its lock the key is frozen to the one that lock was taken for, so every read and
+  // write during that send is about the same list. Without this a wallet that drops between signing and
+  // arrival moves the key to `anon` underneath the send: the ledger it reads is empty and the ledger it
+  // writes is one nothing will ever read again.
+  const runKey = () => sendRunKey || computeRunKey();
   // Keyed on the parsed id and amount, not the typed text, so "100" and "100.0" are the same payment and a
   // second, different-sized drop to the same wallet is not mistaken for a repeat of the first.
   const rowKey = (r) => r.to.toLowerCase() + ':' + (r.id !== undefined ? r.id.toString() : '') + ':' + (r.amount !== undefined ? r.amount.toString() : '');
@@ -1527,6 +1541,14 @@
   // it legitimately. Two writers, one of them invisible to the other, and a paid row can end up recorded by
   // neither.
   let heldRunKey = null;
+  // The key a send writes under is the key its lock was taken for, captured once when the lock was granted.
+  // Recomputing it mid-send reads `me` again, so a wallet that disconnects between signing and arrival turns
+  // it into `anon`: the delivery is then recorded under a key nothing reads, and every wallet in that batch
+  // becomes eligible to be paid a second time the moment the wallet reconnects.
+  function ledgerKey() {
+    if (!sendRunKey) throw new Error('nothing may be recorded as delivered outside a locked send');
+    return sendRunKey;
+  }
   async function withRunLock(key, fn) {
     if (heldRunKey === key) return fn();             // this exact lock is already ours; re-requesting deadlocks
     if (!navigator.locks || !navigator.locks.request) return null;   // no lock, no ledger change
@@ -1807,13 +1829,13 @@
         }).catch(() => resolve(false));   // a lock that errors is a lock we do not hold
       });
       if (!got) { log('Another tab of this page is already sending this list, or this browser would not grant the lock. Finish there, or close it, before sending here.', 'bad'); return; }
-      heldRunKey = lockedRun;
+      heldRunKey = lockedRun; sendRunKey = lockedRun;
     }
     // The ledger has to be writable before anything is signed, not discovered to be unwritable afterwards.
     // Returning here without releasing would leave this tab holding the lock until it is closed.
     if (!storageWorks()) {
       log('This browser will not let this page store anything, so it cannot remember what it has delivered and cannot protect you from sending twice. Nothing was sent. Leave private browsing, or allow site data for this page.', 'bad');
-      heldRunKey = null; if (releaseLock) releaseLock();
+      heldRunKey = null; sendRunKey = null; if (releaseLock) releaseLock();
       return;
     }
     try {
@@ -1910,7 +1932,7 @@
         // Written down before the wait: if this tab closes now, the next visit reads the receipt instead of
         // assuming none of these were paid.
         const pid = newPid();
-        if (!addPending({ pid, run: runKey(), chain: chainId(), bulk: bulkAddr, hash: tx.hash, at: Date.now(),
+        if (!addPending({ pid, run: ledgerKey(), chain: chainId(), bulk: bulkAddr, hash: tx.hash, at: Date.now(),
                           rows: rowsToJson(chunk), via: 'bulk',
                           call: { to: String(tx.to || '').toLowerCase(), data: String(tx.data || ''), value: String(tx.value || 0n), from: String(me || '').toLowerCase() } })) {
           log('  this browser stopped saving. That batch is on its way and this page can no longer keep track of it, so nothing more will be sent. Check ' + tx.hash.slice(0, 12) + '… on the explorer before sending to these wallets again.', 'bad', tx.hash);
@@ -1955,7 +1977,7 @@
         const { deliver, unsettled } = reportArrival(check, rc.hash);
         // Recorded and released together, or neither. Anything unsettled keeps this batch on the pending
         // list, so those rows are held rather than released: a stale read must never become a second payment.
-        if (!(await commitDelivered(runKey(), pid, deliver, unsettled))) break;
+        if (!(await commitDelivered(ledgerKey(), pid, deliver, unsettled))) break;
         sent += deliver.length; skipped += r.skipped;           // counted from the chain, not from the token's answer
         log('  done: ' + deliver.length + ' arrived' + (unsettled.length ? ', ' + unsettled.length + ' unsettled and held' : '') + (r.skipped ? ', ' + r.skipped + ' skipped' : '') + ' · gas ' + rc.gasUsed, unsettled.length ? 'warn' : 'ok');
         if (stopFlag) { log('Stopped.', 'warn'); break; }
@@ -1963,7 +1985,7 @@
       log('Finished. ' + sent + ' delivered' + (skipped ? ', ' + skipped + ' skipped' : '') + '.', 'ok');
       if (skipped) log('Download the skipped list to retry those wallets.', 'warn');
     } catch (e) { log('Stopped on error: ' + explainCallError(e), 'bad'); }
-    } finally { heldRunKey = null; if (releaseLock) releaseLock(); }
+    } finally { heldRunKey = null; sendRunKey = null; if (releaseLock) releaseLock(); }
   }
 
   // ---- the wallet-batch path: the wallet runs the transfers as itself, in one transaction per batch ----
@@ -2004,7 +2026,7 @@
         const id = typeof res === 'string' ? res : (res && res.id);
         if (!id) { log('  the wallet did not return a batch id, so this cannot be tracked. Check your wallet and the explorer before sending again.', 'bad'); break; }
         const pid = newPid();
-        if (!addPending({ pid, run: runKey(), chain: chainId(), bulk: null, hash: null, callsId: String(id), at: Date.now(), rows: rowsToJson(chunk), via: 'wallet' })) {
+        if (!addPending({ pid, run: ledgerKey(), chain: chainId(), bulk: null, hash: null, callsId: String(id), at: Date.now(), rows: rowsToJson(chunk), via: 'wallet' })) {
           log('  this browser stopped saving, and that batch has already gone to your wallet. Nothing more will be sent. Check your wallet before sending to these wallets again.', 'bad');
           break;
         }
@@ -2027,7 +2049,7 @@
         }
         const check = await confirmArrival(chunk, before);
         const { deliver, unsettled } = reportArrival(check, rcpt.hash);
-        if (!(await commitDelivered(runKey(), pid, deliver, unsettled))) break;
+        if (!(await commitDelivered(ledgerKey(), pid, deliver, unsettled))) break;
         sent += deliver.length;
         log('  done: ' + deliver.length + ' arrived' + (unsettled.length ? ', ' + unsettled.length + ' unsettled and held' : ''), unsettled.length ? 'warn' : 'ok', rcpt.hash);
       } catch (e) {

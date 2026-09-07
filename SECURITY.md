@@ -41,6 +41,9 @@ check this from the inside. Treat the count as what was attempted and the chain 
 
 ## Status
 
-Deployed on testnet only. Nothing here has been reviewed by a human audit firm. See
-[docs/for-reviewers.md](docs/for-reviewers.md) for the review history and
-[docs/audit-2026-09-06-external.md](docs/audit-2026-09-06-external.md) for the last audit in full.
+Deployed on testnet only. Nothing here has been reviewed by a human audit firm.
+[docs/for-reviewers.md](docs/for-reviewers.md) is the current threat model and the full review history;
+[docs/audit-2026-09-07-ninth-external.md](docs/audit-2026-09-07-ninth-external.md) is the most recent audit in
+full. Every audit is in [docs/](docs/), unedited and in order. Read the newest one: the older reports describe
+code that has since been rewritten, and several of their findings were themselves introduced by the fix for an
+earlier one.

@@ -5,7 +5,31 @@ explorer. Nothing has been deployed to mainnet. Superseded addresses are left in
 [`deployments.testnet.json`](../deployments.testnet.json) as tombstones so any transaction referring to one
 can still be traced.
 
-## v7 — `0x3159F3AbF0235eaCedfF866312Cb1BB335D6f80E` (current)
+## v9 — `0x91949D7328387A3613b29E56f6979Ae893ccd23C` (current)
+
+The third external audit's contract finding, and the one that mattered most in the whole series.
+
+- **A recipient's receive hook could write into the receipt the client reads.** The hook runs in the middle of
+  a batch, and a hostile one could call `BulkSend` again and emit real `Skipped` and `Airdrop*` events from the
+  real address, naming whatever row it liked. The client reads that receipt to decide who was paid, so a
+  recipient could have itself recorded as skipped *after* being paid, and collect again on the retry.
+  Reproduced before it was fixed: one row in, one injected `Skipped` event and two summaries out.
+- **The fix is a transient lock** (EIP-1153 `TSTORE`/`TLOAD`, `Reentered()`), about 100 gas, storing nothing
+  between transactions. A recipient whose hook legitimately calls back in is skipped in lenient mode rather
+  than trusted.
+- The client now reads a receipt as though the contract had not: every event must be about this token and this
+  sender, there must be exactly one summary, and sent plus skipped must equal the batch that was sent.
+
+The contract has not changed since. Rounds four through nine of the external review found nothing in it.
+
+## v8 — `0x3159F3AbF0235eaCedfF866312Cb1BB335D6f80E`
+
+The second external audit's contract finding.
+
+- **An ERC-20 answer must be exactly nothing or exactly one word holding one.** It used to accept
+  `ret.length >= 32`, and 64 bytes beginning with a one is not a `bool`. Proved on chain.
+
+## v7 — `0xC6AE3189eDAE544Ed60ADf5Ec057E338ce224F74`
 
 Closes the last open finding from the external audit, plus the client work the auditor asked for.
 
