@@ -175,7 +175,12 @@ export default { async fetch(request) {
     url.protocol = 'https:';
     return Response.redirect(url.toString(), 301);
   }
-%s%s  if (url.pathname !== '/' && url.pathname !== '/index.html') return new Response('Not found', { status: 404, headers: Object.assign(secure(), { 'content-type': 'text/plain; charset=utf-8' }) });
+%s%s  // Anything else goes to the page rather than to a 404. Cloudflare replaces the headers on an error
+  // response from a worker, so a 404 here arrives without HSTS or the rest of the hardening: a visitor whose
+  // first ever contact with this host is a mistyped path would not be pinned to HTTPS. A redirect keeps them.
+  if (url.pathname !== '/' && url.pathname !== '/index.html') {
+    return new Response(null, { status: 302, headers: Object.assign(secure(), { location: '/' }) });
+  }
   return new Response(HTML, { headers: Object.assign(secure(), { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300', 'content-security-policy': CSP }) });
 } };
 """ % (target, json.dumps(html), json.dumps(wc_bundle or None), json.dumps(wc_sha or None), json.dumps(csp_header), wc_route, x_route))
