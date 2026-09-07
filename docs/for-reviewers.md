@@ -64,6 +64,31 @@ These are choices, not accidents, and a reviewer disagreeing with one is useful.
 6. **Delivery is in ascending token id order.** It is much cheaper on lazily-minted collections, and it means a
    partial run favours the wallets holding lower ids. The confirmation says that in those words.
 
+## Hosting and delivery
+
+Worth checking rather than taking on trust, and all of it is observable from outside:
+
+    curl -sI http://rhairdrop.gmgnrepeat.com/     # 301 to https
+    curl -sI https://rhairdrop.gmgnrepeat.com/    # HSTS, and the full CSP as a header
+    curl -s  https://rhairdrop.gmgnrepeat.com/ | cmp - web/index.html
+    curl -s  https://rhairdrop.gmgnrepeat.com/wc.js | sha256sum   # matches web/wc-build/EXPECTED-SHA256
+
+The page's own inline script is named in the policy by SHA-256 hash, so `unsafe-inline` is not granted and a
+script injected into the response cannot run even if it reaches the browser. `deploy/publish.sh` recomputes
+that hash on every publish and corrects the file if it has drifted, because a stale hash would break the page
+rather than fail safe.
+
+The WalletConnect bundle is fetched by the Worker rather than embedded (it is 2 MB), and the Worker refuses to
+serve it unless its SHA-256 matches the digest baked in at publish time, which in turn must match
+`web/wc-build/EXPECTED-SHA256`. So the signing-page code cannot drift after review without the deployment
+failing.
+
+**What this repository cannot prove**, and what a reviewer should ask the operator about rather than infer:
+how the Cloudflare, registrar, GitHub and Reown accounts are secured; whether the deployment token is scoped
+to Worker scripts alone; whether the registrar has a transfer lock; and whether DNSSEC and CAA are set. Those
+are control-plane facts, and client-side hashes cannot protect anyone if the domain or the deploy credential
+is taken.
+
 ## Previous review
 
 - Six internal review passes.

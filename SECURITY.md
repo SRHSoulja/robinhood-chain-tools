@@ -2,7 +2,23 @@
 
 ## Reporting
 
-Open an issue, or reach the maintainer through [gmgnrepeat.com](https://gmgnrepeat.com). There is no bounty.
+**Privately, please, if it is exploitable.** Use GitHub's private vulnerability reporting on this repository
+(Security tab → Report a vulnerability). That opens a channel only the maintainer can see, so a live issue is
+not published to everyone while it is still live. For anything that is not exploitable, a normal issue is
+fine. There is no bounty.
+
+## Transport
+
+Both pages are served over HTTPS only. Plain HTTP is redirected permanently, and every response carries
+`Strict-Transport-Security`, so a browser that has seen the site once will not try HTTP again. This matters
+more here than on an ordinary site: the page builds transactions, and a page delivered once over HTTP could be
+replaced in transit before any of its own protections exist. HSTS preload is deliberately not set, because
+that is a commitment on behalf of every subdomain of the domain rather than just these two.
+
+The content security policy allows scripts only from this origin, names the page's own inline script by
+SHA-256 hash rather than allowing inline scripts generally, and permits `cdnjs.cloudflare.com` for the pinned
+ethers build (which also carries Subresource Integrity) and `static.cloudflareinsights.com` for the analytics
+beacon Cloudflare injects at the edge. It is sent as a response header as well as a meta tag.
 
 ## What this software can and cannot do to you
 

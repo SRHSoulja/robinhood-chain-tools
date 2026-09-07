@@ -1,0 +1,35 @@
+# Runs the whole suite on every push and pull request, so a green tick on a commit means the tests that
+# guard each audit finding actually passed on exactly those bytes.
+name: tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read          # nothing else: this workflow only needs to read the code it tests
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: contract tests
+        run: forge test
+      - name: the deployed bytecode is what this source builds
+        run: |
+          forge build
+          python3 - <<'PY'
+          import json
+          art = json.load(open('out/BulkSend.sol/BulkSend.json'))['deployedBytecode']['object']
+          print('built runtime:', len(art) // 2 - 1, 'bytes')
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: browser tests
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          npm test

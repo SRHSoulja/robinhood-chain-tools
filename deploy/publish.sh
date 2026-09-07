@@ -41,6 +41,38 @@ fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# The page carries one inline script. Naming it by hash is what lets the policy drop 'unsafe-inline', so a
+# script injected into the response cannot run even if it reaches the browser. The hash is recomputed here and
+# the file is corrected if it has drifted, because a stale hash would silently break the page.
+CSP_HASH="$(python3 - "$SRC" <<'PY'
+import base64, hashlib, re, sys
+html = open(sys.argv[1], encoding="utf-8").read()
+# The hash covers everything between the tags, the leading newline included. Dropping it produces a
+# hash that looks right and blocks the page.
+blocks = re.findall(r"<script>(.*?)</script>", html, re.S)
+blocks = [b for b in blocks if b.strip()]
+assert len(blocks) == 1, "expected exactly one inline script, found %d" % len(blocks)
+print("sha256-" + base64.b64encode(hashlib.sha256(blocks[0].encode()).digest()).decode())
+PY
+)"
+python3 - "$SRC" "$CSP_HASH" <<'PY'
+import re, sys
+path, want = sys.argv[1], sys.argv[2]
+html = open(path, encoding="utf-8").read()
+m = re.search(r'(<meta http-equiv="Content-Security-Policy" content=")([^"]*)(">)', html)
+assert m, "no CSP meta tag"
+policy = m.group(2)
+# Only the hash is managed here. Rewriting the whole directive would silently drop any other source the
+# policy deliberately allows, which it did once.
+cur = re.search(r"script-src ([^;]*)", policy)
+assert cur, "no script-src to put the hash in"
+sources = [t for t in cur.group(1).split() if not t.startswith("'sha256-")]
+new = policy.replace(cur.group(0), "script-src " + " ".join(sources + ["'%s'" % want]), 1)
+if new != policy:
+    open(path, "w", encoding="utf-8").write(html[:m.start(2)] + new + html[m.end(2):])
+    print("  the page's own CSP was out of step with its script and has been corrected; commit that change")
+PY
+
 # The page is inlined into the worker as a string constant, so the worker serves it from the edge with no
 # origin request at all. Everything the page needs beyond that is fetched by the browser.
 # The connector is signing-page code. It is fetched from a URL at request time rather than embedded, because
@@ -62,9 +94,15 @@ if [ "$TARGET" = "airdrop" ] && [ -n "${WC_BUNDLE_URL:-}" ]; then
   echo "connector pinned to sha256 $WC_SHA256"
 fi
 
-python3 - "$SRC" "$WORK/worker.js" "$TARGET" "${WC_BUNDLE_URL:-}" "$WC_SHA256" <<'PY'
+python3 - "$SRC" "$WORK/worker.js" "$TARGET" "${WC_BUNDLE_URL:-}" "$WC_SHA256" "$CSP_HASH" <<'PY'
 import json, sys
-src, out, target, wc_bundle, wc_sha = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+src, out, target, wc_bundle, wc_sha, csp_hash = sys.argv[1:7]
+import re as _re
+_m = _re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]*)">', open(src, encoding="utf-8").read())
+assert _m, "no CSP meta tag to derive the header from"
+# The same policy the page carries, sent as a header as well, where a browser cannot be tricked out of it by
+# anything that arrives before the meta tag is parsed. Plus the framing and form rules.
+csp_header = _m.group(1) + "; frame-ancestors 'none'"
 html = open(src, encoding="utf-8").read()
 
 wc_route = """
@@ -79,7 +117,7 @@ wc_route = """
     const bytes = await upstream.arrayBuffer();
     const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
     if (WC_SHA256 && digest !== WC_SHA256) return new Response('connector digest mismatch', { status: 502 });
-    return new Response(bytes, { headers: { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'public, max-age=86400', 'x-content-type-options': 'nosniff' } });
+    return new Response(bytes, { headers: Object.assign(secure(), { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'public, max-age=86400' }) });
   }
 """ if target == "airdrop" else ""
 
@@ -96,7 +134,7 @@ x_route = """
       headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' },
       cf: { cacheEverything: true, cacheTtl: 60 },
     });
-    return new Response(upstream.body, { status: upstream.status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=60', 'x-content-type-options': 'nosniff' } });
+    return new Response(upstream.body, { status: upstream.status, headers: Object.assign(secure(), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=60' }) });
   }
 """ if target == "check" else ""
 
@@ -105,13 +143,29 @@ open(out, "w", encoding="utf-8").write(
 const HTML = %s;
 const WC_BUNDLE = %s;
 const WC_SHA256 = %s;
+const CSP = %s;
 const EXPLORERS = { '4663': 'https://robinhoodchain.blockscout.com', '46630': 'https://explorer.testnet.chain.robinhood.com' };
+// Sent on every response. A wallet-connected page delivered once over plain HTTP can be replaced in transit
+// before any of its own protections exist, so the first request is redirected and the browser is told never
+// to try HTTP again. No preload: that is a decision about every subdomain, not just this one.
+const HSTS = 'max-age=31536000; includeSubDomains';
+const secure = () => ({
+  'strict-transport-security': HSTS,
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'strict-origin-when-cross-origin',
+  'cross-origin-opener-policy': 'same-origin',
+});
 export default { async fetch(request) {
   const url = new URL(request.url);
-%s%s  if (url.pathname !== '/' && url.pathname !== '/index.html') return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
-  return new Response(HTML, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300', 'x-content-type-options': 'nosniff', 'referrer-policy': 'strict-origin-when-cross-origin', 'content-security-policy': "frame-ancestors 'none'" } });
+  const visitor = request.headers.get('cf-visitor') || '';
+  if (url.protocol === 'http:' || visitor.includes('"scheme":"http"')) {
+    url.protocol = 'https:';
+    return Response.redirect(url.toString(), 301);
+  }
+%s%s  if (url.pathname !== '/' && url.pathname !== '/index.html') return new Response('Not found', { status: 404, headers: Object.assign(secure(), { 'content-type': 'text/plain; charset=utf-8' }) });
+  return new Response(HTML, { headers: Object.assign(secure(), { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300', 'content-security-policy': CSP }) });
 } };
-""" % (target, json.dumps(html), json.dumps(wc_bundle or None), json.dumps(wc_sha or None), wc_route, x_route))
+""" % (target, json.dumps(html), json.dumps(wc_bundle or None), json.dumps(wc_sha or None), json.dumps(csp_header), wc_route, x_route))
 PY
 
 node --check "$WORK/worker.js" 2>/dev/null || { echo "the generated worker does not parse" >&2; exit 1; }
