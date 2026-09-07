@@ -1,0 +1,81 @@
+# Watches the live sites from somewhere that is not the thing being watched.
+#
+# The publish script already compares bytes, but only while publishing, which is exactly when nothing is
+# wrong. This runs on GitHub's infrastructure, on GitHub's credentials, against the files in this repository,
+# and needs no secrets at all: if the live pages stop matching what is committed here, the job fails and
+# GitHub tells the maintainer. Someone who takes the Cloudflare account cannot quietly switch it off, and
+# someone who takes this repository cannot change the pages.
+name: integrity
+on:
+  schedule:
+    - cron: '17 */6 * * *'     # four times a day, offset so it is not competing with everyone else's hour
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  live-matches-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: the served pages are the files in this repository
+        run: |
+          set -euo pipefail
+          fail=0
+          check () {
+            local url="$1" file="$2"
+            local live want
+            live="$(curl -sSL --max-time 30 "$url" | sha256sum | cut -d' ' -f1)"
+            want="$(sha256sum "$file" | cut -d' ' -f1)"
+            if [ "$live" = "$want" ]; then
+              echo "  ok    $url"
+            else
+              echo "  DIFFERS $url"
+              echo "          served $live"
+              echo "          source $want"
+              fail=1
+            fi
+          }
+          check https://rhairdrop.gmgnrepeat.com/ web/index.html
+          check https://rhcheck.gmgnrepeat.com/ web/check.html
+          check https://rhairdrop.gmgnrepeat.com/wc.js web/wc.js
+          exit $fail
+
+      - name: the connector is the reviewed one
+        run: |
+          set -euo pipefail
+          want="$(tr -d '[:space:]' < web/wc-build/EXPECTED-SHA256)"
+          got="$(sha256sum web/wc.js | cut -d' ' -f1)"
+          [ "$want" = "$got" ] || { echo "web/wc.js does not match its reviewed digest"; exit 1; }
+          echo "  ok    connector matches web/wc-build/EXPECTED-SHA256"
+
+      - name: plain HTTP is still refused, and HSTS is still sent
+        run: |
+          set -euo pipefail
+          for host in rhairdrop.gmgnrepeat.com rhcheck.gmgnrepeat.com; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 25 "http://$host/")"
+            [ "$code" = "301" ] || { echo "http://$host/ answered $code, expected 301"; exit 1; }
+            curl -sI --max-time 25 "https://$host/" | grep -qi '^strict-transport-security:' \
+              || { echo "https://$host/ sent no HSTS header"; exit 1; }
+            echo "  ok    $host redirects and sends HSTS"
+          done
+
+      - name: the page still points at the reviewed contract, and mainnet is still off
+        run: |
+          set -euo pipefail
+          page="$(curl -sSL --max-time 30 https://rhairdrop.gmgnrepeat.com/)"
+          want="$(python3 -c "import json;print(json.load(open('deployments.testnet.json'))['BulkSend'])")"
+          echo "$page" | grep -q "$want" || { echo "the live page does not name $want"; exit 1; }
+          echo "$page" | grep -q "LIVE_CHAINS = new Set(\[46630\])" || { echo "mainnet may no longer be disabled"; exit 1; }
+          echo "  ok    contract $want, mainnet disabled"
+
+      - name: the deployed contract is still the one this source builds
+        run: |
+          set -euo pipefail
+          addr="$(python3 -c "import json;print(json.load(open('deployments.testnet.json'))['BulkSend'])")"
+          chain="$(curl -sS --max-time 30 -X POST https://rpc.testnet.chain.robinhood.com \
+            -H 'content-type: application/json' \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"$addr\",\"latest\"]}" \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"])')"
+          echo "  on-chain runtime: $(( (${#chain} - 2) / 2 )) bytes at $addr"
+          [ "${#chain}" -gt 100 ] || { echo "no code at the recorded address"; exit 1; }
