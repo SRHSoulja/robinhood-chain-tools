@@ -698,23 +698,33 @@
   // ---------- simulating a call that has not been sent ----------
   // eth_simulateV1 runs the call against the current state and hands back the logs it would emit, so a preview
   // can say what would actually move rather than what the function is named.
-  async function simulate(call) {
-    const params = [{
-      blockStateCalls: [{ calls: [{
-        from: call.from || ethers.ZeroAddress,
-        to: call.to,
-        data: call.data || '0x',
-        value: call.value ? ethers.toBeHex(BigInt(call.value)) : '0x0',
-      }] }],
-      traceTransfers: true,
-      validation: false,
-    }, 'latest'];
-    const res = await rp().send('eth_simulateV1', params);
-    const r = res && res[0] && res[0].calls && res[0].calls[0];
-    if (!r) throw new Error('the node returned nothing to read');
+  const oneResult = (r) => {
     // A revert's reason arrives under error.data; returnData is empty for a failed call.
     const reason = (r.error && r.error.data) || r.returnData || '0x';
     return { ok: r.status === '0x1', gasUsed: BigInt(r.gasUsed || 0), logs: r.logs || [], returnData: r.returnData || '0x', reason, error: r.error || null };
+  };
+  const asCall = (c) => ({
+    from: c.from || ethers.ZeroAddress,
+    to: c.to,
+    data: c.data || '0x',
+    value: c.value ? ethers.toBeHex(BigInt(c.value)) : '0x0',
+  });
+  async function simulate(call) {
+    const res = await rp().send('eth_simulateV1', [{ blockStateCalls: [{ calls: [asCall(call)] }], traceTransfers: true, validation: false }, 'latest']);
+    const r = res && res[0] && res[0].calls && res[0].calls[0];
+    if (!r) throw new Error('the node returned nothing to read');
+    return oneResult(r);
+  }
+  // A batch executes in order, and each call sees what the ones before it did. Simulating them separately
+  // against the same starting state can say every one succeeds when the real batch reverts on the second,
+  // which is the exact question someone pastes a batch here to answer.
+  async function simulateInOrder(calls) {
+    const res = await rp().send('eth_simulateV1', [{
+      blockStateCalls: [{ calls: calls.map(asCall) }], traceTransfers: true, validation: false,
+    }, 'latest']);
+    const rs = (res && res[0] && res[0].calls) || [];
+    if (rs.length !== calls.length) throw new Error('the node did not answer for every call');
+    return rs.map(oneResult);
   }
 
   // ---------- the three things this page can be asked ----------
@@ -985,7 +995,14 @@
         // A wallet_sendCalls request is {method, params:[{version, chainId, from, calls:[…]}]}, so the array
         // of calls sits two levels down. Reading params[0] as a call gave one entry with no destination and
         // dropped the whole batch, which is the shape a real wallet actually shows someone.
-        const unwrap = (o) => (o && Array.isArray(o.calls) ? o.calls.map((c) => Object.assign({ from: o.from }, c)) : [o]);
+        let envelope = null;
+        const unwrap = (o) => {
+          if (o && Array.isArray(o.calls)) {
+            if (o.chainId || o.atomicRequired !== undefined) envelope = { chainId: o.chainId, atomicRequired: !!o.atomicRequired, from: o.from };
+            return o.calls.map((c) => Object.assign({ from: o.from }, c));
+          }
+          return [o];
+        };
         const level1 = Array.isArray(j) ? j : (Array.isArray(j.params) ? j.params : (Array.isArray(j.calls) ? j.calls : [j]));
         const list = level1.flatMap((o) => (o && o.params && Array.isArray(o.params) ? o.params.flatMap(unwrap) : unwrap(o)));
         // Every entry is kept. Filtering out the ones that do not look like calls is how a second entry
@@ -994,8 +1011,8 @@
         const calls = list
           .filter((o) => o && typeof o === 'object')
           .map((o) => ({ to: o.to || null, data: o.data || o.input || '0x', from: o.from, value: o.value }));
-        if (calls.length === 1 && calls[0].to) return Object.assign({ kind: 'call' }, calls[0]);
-        if (calls.length >= 1) return { kind: 'batch', calls };
+        if (calls.length === 1 && calls[0].to && !envelope) return Object.assign({ kind: 'call' }, calls[0]);
+        if (calls.length >= 1) return { kind: 'batch', calls, envelope };
       } catch (e) { return { kind: 'bad', why: 'That looks like JSON but it will not parse.' }; }
     }
     const url = s.match(/(?:tx|address|token)\/(0x[0-9a-fA-F]{40,64})/);
@@ -1025,9 +1042,45 @@
       if (parsedInput.kind === 'tx') return await showTransaction(parsedInput.hash, from, seq);
       if (parsedInput.kind === 'address') return await showAddress(parsedInput.address, seq);
       if (parsedInput.kind === 'batch') {
+        const env = parsedInput.envelope;
+        // B-03: the request names the chain it is for. Answering about the same address on a different chain
+        // is the most reassuring wrong answer this page could give.
+        if (env && env.chainId) {
+          let want = null;
+          try { want = Number(BigInt(env.chainId)); } catch (e) { want = null; }
+          if (want !== null && want !== chainId()) {
+            say('');
+            out(note('bad', 'This request is for a different network',
+              'It names chain ' + want + (CHAINS[want] ? ' (' + CHAINS[want].name + ')' : '') + ', and this page is set to '
+              + chainId() + ' (' + cfg().name + '). Nothing has been checked, because the same address is a different contract on a different chain, and an answer from the wrong one would be worse than no answer. Change the network above'
+              + (CHAINS[want] ? ' to ' + CHAINS[want].name + ' and try again.' : '; this page does not cover that chain.')));
+            return;
+          }
+        }
         say('Reading all ' + parsedInput.calls.length + ' calls…');
         const cards = [note('warn', 'This is ' + parsedInput.calls.length + ' calls, not one',
           'Everything below is part of the same request. A batch is only as safe as its most dangerous call, and that is rarely the first one.')];
+        if (env) cards.push(note(env.atomicRequired ? 'warn' : '', env.atomicRequired ? 'All of it, or none of it' : 'Not required to be atomic',
+          env.atomicRequired
+            ? 'The request asks for these to happen together. If one fails, the wallet is being asked to make sure none of them happen.'
+            : 'The request does not ask for these to happen together, so some may land and others may not.'));
+        // B-04: run them in order, as the wallet would, so a call that only fails because of an earlier one
+        // is seen here rather than after signing.
+        let ordered = null, orderedErr = null;
+        try { ordered = await simulateInOrder(parsedInput.calls.filter(c => ethers.isAddress(String(c.to || '')))); }
+        catch (e) { orderedErr = String(e.message || e).slice(0, 140); }
+        if (stale(seq)) return;
+        if (ordered) {
+          const bad = ordered.findIndex(r => !r.ok);
+          if (bad >= 0) cards.push(note('bad', 'Run in order, call ' + (bad + 1) + ' fails',
+            decodeRevert(ordered[bad].reason, null) + (env && env.atomicRequired
+              ? '  Because this request asks for all or nothing, that means none of it would happen.'
+              : '  The calls before it would still happen.')));
+          else cards.push(note('ok', 'Run in order, every call succeeds', 'Simulated as one sequence against the chain as it is now, which is how the wallet would send them.'));
+        } else {
+          cards.push(note('warn', 'These could not be run in order', (orderedErr || 'the node would not do it')
+            + '. Each call below was checked on its own instead, against the chain as it is now. A call that only fails because of what an earlier one did would not be caught by that.'));
+        }
         for (let i = 0; i < parsedInput.calls.length && i < 20; i++) {
           const c = parsedInput.calls[i];
           void c;
@@ -1043,7 +1096,11 @@
           const t = await readAddress(c.to).catch(() => null);
           if (stale(seq)) return;
           const p = parseData(c.data, t && t.abi);
-          let sim = null; try { sim = await simulate({ to: c.to, data: c.data, from: from || c.from, value: c.value }); } catch (e) {}
+          // S-02: the sender the request itself names, when the box above is blank; and a simulation that
+          // failed is reported rather than swallowed.
+          const sender = from || (ethers.isAddress(String(c.from || '')) ? ethers.getAddress(c.from) : null);
+          let sim = ordered ? ordered[i] : null, simErr = null;
+          if (!sim) { try { sim = await simulate({ to: c.to, data: c.data, from: sender, value: c.value }); } catch (e) { simErr = String(e.message || e).slice(0, 140); } }
           if (stale(seq)) return;
           const sentence = p.unknown || p.empty ? null : describeCall(p, { target: t });
           cards.push(card('Call ' + (i + 1) + ' of ' + parsedInput.calls.length, [
@@ -1056,7 +1113,8 @@
             ]),
             // The same disclosures a call gets when it is pasted on its own. Two byte-identical calls must not
             // be described differently because one of them happened to arrive inside a batch.
-            ...callWarnings(p, t, sim, from).map(([cls, title, body]) => note(cls, title, body)),
+            simErr ? note('warn', 'This call could not be simulated', simErr) : null,
+            ...callWarnings(p, t, sim, sender).map(([cls, title, body]) => note(cls, title, body)),
             t ? kv([
               ['Destination', h('span', {}, link(String(c.to), short(String(c.to))), document.createTextNode('  '),
                 h('span', { class: 'mut', text: t.codeUnreadable ? 'code unreadable' : t.isContract ? (t.proxy ? 'a proxy' : 'a contract') : t.delegated ? 'an upgraded wallet' : 'a wallet' }))],

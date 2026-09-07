@@ -68,6 +68,19 @@
       <div><label for="snapAddr">Read a collection's current holders</label><div style="display:flex;gap:8px"><input type="text" id="snapAddr" aria-label="Collection address to take a holder snapshot of" placeholder="holders of 0x… (snapshot)" spellcheck="false"><button class="secondary" id="snap">Fetch</button></div></div>
       <div><label for="each">How many each, from the ones you hold</label><div style="display:flex;gap:8px"><input type="number" id="each" value="1" min="1" max="1000" style="width:88px" aria-label="How many each wallet receives"><button class="secondary" id="assign" style="flex:1">Assign my token ids</button><button class="secondary" id="shuffle">Shuffle</button></div>
       <div style="font-size:12px;color:var(--mut);margin-top:4px">To give one wallet more than the rest, write <span class="mono">x3</span> after its address.</div>
+      <div class="row" id="weightRow" style="display:none;margin-top:8px">
+        <div><label for="weight">How many each wallet gets</label>
+          <select id="weight" aria-label="How many each wallet gets">
+            <option value="flat">The same for everyone</option>
+            <option value="per">One for each one they hold</option>
+            <option value="perN">A fixed number for each one they hold</option>
+          </select>
+        </div>
+        <div><label for="cap">Most any one wallet may get</label>
+          <div style="display:flex;gap:8px"><input type="number" id="cap" value="10" min="1" max="1000" style="width:88px" aria-label="Cap per wallet"><button class="secondary" id="applyWeight" style="flex:1">Apply to the list</button></div>
+          <div style="font-size:12px;color:var(--mut);margin-top:4px">A cap keeps one large holder from taking the whole drop.</div>
+        </div>
+      </div>
       <div class="check" style="margin:6px 0 0"><input type="checkbox" id="rand" checked><label for="rand" style="margin:0;font-size:12px">Random, so nobody can pick which NFT they get. Costs nothing: they still go out cheapest-first.</label></div></div>
     </div>
     <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV. A file with named columns works too, in any order: <span class="mono">address</span>, <span class="mono">tokenId</span>, <span class="mono">quantity</span>.</label>
@@ -96,7 +109,7 @@
       </div>
       <div id="gasNote" class="msg" style="align-self:end"></div>
     </div>
-    <div class="check" id="safeRow"><input type="checkbox" id="safe" checked><label for="safe" style="margin:0">Refuse to send to a contract that cannot hold NFTs (recommended). Unticking this is faster and cheaper, but an NFT sent to a contract that cannot handle it is stuck there for good.</label></div>
+    <div class="check" id="safeRow"><input type="checkbox" id="safe" checked><label for="safe" style="margin:0">Check that each recipient can hold NFTs (recommended). It costs about 5% more gas, measured. Leave it on unless the test run tells you a recipient is a wallet that has been upgraded and does not accept the check: those are real wallets and a plain transfer reaches them. An NFT sent to a <em>contract</em> that cannot handle it is stuck there for good, which is what this is really guarding against.</label></div>
   </div>
 
   <div class="card">
@@ -176,6 +189,7 @@
   let ethUsd = null;        // best effort, for the cost line; the page works fine without it
   let connectedVia = null;  // the name of the wallet in use, shown so "change wallet" means something
   let lastManifest = null;  // the exact ordered list the last confirmation was based on
+  let snapHoldings = new Map();   // how many of the snapshotted collection each wallet holds
 
   // Calls the WALLET makes as itself, for the wallet-batch path. No operator, so no approval.
   const DIRECT = new ethers.Interface([
@@ -638,6 +652,8 @@
       const addr = parts[0];
       if (!ethers.isAddress(addr)) {
         const why = /\.eth$|\.[a-z]{2,}$/i.test(String(addr)) ? 'names like vitalik.eth are not supported here; paste the 0x address'
+                  : /^0x[0-9a-fA-F]{40}$/.test(String(addr)) ? 'that address is the right length but its checksum does not match, which means a character was changed, dropped or re-cased somewhere between the source and here. Copy it again rather than correcting it by hand'
+                  : /^0x[0-9a-fA-F]+$/.test(String(addr)) ? 'that is ' + ((String(addr).length - 2) / 2).toFixed(0) + ' bytes; a wallet address is 20'
                   : 'that is not a wallet address';
         problems.push('line ' + (i + 1) + ': ' + why + ' ("' + String(addr).slice(0, 30) + '")'); return; }
       if (parts.length > want) {
@@ -699,24 +715,6 @@
   const rowKey = (r) => r.to.toLowerCase() + ':' + (r.id !== undefined ? r.id.toString() : '') + ':' + (r.amount !== undefined ? r.amount.toString() : '');
   const keyOf = (r) => r.k || (rowKey(r) + '#1');
   function loadDelivered() { try { return new Set(JSON.parse(localStorage.getItem(runKey()) || '[]')); } catch (e) { return new Set(); } }
-  // Returns whether the record is actually on disk. A swallowed failure here is a recipient who gets paid a
-  // second time on the next reload, so every caller checks the answer and stops.
-  function markDelivered(rowsDone) {
-    try {
-      const s = loadDelivered(); for (const r of rowsDone) s.add(keyOf(r));
-      const all = [...s];
-      if (all.length > LEDGER_CAP) throw new Error('ledger full');
-      localStorage.setItem(runKey(), JSON.stringify(all));
-      const back = loadDelivered();                        // read it back: quota failures are not always thrown
-      for (const r of rowsDone) if (!back.has(keyOf(r))) throw new Error('not stored');
-      return true;
-    } catch (e) {
-      log('This browser did not save the record of what was just delivered' + (String(e.message) === 'ledger full'
-        ? ', because that record is full (' + LEDGER_CAP.toLocaleString() + ' rows). Start a new run, or press "Forget what was delivered" once you are sure everything landed.'
-        : '. Without it, reloading could pay those wallets again.') + ' Stopping here.', 'bad');
-      return false;
-    }
-  }
   // Nothing is ever silently evicted from the ledger: a forgotten row is a row that gets paid twice.
   const LEDGER_CAP = 20000;
   function dropAlreadyDelivered(list) {
@@ -823,10 +821,17 @@
       const rpBlock = new ethers.JsonRpcProvider(cfg().rpc);
       const startBlock = await rpBlock.getBlockNumber().catch(() => null);
       log('Reading holders of ' + addr.slice(0, 10) + '… from the explorer.');
-      const holders = []; let next = ''; let truncated = false;
+      const holders = []; const heldBy = new Map(); let next = ''; let truncated = false;
       for (let page = 0; page < 200; page++) {
         const d = await explorer('/tokens/' + addr + '/holders' + (next ? '?' + next : ''));
-        for (const it of (d.items || [])) { const h = (it.address || {}).hash; if (h) holders.push(ethers.getAddress(h)); }
+        for (const it of (d.items || [])) {
+          const h = (it.address || {}).hash; if (!h) continue;
+          // The explorer says how many each wallet holds. Keeping it is the difference between "one each"
+          // and "one for every one you hold", which is how most airdrops to a collection are actually shaped.
+          const held = Number(it.value || 0);
+          holders.push(ethers.getAddress(h));
+          if (held > 0) heldBy.set(ethers.getAddress(h), held);
+        }
         const p = d.next_page_params; if (!p) break;
         next = Object.entries(p).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
         if (holders.length >= 20000) { truncated = true; break; }
@@ -857,7 +862,15 @@
           $('dropContracts').style.display = 'inline-block';
         } else { $('dropContracts').style.display = 'none'; }
       } catch (e) {}
+      // Remember what they hold, so the proportional options below have something to work from.
+      snapHoldings = new Map([...heldBy].filter(([a]) => uniq.includes(a)));
+      const total = [...snapHoldings.values()].reduce((a, b) => a + b, 0);
+      const most = Math.max(0, ...snapHoldings.values());
       log(uniq.length + ' holders read at around block ' + (endBlock || '?') + (me ? ', your own wallet left out' : '') + '. This is a live reading, not a snapshot pinned to one block.', 'ok');
+      if (total) {
+        log('Between them they hold ' + total.toLocaleString() + ', and the largest holder has ' + most.toLocaleString() + '. "How many each" below can follow that instead of giving everyone the same.', 'ok');
+        $('weightRow').style.display = 'flex';
+      }
       if (std() === '721') log('Next: press "Assign my token ids to these wallets" to fill in which of your NFTs each one gets.');
       parseList();
     } catch (e) { log('Could not read holders: ' + String(e.message || e).slice(0, 120), 'bad'); }
@@ -889,6 +902,41 @@
     const rest = shuffled(parsed.map(p => p.slice(1)));
     $('list').value = wallets.map((w, i) => [w, ...rest[i]].join(',')).join('\n');
     log('Shuffled: the same wallets and the same ' + (s === '20' ? 'amounts' : 'ids') + ', paired at random.', 'ok');
+    parseList();
+  });
+
+  // Writes the per-wallet quantity into the list, in the "0xabc… x3" form the rest of the page already reads.
+  $('applyWeight').addEventListener('click', () => {
+    const mode = $('weight').value;
+    const cap = Math.max(1, Math.min(1000, parseInt($('cap').value) || 10));
+    const each = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
+    const lines = $('list').value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (!lines.length) { say('msgList', 'Put the wallets in the box first, or read a collection\u2019s holders.', 'bad'); return; }
+    if (mode !== 'flat' && !snapHoldings.size) { say('msgList', 'This page does not know what these wallets hold. Read a collection\u2019s holders first, and it will.', 'bad'); return; }
+    let capped = 0, unknown = 0, total = 0;
+    const out = lines.map(l => {
+      const a = l.split(/[,\t; ]+/).filter(Boolean)[0];
+      if (!ethers.isAddress(a)) return l;
+      const addr = ethers.getAddress(a);
+      if (mode === 'flat') { total += each; return addr + (each > 1 ? ' x' + each : ''); }
+      const held = snapHoldings.get(addr);
+      if (!held) { unknown++; total += 1; return addr; }
+      const want = mode === 'per' ? held : held * each;
+      const n = Math.min(want, cap);
+      if (n < want) capped++;
+      total += n;
+      return addr + (n > 1 ? ' x' + n : '');
+    });
+    if (!confirm('This rewrites the list so each wallet gets '
+      + (mode === 'flat' ? each + ' each' : mode === 'per' ? 'one for each one it holds' : each + ' for each one it holds')
+      + (mode === 'flat' ? '' : ', capped at ' + cap) + '.\n\n'
+      + lines.length + ' wallets, ' + total.toLocaleString() + ' in total.'
+      + (capped ? '\n' + capped + ' wallets are being capped.' : '')
+      + (unknown ? '\n' + unknown + ' wallets are not in the holder reading and get one each.' : '')
+      + '\n\nThere is no undo. Continue?')) return;
+    $('list').value = out.join('\n');
+    say('msgList', lines.length + ' wallets, ' + total.toLocaleString() + ' in total' + (capped ? ', ' + capped + ' capped' : '') + '. Press "Assign my token ids" to choose which of yours they receive.', 'ok');
+    log('List weighted by holdings: ' + total.toLocaleString() + ' across ' + lines.length + ' wallets' + (capped ? ', ' + capped + ' capped at ' + cap : '') + '.', 'ok');
     parseList();
   });
 
@@ -1000,20 +1048,22 @@
       for (const e of mine) {
         const rows = rowsFromJson(e.rows);
         const check = await confirmArrival(rows, new Map());
-        if (check.arrived.length) {
-          writeDeliveredFor(e.run, check.arrived);
-          log('  ' + check.arrived.length + ' of a batch from ' + new Date(e.at).toLocaleString() + ' are now confirmed at their destination and recorded as delivered.', 'ok', e.hash);
-        }
         const rest = rows.filter(r => !check.arrived.includes(r));
-        if (!rest.length) { dropPending(e.pid); continue; }
+        if (!(await commitDelivered(e.run, e.pid, check.arrived, rest))) { stillHeld += rows.length; continue; }
+        if (check.arrived.length) log('  ' + check.arrived.length + ' of a batch from ' + new Date(e.at).toLocaleString() + ' now read as held by their recipient on chain, and are recorded as delivered.', 'ok', e.hash);
+        if (!rest.length) continue;
         const lines = rest.slice(0, 15).map(r => '  ' + r.to + (r.id !== undefined ? '  id ' + r.id : '') + (r.amount !== undefined && std() !== '721' ? '  x' + r.amount : ''));
         const ok = confirm('A batch sent on ' + new Date(e.at).toLocaleString() + ' has ' + rest.length + ' line'
           + (rest.length === 1 ? '' : 's') + ' the chain will not confirm arrived.\n\n'
           + lines.join('\n') + (rest.length > 15 ? '\n  … and ' + (rest.length - 15) + ' more' : '')
           + '\n\nTransaction: ' + (e.hash || 'never came back from the wallet')
           + '\n\nRelease these to be sent again?\n\nOnly do this if you have looked at that transaction and are satisfied they were not paid. If they were paid, releasing them pays them twice.');
-        if (ok) { dropPending(e.pid); released += rest.length; }
-        else { stillHeld += rest.length; }
+        if (ok) {
+          // Releasing is the one thing that is not a ledger write, so it is done under the lock too and only
+          // after the operator has seen exactly what it covers.
+          if (await withRunLock(e.run, () => { dropPending(e.pid); return true; })) released += rest.length;
+          else { log('  could not take the lock to release those rows; they stay held.', 'bad'); stillHeld += rest.length; }
+        } else { stillHeld += rest.length; }
       }
       log('Review finished' + (released ? ': ' + released + ' released to be sent again' : '') + (stillHeld ? ', ' + stillHeld + ' still held' : '') + '.', released ? 'warn' : 'ok');
       plan();
@@ -1106,7 +1156,7 @@
   }
 
   // ---- form lock while a send is in flight, so the list cannot change under the loop ----
-  const FORM = ['net', 'std', 'token', 'list', 'csv', 'parse', 'batch', 'mode', 'safe', 'connect', 'snap', 'snapAddr', 'assign', 'shuffle', 'rand', 'revoke', 'forget', 'export', 'gasPer', 'gasReset', 'manifest', 'each', 'review'];
+  const FORM = ['net', 'std', 'token', 'list', 'csv', 'parse', 'batch', 'mode', 'safe', 'connect', 'snap', 'snapAddr', 'assign', 'shuffle', 'rand', 'revoke', 'forget', 'export', 'gasPer', 'gasReset', 'manifest', 'each', 'review', 'weight', 'cap', 'applyWeight'];
   function lockForm(on) { sending = on; for (const id of FORM) { const el = $(id); if (el) el.disabled = on; } }
 
   // ---- delivery order ----
@@ -1233,6 +1283,8 @@
   }
   // Says what happened, and leaves anything unsettled on the pending list so those rows stay held back.
   // Returns the rows that may be recorded as delivered.
+  // Evidence, named. A read of ownerOf or balanceOf is the chain's own state; a Transfer event is the token
+  // saying what it did. A token built to lie can defeat either, so which one was used is part of the answer.
   function reportArrival(check, hash) {
     const unsettled = [...check.short.map(x => x.row), ...check.missing, ...check.unknown];
     for (const x of check.short.slice(0, 6)) {
@@ -1246,6 +1298,9 @@
     }
     if (check.unknown.length) {
       log('  ' + check.unknown.length + ' could not be checked because the chain would not answer. They stay held back until it does.', 'warn', hash);
+    }
+    if (check.arrived.length) {
+      log('  ' + check.arrived.length + ' read back as held by their recipient after the transfer. That is the token\u2019s own answer about its own state, which is the strongest evidence available from a browser and still not proof: a token written to lie can lie here too. The transaction is the record.', '', hash);
     }
     return { deliver: check.arrived, unsettled };
   }
@@ -1413,13 +1468,14 @@
         const byEvent = arrivalsFromReceipt(rc, candidates);
         const ok = byEvent.arrived;
         const rest = byEvent.unknown;
-        if (ok.length && !writeDeliveredFor(e.run, ok)) { log('A batch from ' + new Date(e.at).toLocaleString() + ' could be read but not recorded, so it stays unresolved.', 'bad', lookFor); return false; }
+        if (!(await commitDelivered(e.run, e.pid, ok, rest))) return false;
+        // I-01: this is the token's own account of what it did, in that transaction. It is the same evidence
+        // an explorer shows, and a token that emits a transfer it did not make defeats it. Say which it is.
         if (rest.length) {
-          updatePending(e.pid, (ent) => { ent.rows = rowsToJson(rest); ent.unsettled = true; });
-          log('Caught up on ' + label + ' from ' + new Date(e.at).toLocaleString() + ': ' + ok.length + ' confirmed at their destination, ' + rest.length + ' this page cannot confirm from here and is holding back. Check the transaction, then use "Review held rows".', 'warn', lookFor);
+          log('Caught up on ' + label + ' from ' + new Date(e.at).toLocaleString() + ': the token reported ' + ok.length + ' transfer' + (ok.length === 1 ? '' : 's') + ' in that transaction, which are now recorded, and ' + rest.length + ' it did not report, which stay held back. Check the transaction, then use "Review held rows".', 'warn', lookFor);
         } else {
-          dropPending(e.pid); resolved++;
-          log('Caught up on ' + label + ' from ' + new Date(e.at).toLocaleString() + ': all ' + ok.length + ' confirmed at their destination and recorded.', 'ok', lookFor);
+          resolved++;
+          log('Caught up on ' + label + ' from ' + new Date(e.at).toLocaleString() + ': the token reported all ' + ok.length + ' of these transfers in that transaction, so they are recorded and will not be sent again.', 'ok', lookFor);
         }
         return true;
       };
@@ -1432,6 +1488,36 @@
     return resolved;
   }
   // Writes into another run's record, which is why it takes the key rather than reading the form.
+  // Every change to what a run has delivered goes through here, under that run's lock, in this order:
+  // re-read, merge, write, read back, and only then shrink or drop the pending record. Doing it anywhere
+  // else is how a row ends up in neither place: recovery and Review used to write the ledger with no lock at
+  // all, so two of them could each save their own half and delete both journals, and it is also how a row
+  // was released after its delivered write had quietly failed.
+  let holdingRunLock = false;
+  async function withRunLock(key, fn) {
+    if (holdingRunLock) return fn();                 // already inside the lock; re-requesting it would deadlock
+    if (!navigator.locks || !navigator.locks.request) return null;   // no lock, no ledger change
+    return navigator.locks.request('bulksend:' + key, async () => {
+      holdingRunLock = true;
+      try { return await fn(); } finally { holdingRunLock = false; }
+    }).catch(() => null);
+  }
+  // Returns true only if the delivered rows are durably recorded AND the pending record now reflects that.
+  async function commitDelivered(key, pid, arrivedRows, stillPending) {
+    const done = await withRunLock(key, () => {
+      if (arrivedRows.length && !writeDeliveredFor(key, arrivedRows)) return false;
+      if (!pid) return true;
+      if (stillPending && stillPending.length) return updatePending(pid, (ent) => { ent.rows = rowsToJson(stillPending); ent.unsettled = true; });
+      dropPending(pid);
+      return true;
+    });
+    if (done === null) {
+      log('This browser would not give this page the lock it needs to record what was delivered, so nothing has been recorded and nothing released. Close other tabs of this page and try again.', 'bad');
+      return false;
+    }
+    if (!done) log('This browser did not save the record of what was just delivered, so nothing has been released either. Those rows stay held back.', 'bad');
+    return done;
+  }
   function writeDeliveredFor(key, rowsDone) {
     try {
       const cur = new Set(JSON.parse(localStorage.getItem(key) || '[]'));
@@ -1439,10 +1525,17 @@
       const all = [...cur];
       if (all.length > LEDGER_CAP) throw new Error('ledger full');
       localStorage.setItem(key, JSON.stringify(all));
+      // Read it back. A quota failure is not always thrown, and a value that did not land is a row that gets
+      // paid a second time on the next visit.
       const back = new Set(JSON.parse(localStorage.getItem(key) || '[]'));
       for (const r of rowsDone) if (!back.has(keyOf(r))) throw new Error('not stored');
       return true;
-    } catch (e) { return false; }
+    } catch (e) {
+      log('This browser did not save the record of what was delivered' + (String(e.message) === 'ledger full'
+        ? ', because that record is full (' + LEDGER_CAP.toLocaleString() + ' rows). Start a new run, or press "Forget what was delivered" once you are sure everything landed.'
+        : '. Without it, reloading could pay those wallets again.'), 'bad');
+      return false;
+    }
   }
 
   // ---- the call for one chunk ----
@@ -1541,7 +1634,9 @@
     return null;
   }
 
+  let orderedCheckFailed = null;   // set when the whole-batch simulation could not run
   async function preflight(verbose, listIn) {
+    orderedCheckFailed = null;
     const ordered = listIn || workingList().list;
     if (verbose) log('Test run: simulating every transfer against the live chain. Nothing is signed and nothing is spent.');
     // Said before the per-transfer results, because "recipient is a contract that cannot receive NFTs" is a
@@ -1590,7 +1685,8 @@
         }
         if (verbose) log('Run in order as one transaction per batch: every transfer holds.', 'ok');
       } catch (e) {
-        if (verbose) log('This node would not run the whole batch in order (' + String(e.shortMessage || e.message).slice(0, 60) + '), so each transfer was checked on its own instead. A token whose behaviour depends on what happened earlier in the same transaction would not be caught by that.', 'warn');
+        orderedCheckFailed = String(e.shortMessage || e.message || e).slice(0, 70);
+        log('This node would not run the whole batch in order (' + orderedCheckFailed + '), so each transfer was checked on its own instead. A token whose behaviour depends on what happened earlier in the same transaction would not be caught by that.', 'warn');
       }
       for (let i = 0; i < ordered.length; i++) {
         const row = ordered[i]; const c = directCall(row);
@@ -1673,6 +1769,7 @@
         }).catch(() => resolve(false));   // a lock that errors is a lock we do not hold
       });
       if (!got) { log('Another tab of this page is already sending this list, or this browser would not grant the lock. Finish there, or close it, before sending here.', 'bad'); return; }
+      holdingRunLock = true;
     }
     // The ledger has to be writable before anything is signed, not discovered to be unwritable afterwards.
     if (!storageWorks()) {
@@ -1696,6 +1793,14 @@
       return;
     }
     if (pre.willSkip) log('Test run: ' + pre.willDeliver + ' will be delivered, ' + pre.willSkip + ' skipped.', 'warn');
+    // The check that just ran was weaker than the one this page prefers. That is a decision, not a detail,
+    // and it belongs to you rather than to the send loop.
+    if (orderedCheckFailed && deliveryPath() === 'wallet') {
+      if (!confirm('This node would not simulate the whole batch in order (' + orderedCheckFailed + ').\n\n'
+        + 'Each transfer was checked on its own instead, against the chain as it is now. That misses anything that only fails because of what an earlier transfer in the same transaction did, and your wallet sends each batch as one transaction where a single failure loses all of it.\n\n'
+        + 'Send anyway?')) { log('Stopped. Nothing was sent.', 'warn'); return; }
+      log('Sending with the weaker check, at your say-so.', 'warn');
+    }
     // Everything below is settled now: which rows, in what order, in how many transactions. Describe that.
     {
       const path = deliveryPath();
@@ -1806,22 +1911,17 @@
         // The receipt says the token accepted these. Ask the chain whether the recipients actually have them.
         const check = await confirmArrival(r.delivered, before);
         const { deliver, unsettled } = reportArrival(check, rc.hash);
-        if (deliver.length && !markDelivered(deliver)) break;   // the record failed: keep the batch pending and stop
+        // Recorded and released together, or neither. Anything unsettled keeps this batch on the pending
+        // list, so those rows are held rather than released: a stale read must never become a second payment.
+        if (!(await commitDelivered(runKey(), pid, deliver, unsettled))) break;
         sent += deliver.length; skipped += r.skipped;           // counted from the chain, not from the token's answer
-        if (unsettled.length) {
-          // Anything unsettled keeps this batch on the pending list, so those rows are held rather than
-          // released. Dropping the record here is what would let a stale read become a second payment.
-          updatePending(pid, (ent) => { ent.rows = rowsToJson(unsettled); ent.unsettled = true; });
-        } else {
-          dropPending(pid);   // every row accounted for
-        }
         log('  done: ' + deliver.length + ' arrived' + (unsettled.length ? ', ' + unsettled.length + ' unsettled and held' : '') + (r.skipped ? ', ' + r.skipped + ' skipped' : '') + ' · gas ' + rc.gasUsed, unsettled.length ? 'warn' : 'ok');
         if (stopFlag) { log('Stopped.', 'warn'); break; }
       }
       log('Finished. ' + sent + ' delivered' + (skipped ? ', ' + skipped + ' skipped' : '') + '.', 'ok');
       if (skipped) log('Download the skipped list to retry those wallets.', 'warn');
     } catch (e) { log('Stopped on error: ' + explainCallError(e), 'bad'); }
-    } finally { if (releaseLock) releaseLock(); }
+    } finally { holdingRunLock = false; if (releaseLock) releaseLock(); }
   }
 
   // ---- the wallet-batch path: the wallet runs the transfers as itself, in one transaction per batch ----
@@ -1885,10 +1985,8 @@
         }
         const check = await confirmArrival(chunk, before);
         const { deliver, unsettled } = reportArrival(check, rcpt.hash);
-        if (deliver.length && !markDelivered(deliver)) break;
+        if (!(await commitDelivered(runKey(), pid, deliver, unsettled))) break;
         sent += deliver.length;
-        if (unsettled.length) updatePending(pid, (ent) => { ent.rows = rowsToJson(unsettled); ent.unsettled = true; });
-        else dropPending(pid);
         log('  done: ' + deliver.length + ' arrived' + (unsettled.length ? ', ' + unsettled.length + ' unsettled and held' : ''), unsettled.length ? 'warn' : 'ok', rcpt.hash);
       } catch (e) {
         log('  stopped: ' + explainCallError(e), 'bad'); break;

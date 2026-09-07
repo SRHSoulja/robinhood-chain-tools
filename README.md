@@ -77,8 +77,13 @@ as either success or failure.
 ### Upgraded wallets, and what they can still receive
 
 A wallet that has delegated under EIP-7702 has code. It is still that person's wallet, but a **safe** ERC-721
-transfer calls `onERC721Received` on whatever it delegated to, and plenty of delegates do not implement it.
-ERC-1155 has no unsafe transfer at all, so such a wallet cannot receive an edition from anybody.
+transfer calls `onERC721Received` on whatever it delegated to, and not every delegate implements it. ERC-1155
+has no unsafe transfer at all, so a wallet whose delegate lacks the hook cannot receive an edition from anybody.
+
+In practice this is usually fine. Sampled on Robinhood Chain mainnet in September 2026, between 16% and 28% of
+the top holders of the largest collections were upgraded wallets, every one of them delegating to the same
+contract, and that contract implements both hooks correctly. So the page does not guess from a list of known
+delegates: it asks each one directly whether it implements the hook, and only warns about the ones that say no.
 
 Measured on Robinhood Chain against a delegated account:
 
@@ -147,7 +152,7 @@ moved".
 
     forge build
     forge test                 # 82 contract tests
-    npm install && npm test    # 140 browser tests, every answer mocked, no network
+    npm install && npm test    # 149 browser tests, every answer mocked, no network
     ./test.sh                  # all of it
 
 The browser tests drive the real pages in headless Chromium and answer every RPC, explorer and price request
@@ -186,8 +191,9 @@ what makes Check's previews real; `debug_traceCall` and `eth_createAccessList` a
 ## Reviews
 
 Six internal review passes and five external audits, each by a different model given the code and no other
-context: 8/4/3, then 6/5/1, then 4/1/0, then 6/2/1, then 5/2/2 (High/Medium/Low). Every finding is fixed, and
-all five are published unedited in [`docs/`](docs/) — including the first audit's
+context: 8/4/3, then 6/5/1, then 4/1/0, then 6/2/1, then 5/2/2 (High/Medium/Low), and a sixth asked to sort
+its findings by whether they block release: 4 blocking, 2 not, 1 an inherent limit that is disclosed rather
+than fixed. Every finding is fixed, and all six are published unedited in [`docs/`](docs/) — including the first audit's
 finding that a bug I had dismissed in a code comment as deliberate was in fact a double-payment path, and the
 second's finding that the Check page was printing safety conclusions on the strength of function names.
 

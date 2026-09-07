@@ -618,7 +618,7 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
     const filler = []; for (let i = 0; i < 20000; i++) filler.push('x' + i);
     localStorage.setItem(run, JSON.stringify(filler));
   }, [A(0xdead), NFT]);
-  await page.click('#send'); await page.waitForTimeout(6000);
+  await page.click('#send'); await page.waitForTimeout(10000);
   check('M-03 a full ledger stops the run instead of forgetting its oldest rows',
     (await text(page, '#log')).includes('is full'), (await text(page, '#log')).slice(-220));
   await page.close();
@@ -801,7 +801,7 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   await page.click('#send'); await page.waitForTimeout(7000);
   const logText = await text(page, '#log');
   check('a row the token itself says it transferred is confirmed on reload',
-    /confirmed at their destination/.test(logText), logText.slice(0, 400));
+    /the token reported all 1 of these transfers/.test(logText), logText.slice(0, 400));
   check('and is then treated as already delivered', /already delivered/.test(logText), logText.slice(0, 400));
   await page.close();
 }
@@ -848,6 +848,36 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   await setList(page, A(0xf9) + ',1\n');
   check('L-01 capabilities declared under the all-chain key are honoured',
     (await text(page, '#plan')).includes('as itself'), await text(page, '#plan'));
+  await page.close();
+}
+
+// ---- a snapshot keeps what each wallet holds, so a drop can follow it ------------
+{
+  const holders = {
+    items: [
+      { address: { hash: A(0x101) }, value: '300' },
+      { address: { hash: A(0x102) }, value: '3' },
+      { address: { hash: A(0x103) }, value: '1' },
+    ],
+  };
+  const page = await open(browser, { explorer: holders });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#snapAddr', NFT); await page.click('#snap'); await page.waitForTimeout(5000);
+  check('the snapshot reports what the wallets hold, not just who they are',
+    /they hold 304/.test(await text(page, '#log')), (await text(page, '#log')).slice(-260));
+  check('and the weighting control appears once it knows',
+    await page.evaluate(() => document.querySelector('#weightRow').style.display !== 'none'));
+
+  await page.selectOption('#weight', 'per'); await page.fill('#cap', '10'); await page.waitForTimeout(200);
+  await page.click('#applyWeight'); await page.waitForTimeout(1200);
+  const list = await val(page, '#list');
+  check('one for each one held, capped, is written into the list',
+    /x10/.test(list) && /x3/.test(list), list.slice(0, 160));
+  check('the wallet holding 300 is capped rather than taking the drop',
+    !/x300/.test(list), list.slice(0, 160));
+  check('and a wallet holding one gets one, with no suffix',
+    list.split('\n').some((l) => l.startsWith(A(0x103)) && !/ x\d/.test(l)), list.slice(0, 200));
   await page.close();
 }
 

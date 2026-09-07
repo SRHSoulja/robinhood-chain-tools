@@ -63,9 +63,13 @@ function answer(O) {
         return word(1);
       }
       case 'eth_simulateV1': {
-        const call = params[0].blockStateCalls[0].calls[0];
-        if (O.simRevert) return [{ calls: [{ status: '0x0', gasUsed: '0x7639', returnData: '0x', logs: [], error: { message: 'execution reverted', code: -32000, data: O.simRevert } }] }];
-        return [{ calls: [{ status: '0x1', gasUsed: '0xb8a8', returnData: '0x', logs: O.simLogs || [] }] }];
+        // Answers for every call in the request, in order, so an ordered batch simulation can be tested.
+        const calls = (params[0].blockStateCalls[0] || {}).calls || [];
+        const one = (i) => (O.sequenceFailsAt === i
+          ? { status: '0x0', gasUsed: '0x1', returnData: '0x', logs: [], error: { message: 'execution reverted', data: '0x7e273289' + (99).toString(16).padStart(64, '0') } }
+          : { status: '0x1', gasUsed: '0xb8a8', returnData: '0x', logs: O.simLogs || [] });
+        if (O.simRevert) return [{ calls: calls.map(() => ({ status: '0x0', gasUsed: '0x7639', returnData: '0x', logs: [], error: { message: 'execution reverted', code: -32000, data: O.simRevert } })) }];
+        return [{ calls: calls.map((c, i) => one(i)) }];
       }
       case 'eth_getTransactionByHash': return O.tx || null;
       case 'eth_getTransactionReceipt': return O.receipt || null;
@@ -489,6 +493,34 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   const t = await ask(page, NASTY, null, 6000);
   check('M-02 a silent beacon leaves the implementation unknown rather than standing in for it',
     /beacon would not name the code/.test(t), t.slice(0, 500));
+  await page.close();
+}
+
+// ---- B-03: a request naming another chain is refused, not answered about this one ----
+{
+  const page = await open(browser, {});
+  const t = await ask(page, JSON.stringify({
+    method: 'wallet_sendCalls',
+    params: [{ version: '2.0.0', chainId: '0x1237', from: ME, atomicRequired: true,
+               calls: [{ to: NFT, data: '0x06fdde03' }] }],
+  }), ME, 5000);
+  check('B-03 a request for another chain is refused rather than answered from this one',
+    /for a different network/.test(t), t.slice(0, 300));
+  check('B-03 and nothing about the address is presented', !/Test Collection/.test(t), t.slice(0, 300));
+  await page.close();
+}
+
+// ---- B-03/B-04: on the right chain it runs, in order, and says which -------------
+{
+  const page = await open(browser, { sequenceFailsAt: 1 });
+  const t = await ask(page, JSON.stringify({
+    method: 'wallet_sendCalls',
+    params: [{ version: '2.0.0', chainId: '0xb626', from: ME, atomicRequired: true,
+               calls: [{ to: NFT, data: '0x06fdde03' }, { to: TOK, data: '0x06fdde03' }] }],
+  }), ME, 7000);
+  check('B-04 a batch is run in order and a call that only fails in sequence is caught',
+    /Run in order, call 2 fails/.test(t), t.slice(0, 400));
+  check('B-04 and all-or-nothing is spelled out', /none of it would happen/.test(t), t.slice(0, 500));
   await page.close();
 }
 
