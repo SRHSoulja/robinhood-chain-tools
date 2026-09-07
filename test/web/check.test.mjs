@@ -63,6 +63,7 @@ function answer(O) {
         return word(1);
       }
       case 'eth_simulateV1': {
+        O.__senders = (O.__senders || []).concat(((params[0].blockStateCalls[0] || {}).calls || []).map((c) => c.from));
         // Answers for every call in the request, in order, so an ordered batch simulation can be tested.
         const calls = (params[0].blockStateCalls[0] || {}).calls || [];
         const one = (i) => (O.sequenceFailsAt === i
@@ -358,10 +359,10 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
     { to: TOK, data: approval },
   ]), ME, 6000);
   check('T-H-03 every call in a pasted batch is read, not just the first',
-    /Call 2 of 2/.test(t), t.slice(0, 300));
+    /call 2 of 2/i.test(t), t.slice(0, 300));
   check('T-H-03 and the unlimited approval hiding in the second one is called out',
     /unlimited approval/i.test(t), t.slice(0, 500));
-  check('T-H-03 with the batch itself named as a batch', /is 2 calls, not one/.test(t), t.slice(0, 200));
+  check('T-H-03 with the batch itself named as a batch', /2 calls, not one/.test(t), t.slice(0, 200));
   await page.close();
 }
 
@@ -430,7 +431,7 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify([{ to: NFT, data: '0x06fdde03' }, { input: '0x60806040', value: '0x0' }]), ME, 6000);
   check('H-05 a request entry with no destination is shown, not silently dropped',
-    /is 2 calls, not one/.test(t) && /no destination this page can read/.test(t), t.slice(0, 400));
+    /2 calls, not one/.test(t) && /no destination this page can read/.test(t), t.slice(0, 400));
   await page.close();
 }
 
@@ -470,7 +471,7 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
                calls: [{ to: NFT, data: '0x06fdde03' }, { to: TOK, data: approval }] }],
   }), ME, 7000);
   check('H-05 a canonical wallet_sendCalls request is read as the batch it is',
-    /is 2 calls, not one/.test(t), t.slice(0, 300));
+    /2 calls, not one/.test(t), t.slice(0, 300));
   check('H-05 and the approval buried in its second call is found',
     /unlimited approval/i.test(t), t.slice(0, 600));
   await page.close();
@@ -519,8 +520,48 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
                calls: [{ to: NFT, data: '0x06fdde03' }, { to: TOK, data: '0x06fdde03' }] }],
   }), ME, 7000);
   check('B-04 a batch is run in order and a call that only fails in sequence is caught',
-    /Run in order, call 2 fails/.test(t), t.slice(0, 400));
-  check('B-04 and all-or-nothing is spelled out', /none of it would happen/.test(t), t.slice(0, 500));
+    /run in order, call 2 fails/i.test(t), t.slice(0, 400));
+  check('B-04 and all-or-nothing is spelled out', /none of it would happen/i.test(t), t.slice(0, 500));
+  await page.close();
+}
+
+// ---- B-02: two requests, two chains, judged separately ---------------------------
+{
+  const page = await open(browser, {});
+  const t = await ask(page, JSON.stringify([
+    { method: 'wallet_sendCalls', params: [{ chainId: '0x1237', from: A(0x1111), atomicRequired: true, calls: [{ to: NFT, data: '0x06fdde03' }] }] },
+    { method: 'wallet_sendCalls', params: [{ chainId: '0xb626', from: A(0x2222), atomicRequired: false, calls: [{ to: TOK, data: '0x06fdde03' }] }] },
+  ]), ME, 8000);
+  check('B-02 two requests are not merged into one', /2 separate requests/.test(t), t.slice(0, 300));
+  check('B-02 the one for another chain is refused on its own terms',
+    /Request 1 of 2: this request is for a different network/.test(t), t.slice(0, 500));
+  check('B-02 while the one for this chain is still read', /Request 2 of 2/.test(t), t.slice(0, 600));
+  await page.close();
+}
+
+// ---- B-03: the sender that is simulated is the sender that is described ----------
+{
+  // the mock records every `from` the page asks the node to simulate as, on this object
+  const seen = {};
+  const page = await open(browser, seen);
+  await page.fill('#input', JSON.stringify([{ to: NFT, data: '0x06fdde03' }, { to: TOK, data: '0x06fdde03' }]));
+  await page.fill('#from', ME);
+  await page.click('#go'); await page.waitForTimeout(7000);
+  const senders = seen.__senders || [];
+  check('B-03 the ordered simulation is run as the sender in the box',
+    senders.length > 0 && senders.every((f) => String(f).toLowerCase() === '0x000000000000000000000000000000000000dead'),
+    JSON.stringify(senders.slice(0, 4)));
+  await page.close();
+}
+
+// ---- B-04: no all-calls verdict when a call could not be included ----------------
+{
+  const page = await open(browser, {});
+  const t = await ask(page, JSON.stringify([{ to: NFT, data: '0x06fdde03' }, { input: '0x60806040', value: '0x0' }]), ME, 7000);
+  check('B-04 an unsimulatable entry withholds the all-calls verdict',
+    !/every call succeeds/i.test(t), t.slice(0, 400));
+  check('B-04 and says why the sequence cannot be judged',
+    /cannot be checked as a sequence/.test(t), t.slice(0, 400));
   await page.close();
 }
 

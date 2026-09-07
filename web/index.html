@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-OszqRxNihJx7SVrOiG4pVKeF+Y5vAbpBPnVJZBC68wg='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-TSsqZy+Z/cm2pS9NGIPi/AP4bdC+Vtp7z5yYujqS2nU='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -70,6 +70,7 @@
       <div style="font-size:12px;color:var(--mut);margin-top:4px">To give one wallet more than the rest, write <span class="mono">x3</span> after its address.</div>
       <div class="row" id="weightRow" style="display:none;margin-top:8px">
         <div><label for="weight">How many each wallet gets</label>
+          <div id="snapWho" style="font-size:12px;color:var(--mut);margin:0 0 4px"></div>
           <select id="weight" aria-label="How many each wallet gets">
             <option value="flat">The same for everyone</option>
             <option value="per">One for each one they hold</option>
@@ -189,7 +190,10 @@
   let ethUsd = null;        // best effort, for the cost line; the page works fine without it
   let connectedVia = null;  // the name of the wallet in use, shown so "change wallet" means something
   let lastManifest = null;  // the exact ordered list the last confirmation was based on
-  let snapHoldings = new Map();   // how many of the snapshotted collection each wallet holds
+  // What was read, from where, and when. A bare map of balances survives a change of collection and then
+  // silently weights a different drop with the old numbers, while the confirmation says the quantities came
+  // from what each wallet holds. The identity travels with the numbers so that claim can be checked.
+  let snap = null;   // { chain, collection, block, holdings: Map, wallets: Set }
 
   // Calls the WALLET makes as itself, for the wallet-batch path. No operator, so no approval.
   const DIRECT = new ethers.Interface([
@@ -435,6 +439,7 @@
     rows = []; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); plan(); if ($('token').value.trim()) tokenInfo();
   });
   $('net').addEventListener('change', async () => {
+    forgetSnapshot('the network changed');
     // The same address is a different contract on a different chain, and decimals differ. Keeping a parsed
     // list across that boundary would send amounts computed for one token using another one's units.
     rows = []; decimals = null; tokenLoadedFor = null; tokenLoadedChain = null; gatedBy = null; tokenPaused = false;
@@ -863,19 +868,34 @@
         } else { $('dropContracts').style.display = 'none'; }
       } catch (e) {}
       // Remember what they hold, so the proportional options below have something to work from.
-      snapHoldings = new Map([...heldBy].filter(([a]) => uniq.includes(a)));
-      const total = [...snapHoldings.values()].reduce((a, b) => a + b, 0);
-      const most = Math.max(0, ...snapHoldings.values());
+      snap = {
+        chain: chainId(), collection: ethers.getAddress(addr), block: endBlock || startBlock || null,
+        holdings: new Map([...heldBy].filter(([a]) => uniq.includes(a))), wallets: new Set(uniq),
+      };
+      const total = [...snap.holdings.values()].reduce((a, b) => a + b, 0);
+      const most = Math.max(0, ...snap.holdings.values());
       log(uniq.length + ' holders read at around block ' + (endBlock || '?') + (me ? ', your own wallet left out' : '') + '. This is a live reading, not a snapshot pinned to one block.', 'ok');
       if (total) {
         log('Between them they hold ' + total.toLocaleString() + ', and the largest holder has ' + most.toLocaleString() + '. "How many each" below can follow that instead of giving everyone the same.', 'ok');
         $('weightRow').style.display = 'flex';
+        $('snapWho').textContent = 'Holdings read from ' + snap.collection.slice(0, 10) + '… on ' + cfg().name
+          + (snap.block ? ' at around block ' + snap.block : '') + '.';
       }
       if (std() === '721') log('Next: press "Assign my token ids to these wallets" to fill in which of your NFTs each one gets.');
       parseList();
     } catch (e) { log('Could not read holders: ' + String(e.message || e).slice(0, 120), 'bad'); }
     $('snap').disabled = false;
   });
+
+  // Anything that can make those numbers describe a different thing than the list in the box drops them.
+  function forgetSnapshot(why) {
+    if (!snap) return;
+    snap = null;
+    $('weightRow').style.display = 'none';
+    $('snapWho').textContent = '';
+    if (why) log('The holdings reading has been dropped (' + why + '), so proportional weighting is off until a collection is read again.', 'warn');
+  }
+  $('snapAddr').addEventListener('input', () => { if (snap && $('snapAddr').value.trim().toLowerCase() !== snap.collection.toLowerCase()) forgetSnapshot('the collection address changed'); });
 
   // Fair shuffle, from the browser's cryptographic random source rather than Math.random, so the result is not
   // predictable by whoever is watching the list get built.
@@ -912,14 +932,20 @@
     const each = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
     const lines = $('list').value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (!lines.length) { say('msgList', 'Put the wallets in the box first, or read a collection\u2019s holders.', 'bad'); return; }
-    if (mode !== 'flat' && !snapHoldings.size) { say('msgList', 'This page does not know what these wallets hold. Read a collection\u2019s holders first, and it will.', 'bad'); return; }
+    if (mode !== 'flat') {
+      if (!snap || !snap.holdings.size) { say('msgList', 'This page does not know what these wallets hold. Read a collection\u2019s holders first, and it will.', 'bad'); return; }
+      if (snap.chain !== chainId()) { forgetSnapshot('the network changed'); say('msgList', 'Those holdings were read on a different network. Read the collection again.', 'bad'); return; }
+      const listed = lines.map(l => l.split(/[,\t; ]+/).filter(Boolean)[0]).filter(a => ethers.isAddress(a)).map(a => ethers.getAddress(a));
+      const foreign = listed.filter(a => !snap.wallets.has(a)).length;
+      if (foreign > listed.length / 2) { say('msgList', 'Most of the wallets in the box are not in the holder reading, so those numbers do not describe this list. Read the collection again, or use "the same for everyone".', 'bad'); return; }
+    }
     let capped = 0, unknown = 0, total = 0;
     const out = lines.map(l => {
       const a = l.split(/[,\t; ]+/).filter(Boolean)[0];
       if (!ethers.isAddress(a)) return l;
       const addr = ethers.getAddress(a);
       if (mode === 'flat') { total += each; return addr + (each > 1 ? ' x' + each : ''); }
-      const held = snapHoldings.get(addr);
+      const held = snap.holdings.get(addr);
       if (!held) { unknown++; total += 1; return addr; }
       const want = mode === 'per' ? held : held * each;
       const n = Math.min(want, cap);
@@ -930,6 +956,7 @@
     if (!confirm('This rewrites the list so each wallet gets '
       + (mode === 'flat' ? each + ' each' : mode === 'per' ? 'one for each one it holds' : each + ' for each one it holds')
       + (mode === 'flat' ? '' : ', capped at ' + cap) + '.\n\n'
+      + (mode === 'flat' ? '' : 'Those holdings were read from ' + snap.collection + '\non ' + cfg().name + (snap.block ? ' at around block ' + snap.block : '') + '.\n\n')
       + lines.length + ' wallets, ' + total.toLocaleString() + ' in total.'
       + (capped ? '\n' + capped + ' wallets are being capped.' : '')
       + (unknown ? '\n' + unknown + ' wallets are not in the holder reading and get one each.' : '')
@@ -1493,13 +1520,18 @@
   // else is how a row ends up in neither place: recovery and Review used to write the ledger with no lock at
   // all, so two of them could each save their own half and delete both journals, and it is also how a row
   // was released after its delivered write had quietly failed.
-  let holdingRunLock = false;
+  // Which run's lock this tab holds, not merely that it holds one. A send for run A used to set a boolean,
+  // and reconciliation would then write run B's ledger without ever taking B's lock, while another tab held
+  // it legitimately. Two writers, one of them invisible to the other, and a paid row can end up recorded by
+  // neither.
+  let heldRunKey = null;
   async function withRunLock(key, fn) {
-    if (holdingRunLock) return fn();                 // already inside the lock; re-requesting it would deadlock
+    if (heldRunKey === key) return fn();             // this exact lock is already ours; re-requesting deadlocks
     if (!navigator.locks || !navigator.locks.request) return null;   // no lock, no ledger change
     return navigator.locks.request('bulksend:' + key, async () => {
-      holdingRunLock = true;
-      try { return await fn(); } finally { holdingRunLock = false; }
+      const prev = heldRunKey;
+      heldRunKey = key;
+      try { return await fn(); } finally { heldRunKey = prev; }
     }).catch(() => null);
   }
   // Returns true only if the delivered rows are durably recorded AND the pending record now reflects that.
@@ -1757,23 +1789,26 @@
     stopFlag = false; skippedRows = [];
     // Two tabs of the same list would both read "nothing delivered yet" and both send it.
     let releaseLock = null;
+    const lockedRun = runKey();   // captured once: the key must not shift under the lock that was taken for it
     if (!navigator.locks || !navigator.locks.request) {
       log('This browser does not support the lock that stops two tabs sending the same list at once, so this page will not send. Use a current version of Chrome, Edge, Firefox or Safari.', 'bad');
       return;
     }
     {
       const got = await new Promise((resolve) => {
-        navigator.locks.request('bulksend:' + runKey(), { ifAvailable: true }, (lock) => {
+        navigator.locks.request('bulksend:' + lockedRun, { ifAvailable: true }, (lock) => {
           if (!lock) { resolve(false); return; }
           resolve(true); return new Promise((r) => { releaseLock = r; });
         }).catch(() => resolve(false));   // a lock that errors is a lock we do not hold
       });
       if (!got) { log('Another tab of this page is already sending this list, or this browser would not grant the lock. Finish there, or close it, before sending here.', 'bad'); return; }
-      holdingRunLock = true;
+      heldRunKey = lockedRun;
     }
     // The ledger has to be writable before anything is signed, not discovered to be unwritable afterwards.
+    // Returning here without releasing would leave this tab holding the lock until it is closed.
     if (!storageWorks()) {
       log('This browser will not let this page store anything, so it cannot remember what it has delivered and cannot protect you from sending twice. Nothing was sent. Leave private browsing, or allow site data for this page.', 'bad');
+      heldRunKey = null; if (releaseLock) releaseLock();
       return;
     }
     try {
@@ -1921,7 +1956,7 @@
       log('Finished. ' + sent + ' delivered' + (skipped ? ', ' + skipped + ' skipped' : '') + '.', 'ok');
       if (skipped) log('Download the skipped list to retry those wallets.', 'warn');
     } catch (e) { log('Stopped on error: ' + explainCallError(e), 'bad'); }
-    } finally { holdingRunLock = false; if (releaseLock) releaseLock(); }
+    } finally { heldRunKey = null; if (releaseLock) releaseLock(); }
   }
 
   // ---- the wallet-batch path: the wallet runs the transfers as itself, in one transaction per batch ----

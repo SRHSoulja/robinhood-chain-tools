@@ -33,3 +33,17 @@ jobs:
           npm install --no-audit --no-fund
           npx playwright install --with-deps chromium
           npm test
+      - name: the connector is reproducible from its pinned source
+        run: |
+          set -euo pipefail
+          cd web/wc-build
+          npm ci --no-audit --no-fund
+          npx esbuild entry.js --bundle --format=esm --minify --platform=browser --target=es2020 --outfile=/tmp/wc-rebuilt.js
+          built="$(sha256sum /tmp/wc-rebuilt.js | cut -d' ' -f1)"
+          shipped="$(sha256sum ../wc.js | cut -d' ' -f1)"
+          expected="$(tr -d '[:space:]' < EXPECTED-SHA256)"
+          echo "  rebuilt  $built"
+          echo "  shipped  $shipped"
+          echo "  expected $expected"
+          [ "$built" = "$shipped" ] || { echo "the pinned source no longer produces the shipped bundle"; exit 1; }
+          [ "$built" = "$expected" ] || { echo "the shipped bundle no longer matches its reviewed digest"; exit 1; }

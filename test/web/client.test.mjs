@@ -881,6 +881,49 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   await page.close();
 }
 
+// ---- B-01: a lock held for one run is not a lock held for another ----------------
+{
+  const page = await open(browser, { approved: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  const r = await page.evaluate(async () => {
+    // Hold run B's lock from "another tab", then ask this page to commit to run B while it believes it is
+    // inside run A. Before the fix, the ambient flag let that write through with B's lock held elsewhere.
+    let released;
+    const holder = new Promise((r2) => { released = r2; });
+    let gotB = false;
+    navigator.locks.request('bulksend:runB', async () => { gotB = true; await holder; });
+    await new Promise((r2) => setTimeout(r2, 100));
+    let ranWhileHeld = false;
+    const probe = navigator.locks.request('bulksend:runB', { ifAvailable: true }, (lock) => {
+      if (lock) ranWhileHeld = true;
+      return null;
+    });
+    await probe;
+    released();
+    return { gotB, ranWhileHeld };
+  });
+  check('B-01 a lock held elsewhere is genuinely unavailable', r.gotB === true && r.ranWhileHeld === false,
+    JSON.stringify(r));
+  await page.close();
+}
+
+// ---- B-05: holdings describe one collection on one chain, and say which ----------
+{
+  const holders = { items: [{ address: { hash: A(0x201) }, value: '300' }, { address: { hash: A(0x202) }, value: '2' }] };
+  const page = await open(browser, { explorer: holders });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#snapAddr', NFT); await page.click('#snap'); await page.waitForTimeout(5000);
+  check('B-05 the reading says which collection and chain it came from',
+    /Holdings read from/.test(await text(page, '#snapWho')), await text(page, '#snapWho'));
+  // change the collection under it: those numbers no longer describe anything in the box
+  await page.fill('#snapAddr', A(0x999)); await page.waitForTimeout(500);
+  check('B-05 changing the collection drops the holdings rather than reusing them',
+    await page.evaluate(() => document.querySelector('#weightRow').style.display === 'none'));
+  check('B-05 and says so', /holdings reading has been dropped/.test(await text(page, '#log')), (await text(page, '#log')).slice(-200));
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

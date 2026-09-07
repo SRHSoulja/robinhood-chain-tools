@@ -110,7 +110,10 @@ wc_route = """
   // never takes signing code from a third party.
   if (url.pathname === '/wc.js') {
     if (!WC_BUNDLE) return new Response('connector not configured', { status: 404 });
-    const upstream = await fetch(WC_BUNDLE, { cf: { cacheEverything: true, cacheTtl: 86400 } });
+    // The digest is in the URL, so the edge cache is keyed on the exact bundle. Without it a changed bundle
+    // is fetched from a day-old cache, fails its own digest check, and the connector goes dark until the
+    // cache expires: the check is right and the input to it is stale.
+    const upstream = await fetch(WC_BUNDLE + (WC_BUNDLE.includes('?') ? '&' : '?') + 'v=' + (WC_SHA256 || ''), { cf: { cacheEverything: true, cacheTtl: 86400 } });
     if (!upstream.ok) return new Response('connector unavailable', { status: 502 });
     // Read it, hash it, and serve it only if it is the file this deployment was built against. Without this
     // the page's own signing code could change after review without anything here changing.

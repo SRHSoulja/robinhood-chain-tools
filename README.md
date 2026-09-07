@@ -152,7 +152,7 @@ moved".
 
     forge build
     forge test                 # 82 contract tests
-    npm install && npm test    # 149 browser tests, every answer mocked, no network
+    npm install && npm test    # 159 browser tests, every answer mocked, no network
     ./test.sh                  # all of it
 
 The browser tests drive the real pages in headless Chromium and answer every RPC, explorer and price request

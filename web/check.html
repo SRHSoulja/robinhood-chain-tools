@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-7ryQ6Z5FlQLNE9yN25gT3Z1qxtYY3zxPaRFDd3NKWNo='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-k1KFZC2Fcv/NDir0TnEptgppQWiSp8aMgCRKb0m872E='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <title>Robinhood Chain Check · read it before you sign</title>
 <meta name="description" content="Paste a transaction, a contract, or the calldata your wallet is about to sign, and read what it actually does on Robinhood Chain: what moves, what the contract can do to you, and why something failed.">
 <style>
@@ -995,24 +995,40 @@
         // A wallet_sendCalls request is {method, params:[{version, chainId, from, calls:[…]}]}, so the array
         // of calls sits two levels down. Reading params[0] as a call gave one entry with no destination and
         // dropped the whole batch, which is the shape a real wallet actually shows someone.
-        let envelope = null;
-        const unwrap = (o) => {
-          if (o && Array.isArray(o.calls)) {
-            if (o.chainId || o.atomicRequired !== undefined) envelope = { chainId: o.chainId, atomicRequired: !!o.atomicRequired, from: o.from };
-            return o.calls.map((c) => Object.assign({ from: o.from }, c));
+        // A pasted array can hold several independent requests, each for its own chain, sender and
+        // atomicity. Flattening them under one envelope lets a mainnet call be inspected on testnet and
+        // described with another request's rules. Boundaries are kept.
+        const asCallList = (o) => {
+          if (!o || typeof o !== 'object') return null;
+          if (Array.isArray(o.calls)) {
+            return {
+              envelope: { chainId: o.chainId || null, atomicRequired: !!o.atomicRequired, from: o.from || null },
+              // Every entry is kept, including one with no destination: dropping those is how a contract
+              // creation disappeared and left the request looking like one benign call.
+              calls: o.calls.map((c) => ({ to: c.to || null, data: c.data || c.input || '0x', from: c.from || o.from || null, value: c.value })),
+            };
           }
-          return [o];
+          return { envelope: null, calls: [{ to: o.to || null, data: o.data || o.input || '0x', from: o.from || null, value: o.value }] };
         };
-        const level1 = Array.isArray(j) ? j : (Array.isArray(j.params) ? j.params : (Array.isArray(j.calls) ? j.calls : [j]));
-        const list = level1.flatMap((o) => (o && o.params && Array.isArray(o.params) ? o.params.flatMap(unwrap) : unwrap(o)));
-        // Every entry is kept. Filtering out the ones that do not look like calls is how a second entry
-        // written as {input, value} with no `to` (a contract creation, say) vanished and left the request
-        // looking like one benign call.
-        const calls = list
-          .filter((o) => o && typeof o === 'object')
-          .map((o) => ({ to: o.to || null, data: o.data || o.input || '0x', from: o.from, value: o.value }));
-        if (calls.length === 1 && calls[0].to && !envelope) return Object.assign({ kind: 'call' }, calls[0]);
-        if (calls.length >= 1) return { kind: 'batch', calls, envelope };
+        const top = Array.isArray(j) ? j : [j];
+        const requests = [];
+        for (const entry of top) {
+          const inner = entry && Array.isArray(entry.params) ? entry.params : [entry];
+          for (const o of inner) {
+            const r = asCallList(o);
+            if (!r || !r.calls.length) continue;
+            // Entries with no envelope of their own are one list, because that is what someone pasting a
+            // plain array of calls means. Anything carrying its own chain or atomicity stays separate,
+            // because that is a request with its own rules.
+            const last = requests[requests.length - 1];
+            if (!r.envelope && last && !last.envelope) last.calls.push(...r.calls);
+            else requests.push(r);
+          }
+        }
+        if (!requests.length) return { kind: 'bad', why: 'That JSON has no calls in it.' };
+        if (requests.length === 1 && requests[0].calls.length === 1 && requests[0].calls[0].to && !requests[0].envelope)
+          return Object.assign({ kind: 'call' }, requests[0].calls[0]);
+        return { kind: 'batch', requests };
       } catch (e) { return { kind: 'bad', why: 'That looks like JSON but it will not parse.' }; }
     }
     const url = s.match(/(?:tx|address|token)\/(0x[0-9a-fA-F]{40,64})/);
@@ -1042,91 +1058,112 @@
       if (parsedInput.kind === 'tx') return await showTransaction(parsedInput.hash, from, seq);
       if (parsedInput.kind === 'address') return await showAddress(parsedInput.address, seq);
       if (parsedInput.kind === 'batch') {
-        const env = parsedInput.envelope;
-        // B-03: the request names the chain it is for. Answering about the same address on a different chain
-        // is the most reassuring wrong answer this page could give.
-        if (env && env.chainId) {
-          let want = null;
-          try { want = Number(BigInt(env.chainId)); } catch (e) { want = null; }
-          if (want !== null && want !== chainId()) {
-            say('');
-            out(note('bad', 'This request is for a different network',
-              'It names chain ' + want + (CHAINS[want] ? ' (' + CHAINS[want].name + ')' : '') + ', and this page is set to '
-              + chainId() + ' (' + cfg().name + '). Nothing has been checked, because the same address is a different contract on a different chain, and an answer from the wrong one would be worse than no answer. Change the network above'
-              + (CHAINS[want] ? ' to ' + CHAINS[want].name + ' and try again.' : '; this page does not cover that chain.')));
-            return;
+        const reqs = parsedInput.requests;
+        const many = reqs.length > 1;
+        const cards = [];
+        if (many) cards.push(note('warn', 'This is ' + reqs.length + ' separate requests',
+          'They are not one batch. Each carries its own network, sender and atomicity rules, and each is read below on its own terms.'));
+        for (let ri = 0; ri < reqs.length; ri++) {
+          const env = reqs[ri].envelope;
+          // B-03: one canonical list, built before anything is simulated, so the sender that is simulated is
+          // the sender that is described. A request that names its own sender is authoritative; the box fills
+          // in only where a call names none.
+          const uiSender = from;
+          const calls = reqs[ri].calls.map((c) => Object.assign({}, c, {
+            from: c.from || (env && env.from) || uiSender || null,
+          }));
+          const envSender = env && env.from ? ethers.getAddress(env.from) : null;
+          const label = many ? 'Request ' + (ri + 1) + ' of ' + reqs.length + ': ' : '';
+
+          // B-02: each request is judged against the chain it names, not against whatever the page is set to.
+          if (env && env.chainId) {
+            let want = null;
+            try { want = Number(BigInt(env.chainId)); } catch (e) { want = null; }
+            if (want !== null && want !== chainId()) {
+              cards.push(note('bad', label + 'this request is for a different network',
+                'It names chain ' + want + (CHAINS[want] ? ' (' + CHAINS[want].name + ')' : '') + ', and this page is set to '
+                + chainId() + ' (' + cfg().name + '). Nothing in it has been checked: the same address is a different contract on a different chain, and an answer from the wrong one is worse than none.'));
+              continue;
+            }
           }
-        }
-        say('Reading all ' + parsedInput.calls.length + ' calls…');
-        const cards = [note('warn', 'This is ' + parsedInput.calls.length + ' calls, not one',
-          'Everything below is part of the same request. A batch is only as safe as its most dangerous call, and that is rarely the first one.')];
-        if (env) cards.push(note(env.atomicRequired ? 'warn' : '', env.atomicRequired ? 'All of it, or none of it' : 'Not required to be atomic',
-          env.atomicRequired
-            ? 'The request asks for these to happen together. If one fails, the wallet is being asked to make sure none of them happen.'
-            : 'The request does not ask for these to happen together, so some may land and others may not.'));
-        // B-04: run them in order, as the wallet would, so a call that only fails because of an earlier one
-        // is seen here rather than after signing.
-        let ordered = null, orderedErr = null;
-        try { ordered = await simulateInOrder(parsedInput.calls.filter(c => ethers.isAddress(String(c.to || '')))); }
-        catch (e) { orderedErr = String(e.message || e).slice(0, 140); }
-        if (stale(seq)) return;
-        if (ordered) {
-          const bad = ordered.findIndex(r => !r.ok);
-          if (bad >= 0) cards.push(note('bad', 'Run in order, call ' + (bad + 1) + ' fails',
-            decodeRevert(ordered[bad].reason, null) + (env && env.atomicRequired
-              ? '  Because this request asks for all or nothing, that means none of it would happen.'
-              : '  The calls before it would still happen.')));
-          else cards.push(note('ok', 'Run in order, every call succeeds', 'Simulated as one sequence against the chain as it is now, which is how the wallet would send them.'));
-        } else {
-          cards.push(note('warn', 'These could not be run in order', (orderedErr || 'the node would not do it')
-            + '. Each call below was checked on its own instead, against the chain as it is now. A call that only fails because of what an earlier one did would not be caught by that.'));
-        }
-        for (let i = 0; i < parsedInput.calls.length && i < 20; i++) {
-          const c = parsedInput.calls[i];
-          void c;
-          if (!ethers.isAddress(String(c.to || ''))) {
-            cards.push(card('Call ' + (i + 1) + ' of ' + parsedInput.calls.length, [
-              note('bad', 'This call has no destination this page can read',
-                'A request entry with no `to` is usually a contract being created, and this page cannot tell you what that contract would do. It is part of the same request as the others, so nothing here is the whole picture.'),
-              kv([['Destination', String(c.to || '(none given)')], ['Value', c.value ? String(c.value) : '0'], ['Length', String(Math.max(0, (String(c.data).length - 2) / 2)) + ' bytes']]),
-              h('pre', { text: (String(c.data).slice(2).match(/.{1,64}/g) || []).join('\n') }),
+          if (envSender && uiSender && envSender.toLowerCase() !== uiSender.toLowerCase()) {
+            cards.push(note('warn', label + 'the request names a different sender than the box',
+              'The request says ' + short(envSender) + ' and the box says ' + short(uiSender) + '. The request wins, because that is who would actually send it.'));
+          }
+          if (calls.length > 1) cards.push(note('warn', label + calls.length + ' calls, not one',
+            'A batch is only as safe as its most dangerous call, and that is rarely the first one.'));
+          if (env) cards.push(note(env.atomicRequired ? 'warn' : '', label + (env.atomicRequired ? 'all of it, or none of it' : 'not required to be atomic'),
+            env.atomicRequired
+              ? 'The request asks for these to happen together, so one failure means none of them happen.'
+              : 'The request does not ask for these to happen together, so some may land and others may not.'));
+
+          // B-04: only a list where every call can be simulated may earn an all-calls verdict.
+          const simulatable = calls.every((c) => ethers.isAddress(String(c.to || '')));
+          let ordered = null, orderedErr = null;
+          if (simulatable) {
+            try { ordered = await simulateInOrder(calls); }
+            catch (e) { orderedErr = String(e.message || e).slice(0, 140); }
+            if (stale(seq)) return;
+          }
+          if (!simulatable) {
+            cards.push(note('bad', label + 'this cannot be checked as a sequence',
+              'At least one entry has no destination this page can simulate, such as a contract being created. Running the others in order would leave that one out, and a verdict with a member missing is not a verdict.'));
+          } else if (ordered) {
+            const bad = ordered.findIndex((r) => !r.ok);
+            if (bad >= 0) cards.push(note('bad', label + 'run in order, call ' + (bad + 1) + ' fails',
+              decodeRevert(ordered[bad].reason, null) + (env && env.atomicRequired
+                ? '  Because this request asks for all or nothing, none of it would happen.'
+                : '  The calls before it would still happen.')));
+            else cards.push(note('ok', label + 'run in order, every call succeeds',
+              'Simulated as one sequence, as ' + short(calls[0].from || ethers.ZeroAddress) + ', against the chain as it is now.'));
+          } else {
+            cards.push(note('warn', label + 'these could not be run in order', (orderedErr || 'the node would not do it')
+              + '. Each call below was checked on its own instead, which misses anything that only fails because of what an earlier call did.'));
+          }
+
+          for (let i = 0; i < calls.length && i < 20; i++) {
+            const c = calls[i];
+            const title = label + 'call ' + (i + 1) + ' of ' + calls.length;
+            if (!ethers.isAddress(String(c.to || ''))) {
+              cards.push(card(title, [
+                note('bad', 'This call has no destination this page can read',
+                  'An entry with no `to` is usually a contract being created, and this page cannot tell you what that contract would do.'),
+                kv([['Destination', String(c.to || '(none given)')], ['Value', c.value ? String(c.value) : '0'], ['Length', String(Math.max(0, (String(c.data).length - 2) / 2)) + ' bytes']]),
+                h('pre', { text: (String(c.data).slice(2).match(/.{1,64}/g) || []).join('\n') }),
+              ]));
+              continue;
+            }
+            const t = await readAddress(c.to).catch(() => null);
+            if (stale(seq)) return;
+            const p = parseData(c.data, t && t.abi);
+            let sim = ordered ? ordered[i] : null, simErr = null;
+            if (!sim) { try { sim = await simulate(c); } catch (e) { simErr = String(e.message || e).slice(0, 140); } }
+            if (stale(seq)) return;
+            const sentence = p.unknown || p.empty ? null : describeCall(p, { target: t });
+            cards.push(card(title, [
+              h('p', { class: 'lede', text: sentence || (p.empty ? 'A plain transfer of ETH.' : p.unknown ? 'A call this page cannot name: ' + p.selector : p.signature) }),
+              sentence ? readingCaption(t) : null,
+              h('div', {}, [
+                sim ? h('span', { class: 'pill ' + (sim.ok ? 'ok' : 'bad'), text: sim.ok ? 'would succeed' : 'would fail' }) : null,
+                h('span', { class: 'pill', text: 'to ' + short(String(c.to)) }),
+                h('span', { class: 'pill', text: 'as ' + short(c.from || ethers.ZeroAddress) }),
+                c.value && BigInt(c.value) > 0n ? h('span', { class: 'pill warn', text: ethers.formatEther(BigInt(c.value)) + ' ETH attached' }) : null,
+              ]),
+              simErr ? note('warn', 'This call could not be simulated', simErr) : null,
+              ...callWarnings(p, t, sim, c.from).map(([cls, ttl, body]) => note(cls, ttl, body)),
+              t ? kv([
+                ['Destination', h('span', {}, link(String(c.to), short(String(c.to))), document.createTextNode('  '),
+                  h('span', { class: 'mut', text: t.codeUnreadable ? 'code unreadable' : t.isContract ? (t.proxy ? 'a proxy' : 'a contract') : t.delegated ? 'an upgraded wallet' : 'a wallet' }))],
+                t.isContract ? ['Source', t.proxy
+                  ? (t.proxy.verified ? 'the code it runs has published source' : t.proxy.verified === null ? 'could not check the code it runs' : 'the code it runs has published no source')
+                  : (t.verified ? 'published' : t.verified === null ? 'could not check' : 'none published')] : null,
+              ]) : note('bad', 'Nothing could be read about this destination', 'The chain would not answer, so nothing here is settled.'),
+              await renderInner(p, t, 0),
+              h('details', {}, [h('summary', { class: 'mut', text: 'raw call' }), h('pre', { text: (String(c.data).slice(2).match(/.{1,64}/g) || []).join('\n') })]),
             ]));
-            continue;
           }
-          const t = await readAddress(c.to).catch(() => null);
-          if (stale(seq)) return;
-          const p = parseData(c.data, t && t.abi);
-          // S-02: the sender the request itself names, when the box above is blank; and a simulation that
-          // failed is reported rather than swallowed.
-          const sender = from || (ethers.isAddress(String(c.from || '')) ? ethers.getAddress(c.from) : null);
-          let sim = ordered ? ordered[i] : null, simErr = null;
-          if (!sim) { try { sim = await simulate({ to: c.to, data: c.data, from: sender, value: c.value }); } catch (e) { simErr = String(e.message || e).slice(0, 140); } }
-          if (stale(seq)) return;
-          const sentence = p.unknown || p.empty ? null : describeCall(p, { target: t });
-          cards.push(card('Call ' + (i + 1) + ' of ' + parsedInput.calls.length, [
-            h('p', { class: 'lede', text: sentence || (p.empty ? 'A plain transfer of ETH.' : p.unknown ? 'A call this page cannot name: ' + p.selector : p.signature) }),
-            sentence ? readingCaption(t) : null,
-            h('div', {}, [
-              sim ? h('span', { class: 'pill ' + (sim.ok ? 'ok' : 'bad'), text: sim.ok ? 'would succeed' : 'would fail' }) : null,
-              h('span', { class: 'pill', text: 'to ' + short(String(c.to)) }),
-              c.value && BigInt(c.value) > 0n ? h('span', { class: 'pill warn', text: ethers.formatEther(BigInt(c.value)) + ' ETH attached' }) : null,
-            ]),
-            // The same disclosures a call gets when it is pasted on its own. Two byte-identical calls must not
-            // be described differently because one of them happened to arrive inside a batch.
-            simErr ? note('warn', 'This call could not be simulated', simErr) : null,
-            ...callWarnings(p, t, sim, sender).map(([cls, title, body]) => note(cls, title, body)),
-            t ? kv([
-              ['Destination', h('span', {}, link(String(c.to), short(String(c.to))), document.createTextNode('  '),
-                h('span', { class: 'mut', text: t.codeUnreadable ? 'code unreadable' : t.isContract ? (t.proxy ? 'a proxy' : 'a contract') : t.delegated ? 'an upgraded wallet' : 'a wallet' }))],
-              t.isContract ? ['Source', t.proxy
-                ? (t.proxy.verified ? 'the code it runs has published source' : t.proxy.verified === null ? 'could not check the code it runs' : 'the code it runs has published no source')
-                : (t.verified ? 'published' : t.verified === null ? 'could not check' : 'none published')] : null,
-            ]) : note('bad', 'Nothing could be read about this destination', 'The chain would not answer, so nothing below is settled.'),
-            await renderInner(p, t, 0),
-            h('details', {}, [h('summary', { class: 'mut', text: 'raw call' }), h('pre', { text: (String(c.data).slice(2).match(/.{1,64}/g) || []).join('\n') })]),
-          ]));
+          if (calls.length > 20) cards.push(note('warn', label + 'only the first 20 calls are shown', 'There are ' + calls.length + ' in total.'));
         }
-        if (parsedInput.calls.length > 20) cards.push(note('warn', 'Only the first 20 calls are shown', 'There are ' + parsedInput.calls.length + ' in total.'));
         if (stale(seq)) return;
         say('');
         out(...cards);

@@ -9,8 +9,17 @@ rather than from a third party's CDN. It is 2 MB, which is why it ships as a bui
     sha256sum ../wc.js
     cat EXPECTED-SHA256
 
-The digest of the committed file is in `EXPECTED-SHA256`, and `deploy/publish.sh` bakes that digest into the
-Worker, which refuses to serve a `/wc.js` that does not match it. So the guarantee is not "this file was
-definitely built from these inputs" — bundler output is not always byte-reproducible across machines and
-versions — but "the file this repository contains is the only one the live page will load". If your rebuild
-produces a different digest, that is worth investigating before trusting either file.
+`../wc.js` is exactly what those commands produce. That was not true until 2026-09-07: the file shipped
+before then was 2,092,684 bytes with digest `050632a7…`, while the pinned toolchain produces 2,092,782 bytes
+with digest `d4c35a1b…`. The difference was in esbuild's generated module helpers, consistent with the
+original having been built by a different version of esbuild. An external reviewer found it by simply
+following these instructions and comparing, which is the point of writing them down.
+
+The bundle was replaced with the reproducible one, `EXPECTED-SHA256` updated deliberately, and both were
+checked to load and export the same interface before deploying. CI rebuilds on every push and fails if the
+result stops matching, so the source-to-artifact link cannot quietly come apart again.
+
+`deploy/publish.sh` bakes that digest into the Worker, which refuses to serve a `/wc.js` that does not match
+it. So the chain is: pinned source and lockfile → this file → the digest in the Worker → what the browser
+loads. If your rebuild differs, something in that chain has moved and is worth understanding before trusting
+either file.
