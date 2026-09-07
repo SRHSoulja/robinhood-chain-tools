@@ -119,6 +119,7 @@
 </main>
 <footer>
   Reviewed by several independent automated audits, not by a human audit firm.
+  After every batch this page asks the chain whether the recipients actually hold what was sent, and records only those. A token that accepts a transfer and moves nothing, or takes a cut on the way, is reported rather than counted. An actively hostile token can lie in its own read functions too, so the explorer is the final word.
   This page keeps a note, in this browser and for this account only, of what it has already delivered, so reloading the tab will not repeat it. A batch that was signed but never confirmed here is written down too, and read back from the chain next time before anything else is sent. It is a convenience, not a guarantee: another browser, another device, a cleared cache or a private window will not know about it. What has actually been sent is on the chain, and that is the record to trust.
   <span id="contractLine"></span>
   To read any Robinhood Chain transaction or contract in plain English before you sign it, including the ones this page builds, use <a href="https://rhcheck.gmgnrepeat.com/">Check</a>.
@@ -724,18 +725,59 @@
   // A tab closed between "your wallet signed it" and "the receipt came back" used to leave no trace at all, so
   // the next run treated every one of those recipients as unpaid. The rows are written down before the wait
   // and only cleared once the chain has been read, so an interrupted run is recoverable rather than repeated.
-  const PENDING_KEY = 'bulksend:pending';
+  const PENDING_PREFIX = 'bulksend:pending:';
   const rowsToJson = (list) => list.map(r => ({ to: r.to, id: r.id === undefined ? null : r.id.toString(), amount: r.amount === undefined ? null : r.amount.toString(), k: keyOf(r) }));
   const rowsFromJson = (list) => (list || []).map(o => ({ to: o.to, id: o.id === null || o.id === undefined ? undefined : BigInt(o.id), amount: o.amount === null || o.amount === undefined ? undefined : BigInt(o.amount), k: o.k }));
-  function loadPending() { try { return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]'); } catch (e) { return []; } }
-  function savePending(l) {
+  // Each batch is its own key, so writing one can never drop another. Nothing here reads the whole set and
+  // writes it back, which is the shape that loses records when two tabs run at once.
+  // Anyone who was mid-airdrop when this page changed shape still has their records in the old single array.
+  // Dropping them would release rows that are held back for a reason, which is the whole thing this guards
+  // against, so they are moved across once and the old key is only removed after that has been checked.
+  const LEGACY_PENDING_KEY = 'bulksend:pending';
+  function migrateLegacyPending() {
     try {
-      localStorage.setItem(PENDING_KEY, JSON.stringify(l));   // never trimmed: an unresolved batch is not noise
-      return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]').length === l.length;
+      const raw = localStorage.getItem(LEGACY_PENDING_KEY);
+      if (!raw) return;
+      const list = JSON.parse(raw);
+      if (!Array.isArray(list)) { localStorage.removeItem(LEGACY_PENDING_KEY); return; }
+      let moved = 0;
+      for (const e of list) { if (e && e.pid && writePending(e)) moved++; }
+      if (moved === list.length) localStorage.removeItem(LEGACY_PENDING_KEY);
+    } catch (e) {}
+  }
+  function loadPending() {
+    migrateLegacyPending();
+    const out = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (!k || !k.startsWith(PENDING_PREFIX)) continue;
+        try { const v = JSON.parse(localStorage.getItem(k)); if (v && v.pid) out.push(v); } catch (e) {}
+      }
+    } catch (e) {}
+    return out.sort((a, b) => (a.at || 0) - (b.at || 0));
+  }
+  function writePending(entry) {
+    try {
+      const k = PENDING_PREFIX + entry.pid;
+      localStorage.setItem(k, JSON.stringify(entry));
+      const back = JSON.parse(localStorage.getItem(k) || 'null');   // the record itself, not a count
+      return !!(back && back.pid === entry.pid && (back.rows || []).length === (entry.rows || []).length);
     } catch (e) { return false; }
   }
-  function addPending(entry) { const l = loadPending(); l.push(entry); return savePending(l) ? entry : null; }
-  function dropPending(id) { savePending(loadPending().filter(e => e.pid !== id)); }
+  const savePending = () => true;   // kept so nothing calls a whole-array write by accident
+  function addPending(entry) { return writePending(entry) ? entry : null; }
+  function dropPending(id) { try { localStorage.removeItem(PENDING_PREFIX + id); } catch (e) {} }
+  // Reads one record, changes it, writes it back. Only ever touches that record's own key.
+  function updatePending(id, fn) {
+    try {
+      const k = PENDING_PREFIX + id;
+      const cur = JSON.parse(localStorage.getItem(k) || 'null');
+      if (!cur) return false;
+      fn(cur);
+      return writePending(cur);
+    } catch (e) { return false; }
+  }
   const newPid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   // Proves the ledger can actually be written before anything is signed against it.
   function storageWorks() {
@@ -1075,6 +1117,58 @@
     } catch (e) {}
   })();
 
+  // ---- did the recipients actually end up with it ----
+  // A batch reports a delivery when the token's transfer function was called and did not fail. That is not
+  // the same as somebody being paid: a contract can accept the call and move nothing, and a fee-on-transfer
+  // token pays less than it was asked for while answering true. So the chain is asked afterwards. For an NFT
+  // that is definitive; for amounts it is a before-and-after reading, which an actively hostile token could
+  // still lie about through its own view functions, and the page says so rather than implying otherwise.
+  async function holdingsOf(chunk) {
+    const token = $('token').value.trim(); const out = new Map();
+    if (std() === '721') return out;                     // ownership is read directly afterwards instead
+    const rp = new ethers.JsonRpcProvider(cfg().rpc);
+    const c = std() === '1155'
+      ? new ethers.Contract(token, ['function balanceOf(address,uint256) view returns (uint256)'], rp)
+      : new ethers.Contract(token, ['function balanceOf(address) view returns (uint256)'], rp);
+    for (let i = 0; i < chunk.length; i += 25) {
+      const part = chunk.slice(i, i + 25);
+      const vals = await Promise.all(part.map(r => (std() === '1155' ? c.balanceOf(r.to, r.id) : c.balanceOf(r.to)).catch(() => null)));
+      part.forEach((r, k) => { if (vals[k] !== null) out.set(keyOf(r), vals[k]); });
+    }
+    return out;
+  }
+  // Returns the rows the chain agrees arrived, and the ones it does not.
+  async function confirmArrival(rows, before) {
+    const token = $('token').value.trim();
+    const rp = new ethers.JsonRpcProvider(cfg().rpc);
+    const arrived = [], missing = [], short = [];
+    try {
+      if (std() === '721') {
+        const c = new ethers.Contract(token, ['function ownerOf(uint256) view returns (address)'], rp);
+        for (let i = 0; i < rows.length; i += 25) {
+          const part = rows.slice(i, i + 25);
+          const owners = await Promise.all(part.map(r => c.ownerOf(r.id).catch(() => null)));
+          part.forEach((r, k) => {
+            if (owners[k] === null) arrived.push(r);                                   // could not ask: not evidence of failure
+            else if (String(owners[k]).toLowerCase() === r.to.toLowerCase()) arrived.push(r);
+            else missing.push(r);
+          });
+        }
+      } else {
+        const after = await holdingsOf(rows);
+        for (const r of rows) {
+          const b = before.get(keyOf(r)), a = after.get(keyOf(r));
+          if (b === undefined || a === undefined) { arrived.push(r); continue; }        // could not ask
+          const got = a - b;
+          if (got >= r.amount) arrived.push(r);
+          else if (got > 0n) { short.push({ row: r, got }); arrived.push(r); }
+          else missing.push(r);
+        }
+      }
+    } catch (e) { return { arrived: rows, missing: [], short: [], checked: false }; }
+    return { arrived, missing, short, checked: true };
+  }
+
   // ---- what one BulkSend receipt actually says ----
   // Used both by the send loop and, later, by the catch-up that reads a receipt this browser never saw.
   const BULK_IFACE = new ethers.Interface(BULK_ABI);
@@ -1132,13 +1226,38 @@
       if (!e.hash && e.callsId && eth && chainId() === e.chain) {
         try {
           const st = await eth.request({ method: 'wallet_getCallsStatus', params: [e.callsId] });
-          const raw = st && st.status; const code = typeof raw === 'number' ? raw : (raw === 'CONFIRMED' ? 200 : raw === 'PENDING' ? 100 : 0);
-          const h = st && st.receipts && st.receipts[0] && st.receipts[0].transactionHash;
-          if (code >= 400) { log('An unfinished batch of ' + (e.rows || []).length + ' from ' + new Date(e.at).toLocaleString() + ' failed in your wallet, so nothing in it moved. Those recipients are back in the list.', 'warn'); dropPending(e.pid); resolved++; continue; }
-          if (h) { const l = loadPending(); const ent = l.find(x => x.pid === e.pid); if (ent) { ent.hash = h; savePending(l); } e.hash = h; }
+          const r = readCallsStatus(st);
+          if (r.state === 'failed' || r.state === 'reverted') {
+            log('An unfinished batch of ' + (e.rows || []).length + ' from ' + new Date(e.at).toLocaleString() + ' ' + (r.state === 'failed' ? 'never reached the chain' : 'reverted in full') + ', so nothing in it moved. Those recipients are back in the list.', 'warn', r.hash);
+            dropPending(e.pid); resolved++; continue;
+          }
+          if (r.state === 'partial') {
+            if (!quiet) log('A batch of ' + (e.rows || []).length + ' from ' + new Date(e.at).toLocaleString() + ' went through only in part, so some of those wallets were paid and some were not. This page cannot tell which from here. Those recipients stay held back; open the transaction on the explorer and use "Forget what was delivered" only for the ones you can see did not land.', 'bad', r.hash);
+            continue;
+          }
+          if (r.hash) { updatePending(e.pid, (ent) => { ent.hash = r.hash; }); e.hash = r.hash; }
         } catch (err) { /* the wallet no longer knows this batch (EIP-5792 error 5730), or is not connected */ }
       }
-      // A replacement transaction the page could not follow at the time is still followable now.
+      // A replacement the page could not follow at the time is followable now, but only if it is provably the
+      // same call. A receipt cannot show that: a successful row emits no event of its own, so a completely
+      // different batch to the same contract produces a summary that looks just as valid. The calldata can.
+      if (e.replacedBy && e.replacedBy !== e.hash) {
+        if (!e.call) {
+          if (!quiet) log('A batch from ' + new Date(e.at).toLocaleString() + ' was replaced in your wallet and this page did not record what the original call was, so it cannot tell whether the replacement did the same thing. Those recipients stay held back. Check the transaction on the explorer.', 'bad', e.replacedBy);
+          continue;
+        }
+        let repl = null;
+        try { repl = await new ethers.JsonRpcProvider(c.rpc).getTransaction(e.replacedBy); } catch (err) { continue; }
+        if (!repl) { if (!quiet) log('A replacement transaction from ' + new Date(e.at).toLocaleString() + ' is not on the chain yet. Those recipients stay held back.', 'warn', e.replacedBy); continue; }
+        const same = String(repl.to || '').toLowerCase() === e.call.to
+          && String(repl.data || '') === e.call.data
+          && String(repl.from || '').toLowerCase() === e.call.from;
+        if (!same) {
+          log('A batch from ' + new Date(e.at).toLocaleString() + ' was replaced by a different transaction, not the same batch sent again. Nothing from the original has been recorded, and those recipients stay held back until you have checked the explorer: the replacement may have paid different wallets entirely.', 'bad', e.replacedBy);
+          continue;
+        }
+        e.hash = e.replacedBy;
+      }
       const lookFor = e.hash || e.replacedBy;
       if (!lookFor) {
         if (!quiet) log('A batch of ' + (e.rows || []).length + ' from ' + new Date(e.at).toLocaleString() + ' was sent to your wallet and never came back with a transaction. Connect the same wallet on the same network and reload, and this page will ask it what happened. Until then those recipients are held back.', 'warn');
@@ -1154,11 +1273,7 @@
         if (!quiet) log('A batch of ' + (e.rows || []).length + ' sent from this browser on ' + new Date(e.at).toLocaleString() + ' is not on the chain. Those recipients are being held back until it is, so nothing is sent twice.', 'warn', lookFor);
         continue;
       }
-      // A replacement that did land is only ours if it is the same call to the same place.
-      if (e.replacedBy && rc.to && e.bulk && String(rc.to).toLowerCase() !== String(e.bulk).toLowerCase()) {
-        if (!quiet) log('The transaction that replaced a batch from ' + new Date(e.at).toLocaleString() + ' went somewhere else, so that batch never ran. Those recipients are back in the list.', 'warn', e.replacedBy);
-        dropPending(e.pid); resolved++; continue;
-      }
+
       const chunk = rowsFromJson(e.rows);
       if (rc.status === 0) { log('A batch sent on ' + new Date(e.at).toLocaleString() + ' failed on the chain, so nothing in it moved. Those ' + chunk.length + ' recipients are back in the list.', 'warn', lookFor); dropPending(e.pid); resolved++; continue; }
       if (e.via === 'wallet') {
@@ -1495,6 +1610,7 @@
       for (let i = 0; i < list.length; i += bs) {
         if (!(await onSelectedChain())) { log('Stopped: the wallet is no longer on the selected network.', 'bad'); break; }
         const chunk = list.slice(i, i + bs); const [fn, args] = callArgs(chunk);
+        const before = await holdingsOf(chunk).catch(() => new Map());
         // The test run measured the chain as it was before any of this. Earlier batches have changed it, and
         // so has everyone else, so each batch is checked again against the state it will actually meet.
         if (i > 0) {
@@ -1508,7 +1624,9 @@
         // Written down before the wait: if this tab closes now, the next visit reads the receipt instead of
         // assuming none of these were paid.
         const pid = newPid();
-        if (!addPending({ pid, run: runKey(), chain: chainId(), bulk: bulkAddr, hash: tx.hash, at: Date.now(), rows: rowsToJson(chunk), via: 'bulk' })) {
+        if (!addPending({ pid, run: runKey(), chain: chainId(), bulk: bulkAddr, hash: tx.hash, at: Date.now(),
+                          rows: rowsToJson(chunk), via: 'bulk',
+                          call: { to: String(tx.to || '').toLowerCase(), data: String(tx.data || ''), value: String(tx.value || 0n), from: String(me || '').toLowerCase() } })) {
           log('  this browser stopped saving. That batch is on its way and this page can no longer keep track of it, so nothing more will be sent. Check ' + tx.hash.slice(0, 12) + '… on the explorer before sending to these wallets again.', 'bad', tx.hash);
           break;
         }
@@ -1524,12 +1642,13 @@
           if (e && e.code === 'TRANSACTION_REPLACED' && !e.cancelled && e.receipt && e.replacement
               && String(e.replacement.to || '').toLowerCase() === String(tx.to || '').toLowerCase()
               && String(e.replacement.data || '') === String(tx.data || '')) {
+            // Same destination and same calldata, so it is the batch you signed, sent again.
+            updatePending(pid, (ent) => { ent.hash = e.replacement.hash; ent.replacedBy = e.replacement.hash; });
             rc = e.receipt; log('  your wallet replaced that transaction with an identical one; following the replacement.', 'warn', rc.hash);
           } else if (e && e.code === 'TRANSACTION_REPLACED') {
             // Record what replaced it, so the next visit has something to look up instead of a hash that will
             // never have a receipt.
-            const l = loadPending(); const ent = l.find(x => x.pid === pid);
-            if (ent) { ent.replacedBy = (e.replacement && e.replacement.hash) || null; ent.cancelled = !!e.cancelled; savePending(l); }
+            updatePending(pid, (ent) => { ent.replacedBy = (e.replacement && e.replacement.hash) || null; ent.cancelled = !!e.cancelled; });
             log('  that transaction was replaced by a different one, so this batch cannot be accounted for. Check the explorer before sending again; nothing has been recorded as delivered.', 'bad');
             break;
           } else { throw e; }
@@ -1545,9 +1664,17 @@
           log('  this batch reported ' + r.skipped + ' skipped but they could not be matched to your list, so nothing from it has been recorded. Check the transaction before sending again.', 'bad', rc.hash);
           break;
         }
-        if (r.sent && !markDelivered(r.delivered)) break;   // the record failed: keep the batch pending and stop
+        // The receipt says the token accepted these. Ask the chain whether the recipients actually have them.
+        const check = await confirmArrival(r.delivered, before);
+        for (const sh of check.short.slice(0, 6)) log('  ' + sh.row.to + ' received ' + ethers.formatUnits(sh.got, decimals) + ', less than the ' + sh.row.raw + ' sent. This token takes a cut on transfer.', 'warn');
+        if (check.short.length > 6) log('  … and ' + (check.short.length - 6) + ' more received less than was sent.', 'warn');
+        if (check.missing.length) {
+          log('  ' + check.missing.length + ' of these were reported as sent by the token and have not arrived. They are NOT being recorded as delivered. This is what a contract that accepts a transfer and moves nothing looks like; check the token before sending to them again.', 'bad', rc.hash);
+          for (const m of check.missing.slice(0, 6)) log('    ' + m.to, 'bad');
+        }
+        if (check.arrived.length && !markDelivered(check.arrived)) break;   // the record failed: keep the batch pending and stop
         dropPending(pid);   // recorded, and only now no longer unaccounted for
-        log('  done: ' + r.sent + ' delivered' + (r.skipped ? ', ' + r.skipped + ' skipped' : '') + ' · gas ' + rc.gasUsed, 'ok');
+        log('  done: ' + check.arrived.length + ' arrived' + (check.missing.length ? ', ' + check.missing.length + ' did not' : '') + (r.skipped ? ', ' + r.skipped + ' skipped' : '') + ' · gas ' + rc.gasUsed, check.missing.length ? 'warn' : 'ok');
         if (stopFlag) { log('Stopped.', 'warn'); break; }
       }
       log('Finished. ' + sent + ' delivered' + (skipped ? ', ' + skipped + ' skipped' : '') + '.', 'ok');
@@ -1565,6 +1692,7 @@
     for (let i = 0; i < list.length; i += bs) {
       if (!(await onSelectedChain())) { log('Stopped: the wallet is no longer on the selected network.', 'bad'); break; }
       const chunk = list.slice(i, i + bs);
+      const before = await holdingsOf(chunk).catch(() => new Map());
       log('Batch ' + (Math.floor(i / bs) + 1) + ' of ' + Math.ceil(list.length / bs) + ': ' + chunk.length + ' transfers, sent by your wallet as itself …');
       try {
         let res;
@@ -1598,7 +1726,7 @@
           break;
         }
         const rcpt = await waitForCalls(id);
-        if (rcpt.hash) { const l = loadPending(); const e = l.find(x => x.pid === pid); if (e) { e.hash = rcpt.hash; savePending(l); } }
+        if (rcpt.hash) updatePending(pid, (e) => { e.hash = rcpt.hash; });
         if (rcpt.state === 'failed') { dropPending(pid); log('  the wallet reported this batch failed; nothing in it moved.', 'bad'); break; }
         if (rcpt.state !== 'confirmed') {
           // Unknown or partial: something may or may not have moved. Recording a delivery here would either
@@ -1608,10 +1736,16 @@
             : '  the wallet stopped reporting on this batch, so whether it landed is unknown. Check the explorer before sending again.', 'bad', rcpt.hash);
           break;
         }
-        sent += chunk.length;
-        if (!markDelivered(chunk)) break;                   // the record failed: keep the batch pending and stop
+        const check = await confirmArrival(chunk, before);
+        for (const sh of check.short.slice(0, 6)) log('  ' + sh.row.to + ' received less than was sent; this token takes a cut on transfer.', 'warn');
+        if (check.missing.length) {
+          log('  ' + check.missing.length + ' of these went through as a transaction and have not arrived. They are NOT being recorded as delivered.', 'bad', rcpt.hash);
+          for (const m of check.missing.slice(0, 6)) log('    ' + m.to, 'bad');
+        }
+        sent += check.arrived.length;
+        if (check.arrived.length && !markDelivered(check.arrived)) break;
         dropPending(pid);
-        log('  done: ' + chunk.length + ' delivered', 'ok', rcpt.hash);
+        log('  done: ' + check.arrived.length + ' arrived' + (check.missing.length ? ', ' + check.missing.length + ' did not' : ''), check.missing.length ? 'warn' : 'ok', rcpt.hash);
       } catch (e) {
         log('  stopped: ' + explainCallError(e), 'bad'); break;
       }
@@ -1621,24 +1755,37 @@
   }
   // EIP-5792 status: 100 pending, 200 confirmed, 400 offchain failure, 500 reverted entirely,
   // 600 reverted partially. Anything we cannot read is 'unknown', never a success.
+  // One reading of an EIP-5792 status, used both while waiting and when catching up after a reload. Having
+  // two of these is how 600 (reverted partly, so some of it may be on chain) came to be treated as 400
+  // (nothing happened) on the recovery path, which would have made already-paid rows sendable again.
+  //   100 pending · 200 confirmed · 400 failed off chain, nothing sent · 500 reverted entirely
+  //   600 reverted partly, some may have landed · anything else, unknown
+  // Only 400 and 500 mean nothing moved. Everything else is held.
+  function readCallsStatus(st) {
+    const raw = st && st.status;
+    const code = typeof raw === 'number' ? raw
+      : raw === 'CONFIRMED' ? 200 : raw === 'PENDING' ? 100 : raw === 'FAILED' ? 400 : null;
+    const receipts = (st && st.receipts) || [];
+    const hash = receipts.length ? receipts[receipts.length - 1].transactionHash : null;
+    if (code === null) return { state: 'unknown', hash };
+    if (code >= 600) return { state: 'partial', hash };
+    if (code >= 500) return { state: 'reverted', hash };
+    if (code >= 400) return { state: 'failed', hash };
+    if (code >= 200) {
+      if (!receipts.length) return { state: 'unknown', hash };
+      const anyFailed = receipts.some(r => r.status === '0x0' || r.status === 0);
+      return { state: anyFailed ? 'partial' : 'confirmed', hash };
+    }
+    return { state: 'pending', hash };
+  }
   async function waitForCalls(id) {
     for (let i = 0; i < 160; i++) {
       let st;
       try { st = await eth.request({ method: 'wallet_getCallsStatus', params: [id] }); }
       catch (e) { return { state: 'unknown', hash: null }; }
-      const raw = st && st.status;
-      const code = typeof raw === 'number' ? raw : raw === 'CONFIRMED' ? 200 : raw === 'PENDING' ? 100 : null;
-      const receipts = (st && st.receipts) || [];
-      const hash = receipts.length ? receipts[receipts.length - 1].transactionHash : null;
-      if (code === null) return { state: 'unknown', hash };
-      if (code >= 600) return { state: 'partial', hash };
-      if (code >= 400) return { state: 'failed', hash };
-      if (code >= 200) {
-        if (!receipts.length) return { state: 'unknown', hash };
-        const anyFailed = receipts.some(r => r.status === '0x0' || r.status === 0);
-        return { state: anyFailed ? 'partial' : 'confirmed', hash };
-      }
-      await new Promise(r => setTimeout(r, 1500));
+      const r = readCallsStatus(st);
+      if (r.state !== 'pending') return r;
+      await new Promise(r2 => setTimeout(r2, 1500));
     }
     return { state: 'unknown', hash: null };
   }
@@ -1706,6 +1853,7 @@
   }
   window.__decodeReason = decodeReason;   // used by the page's own checks
   window.__readBatchReceipt = readBatchReceipt;
+  window.__loadPendingForTest = loadPending;
   window.ethers = window.ethers || ethers;
 
   // a link to the verified source, so "trust me" is checkable

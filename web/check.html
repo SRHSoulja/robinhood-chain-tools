@@ -122,6 +122,12 @@
   const kv = (pairs) => h('dl', { class: 'kv' }, pairs.filter(Boolean).flatMap(([k, v]) => [h('dt', { text: k }), h('dd', {}, typeof v === 'string' ? document.createTextNode(v) : v)]));
   const note = (cls, title, body) => h('div', { class: 'note ' + cls }, h('b', { text: title }), typeof body === 'string' ? document.createTextNode(body) : body);
   const mono = (t) => h('span', { class: 'mono', text: t });
+  // Every plain-English sentence on this page is a reading of an interface, not a statement about what the
+  // code does. That belongs directly under the sentence: by the time a reader reaches the contract card
+  // further down, they have already decided what the transaction means.
+  const readingCaption = (target) => h('p', { class: 'mut', style: 'font-size:12.5px;margin:-6px 0 10px', text:
+    'That is what this function name and these arguments conventionally mean. It is not a statement about what this contract does with them, which only reading its code can tell you'
+    + (target && target.verified === false ? ', and this one has published none.' : '.') });
   const link = (addrOrHash, label, kind) => h('a', { class: 'mono', href: cfg().explorer + '/' + (kind || 'address') + '/' + addrOrHash, text: label || addrOrHash });
   const short = (a) => (a && a.length > 14 ? a.slice(0, 8) + '…' + a.slice(-6) : a || '');
   const say = (m, cls) => { const el = $('msg'); el.textContent = m || ''; el.className = 'msg' + (cls ? ' ' + cls : ''); };
@@ -324,8 +330,13 @@
   async function readAddress(addr) {
     const p = rp();
     const out = { address: ethers.getAddress(addr), code: '0x', verified: false, abi: null, name: null, proxy: null, token: null, standard: null, delegated: null };
-    out.code = await p.getCode(out.address).catch(() => '0x');
-    out.isContract = out.code !== '0x';
+    // A network error is not an answer. Treating one as "no code here" turns a live contract into "an
+    // ordinary wallet" and, on a call, into "this does nothing at all": a false all-clear built out of a
+    // timeout. Three states, and the unreadable one never becomes a conclusion.
+    out.code = await p.getCode(out.address).then((c) => c, () => null);
+    out.codeUnreadable = out.code === null;
+    if (out.codeUnreadable) out.code = '0x';
+    out.isContract = !out.codeUnreadable && out.code !== '0x';
     out.balance = await p.getBalance(out.address).catch(() => null);
     out.nonce = await p.getTransactionCount(out.address).catch(() => null);
 
@@ -377,6 +388,10 @@
           if (impl && impl !== ethers.ZeroAddress) { out.proxy.beacon = out.proxy.target; out.proxy.target = ethers.getAddress(impl); }
         } catch (e) { out.proxy.beaconUnread = true; }
       }
+      // The forwarder's ABI describes the forwarder. Once this is known to be a proxy, that ABI is set aside
+      // rather than left in place as a fallback: decoding a call against code that does not run it, and
+      // labelling the result "the contract's published source", is worse than saying nothing.
+      out.proxyOwnAbi = out.abi; out.abi = null;
       const res = await explorerJson('/smart-contracts/' + out.proxy.target);
       const impl = res.data;
       out.proxy.verified = res.ok ? !!(impl && impl.is_verified) : null;
@@ -386,7 +401,9 @@
         // can do, and every piece of calldata it decodes, has to come from the code that actually runs.
         if (impl.abi && impl.abi.length) { out.abi = impl.abi; out.abiFrom = 'implementation'; }
       }
-      out.proxy.code = await p.getCode(out.proxy.target).catch(() => '0x');
+      out.proxy.code = await p.getCode(out.proxy.target).then((c) => c, () => null);
+      if (out.proxy.code === null) { out.proxy.codeUnreadable = true; out.proxy.code = '0x'; }
+      if (!out.abi) out.implUnknown = true;   // nothing to decode against but conventions
     }
 
     // What standard it claims, and its token facts, read from the contract rather than from a label.
@@ -544,8 +561,8 @@
       } catch (e) {}
       return null;
     };
-    if (abi) { const r = tryWith(new ethers.Interface(abi), 'the contract’s published source'); if (r) return r; }
-    const r = tryWith(KNOWN_IFACE, 'a standard this page recognises');
+    if (abi) { const r = tryWith(new ethers.Interface(abi), 'the interface this contract publishes'); if (r) return r; }
+    const r = tryWith(KNOWN_IFACE, 'the shape of a standard this page recognises');
     if (r) return r;
     return { unknown: true, selector: data.slice(0, 10), rest: data.slice(10) };
   }
@@ -564,10 +581,17 @@
     return out;
   }
   // Renders each nested call the way the outer one is described, so a warning cannot hide one level down.
+  const MAX_INNER_DEPTH = 6;
   async function renderInner(parsed, target, depth) {
-    if ((depth || 0) > 3) return null;
+    const d = depth || 0;
     const inner = innerCalls(parsed, target && target.address);
     if (!inner.length) return null;
+    // A limit has to exist, and it has to be visible. Returning null at the cutoff is how an approval five
+    // levels down disappears from a page that has just said the carried calls are all listed.
+    if (d >= MAX_INNER_DEPTH) {
+      return note('bad', inner.length + ' more call' + (inner.length === 1 ? '' : 's') + ' below this point are NOT shown',
+        'They are nested deeper than this page will follow. Nothing above accounts for what they do, so treat this transaction as unexplained. The raw calldata is at the bottom of the page and contains all of it.');
+    }
     const rows = [];
     for (const c of inner) {
       const t = ethers.isAddress(String(c.to || '')) ? await readAddress(c.to).catch(() => null) : null;
@@ -580,7 +604,10 @@
           ? h('div', { class: 'bad', text: 'This inner call is an unlimited approval.' }) : null,
         (p.signature === 'setApprovalForAll(address,bool)' && p.args[1])
           ? h('div', { class: 'bad', text: 'This inner call hands over a whole collection.' }) : null,
-        await renderInner(p, t, (depth || 0) + 1),
+        p.extra ? h('div', { class: 'bad', text: 'This inner call carries ' + p.extra + ' bytes beyond its arguments, which nothing here can account for.' }) : null,
+        t && t.codeUnreadable ? h('div', { class: 'bad', text: 'The code at that address could not be read, so nothing about this call is settled.' }) : null,
+        h('details', {}, [h('summary', { class: 'mut', text: 'raw bytes' }), h('pre', { text: (String(c.data).slice(2).match(/.{1,64}/g) || []).join('\n') })]),
+        await renderInner(p, t, d + 1),
       ]));
     }
     return card('Calls carried inside this one', rows);
@@ -720,10 +747,11 @@
     out(
       card(null,
         h('p', { class: 'lede', text: sentence || (parsed.empty ? 'A plain transfer of ETH, with no contract call.' : parsed.unknown ? 'A call this page cannot name: the contract has published no source and the function is not a standard one.' : parsed.signature) }),
+        sentence ? readingCaption(target) : null,
         h('div', {}, [
           h('span', { class: 'pill ' + (failed ? 'bad' : 'ok'), text: failed ? 'failed' : rc ? 'succeeded' : 'not mined yet' }),
           tx && tx.value > 0n ? h('span', { class: 'pill warn', text: ethers.formatEther(tx.value) + ' ETH attached' }) : null,
-          parsed.source ? h('span', { class: 'pill', text: 'decoded from ' + parsed.source }) : null,
+          parsed.source ? h('span', { class: 'pill', text: 'read against ' + parsed.source }) : null,
         ]),
         failed && why ? note('bad', 'Why it failed', why) : null,
         kv([
@@ -761,6 +789,14 @@
   }
 
   function contractCard(o, title) {
+    if (o.codeUnreadable) {
+      return card(title || 'This address', [
+        h('div', {}, h('span', { class: 'pill bad', text: 'the chain would not say' })),
+        note('bad', 'This page could not read the code at this address',
+          'The node did not answer, so there is no way to tell from here whether this is a wallet, a contract, or an upgraded wallet, and nothing below could be worked out without that. This is not evidence that the address is empty. Try again in a moment.'),
+        kv([['Address', link(o.address, o.address)]]),
+      ]);
+    }
     if (!o.isContract) {
       return card(title || 'This address', kv([
         ['What it is', o.delegated ? 'a wallet running delegated code (EIP-7702)' : 'an ordinary wallet, with no code'],
@@ -774,9 +810,17 @@
     const powers = powersOf(fns.list);
     return card(title || 'The contract', [
       h('div', {}, [
-        h('span', { class: 'pill ' + (o.verified ? 'ok' : o.verified === null ? 'warn' : 'bad'),
-          text: o.verified ? (o.partial ? 'source published, partly matched' : 'source published and matched')
-              : o.verified === null ? 'could not check for a published source' : 'no source published' }),
+        // For a proxy this describes the implementation, because that is the code that runs. A verified
+        // forwarder in front of unverified code is not a verified contract.
+        h('span', { class: 'pill ' + (o.proxy
+              ? (o.proxy.verified ? 'ok' : o.proxy.verified === null ? 'warn' : 'bad')
+              : (o.verified ? 'ok' : o.verified === null ? 'warn' : 'bad')),
+          text: o.proxy
+            ? (o.proxy.verified ? 'the code it runs has published source'
+              : o.proxy.verified === null ? 'could not check the code it runs'
+              : 'the code it runs has published no source')
+            : (o.verified ? (o.partial ? 'source published, partly matched' : 'source published and matched')
+              : o.verified === null ? 'could not check for a published source' : 'no source published') }),
         o.standard ? h('span', { class: 'pill', text: o.standard }) : null,
         o.proxy ? h('span', { class: 'pill warn', text: 'proxy: the code can be swapped' }) : null,
         o.paused === true ? h('span', { class: 'pill bad', text: 'transfers are paused right now' }) : null,
@@ -859,7 +903,9 @@
       warnings.push(['bad', 'This hands over the whole collection', 'Not one NFT: every one you hold now and every one you ever hold in this collection, until you revoke it.']);
     if (parsed.signature && /^(transferOwnership|renounceOwnership|upgradeTo)/.test(parsed.signature))
       warnings.push(['warn', 'This changes who controls the contract', 'Read the address it is being handed to before signing.']);
-    if (!target.isContract && !target.delegated)
+    if (target.codeUnreadable)
+      warnings.push(['bad', 'The code at that address could not be read', 'The node did not answer, so nothing on this page can tell you what is there. Anything below was worked out without knowing whether this address holds a contract at all. Try again in a moment rather than acting on this.']);
+    else if (!target.isContract && !target.delegated)
       warnings.push(['bad', 'There is no contract at that address', 'A call to an address with no code does nothing at all and still costs gas. Check the address.']);
     if (target.isContract && target.verified === false)
       warnings.push(['warn', 'The contract you are calling has published no source', 'You can still see what it did in the simulation below, but not what it will do under other conditions.']);
@@ -881,11 +927,13 @@
     out(
       card(null,
         h('p', { class: 'lede', text: sentence || (parsed.unknown ? 'A call this page cannot name: the contract has published no source and the function is not a standard one.' : parsed.empty ? 'No calldata: this is a plain transfer of ETH.' : parsed.signature) }),
+        sentence ? readingCaption(target) : null,
         h('div', {}, [
           sim ? h('span', { class: 'pill ' + (sim.ok ? 'ok' : 'bad'), text: sim.ok ? 'would succeed' : 'would fail' }) : h('span', { class: 'pill', text: 'could not be simulated' }),
           value && BigInt(value) > 0n ? h('span', { class: 'pill warn', text: ethers.formatEther(BigInt(value)) + ' ETH attached' }) : null,
           sim ? h('span', { class: 'pill', text: 'about ' + sim.gasUsed.toString() + ' gas' }) : null,
-          parsed.source ? h('span', { class: 'pill', text: 'decoded from ' + parsed.source }) : null,
+          parsed.source ? h('span', { class: 'pill', text: 'read against ' + parsed.source }) : null,
+          target && target.implUnknown ? h('span', { class: 'pill warn', text: 'the code behind this proxy published nothing to read against' }) : null,
         ]),
         simErr ? note('warn', 'The node would not run the preview', simErr) : null,
         warnings.map(([cls, title, body]) => note(cls, title, body)),
@@ -917,12 +965,15 @@
       try {
         const j = JSON.parse(s);
         const list = Array.isArray(j) ? j : (Array.isArray(j.params) ? j.params : (Array.isArray(j.calls) ? j.calls : [j]));
+        // Every entry is kept. Filtering out the ones that do not look like calls is how a second entry
+        // written as {input, value} with no `to` (a contract creation, say) vanished and left the request
+        // looking like one benign call.
         const calls = list
           .map((o) => (o && o.params && Array.isArray(o.params) ? o.params[0] : o))
-          .filter((o) => o && (o.to || o.data))
-          .map((o) => ({ to: o.to, data: o.data || o.input || '0x', from: o.from, value: o.value }));
-        if (calls.length === 1) return Object.assign({ kind: 'call' }, calls[0]);
-        if (calls.length > 1) return { kind: 'batch', calls };
+          .filter((o) => o && typeof o === 'object')
+          .map((o) => ({ to: o.to || null, data: o.data || o.input || '0x', from: o.from, value: o.value }));
+        if (calls.length === 1 && calls[0].to) return Object.assign({ kind: 'call' }, calls[0]);
+        if (calls.length >= 1) return { kind: 'batch', calls };
       } catch (e) { return { kind: 'bad', why: 'That looks like JSON but it will not parse.' }; }
     }
     const url = s.match(/(?:tx|address|token)\/(0x[0-9a-fA-F]{40,64})/);
@@ -957,7 +1008,15 @@
           'Everything below is part of the same request. A batch is only as safe as its most dangerous call, and that is rarely the first one.')];
         for (let i = 0; i < parsedInput.calls.length && i < 20; i++) {
           const c = parsedInput.calls[i];
-          if (!ethers.isAddress(String(c.to || ''))) { cards.push(note('bad', 'Call ' + (i + 1) + ' has no valid destination', String(c.to || '(none)'))); continue; }
+          if (!ethers.isAddress(String(c.to || ''))) {
+            cards.push(card('Call ' + (i + 1) + ' of ' + parsedInput.calls.length, [
+              note('bad', 'This call has no destination this page can read',
+                'A request entry with no `to` is usually a contract being created, and this page cannot tell you what that contract would do. It is part of the same request as the others, so nothing here is the whole picture.'),
+              kv([['Destination', String(c.to || '(none given)')], ['Value', c.value ? String(c.value) : '0'], ['Length', String(Math.max(0, (String(c.data).length - 2) / 2)) + ' bytes']]),
+              h('pre', { text: (String(c.data).slice(2).match(/.{1,64}/g) || []).join('\n') }),
+            ]));
+            continue;
+          }
           const t = await readAddress(c.to).catch(() => null);
           if (stale(seq)) return;
           const p = parseData(c.data, t && t.abi);
@@ -966,6 +1025,7 @@
           const sentence = p.unknown || p.empty ? null : describeCall(p, { target: t });
           cards.push(card('Call ' + (i + 1) + ' of ' + parsedInput.calls.length, [
             h('p', { class: 'lede', text: sentence || (p.empty ? 'A plain transfer of ETH.' : p.unknown ? 'A call this page cannot name: ' + p.selector : p.signature) }),
+            sentence ? readingCaption(t) : null,
             h('div', {}, [
               sim ? h('span', { class: 'pill ' + (sim.ok ? 'ok' : 'bad'), text: sim.ok ? 'would succeed' : 'would fail' }) : null,
               h('span', { class: 'pill', text: 'to ' + short(String(c.to)) }),

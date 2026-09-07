@@ -14,6 +14,23 @@ const ME  = '0x00000000000000000000000000000000000000Me'.slice(0, 42);
 const A = (n) => '0x' + n.toString(16).padStart(40, '0');
 // the three airdrop entry points and their …WithGas twins, so the mock can answer a simulated batch
 const BULK_SELECTORS = ['0xb097e731', '0x97e763b3', '0xd00a888d', '0x45310558', '0xc0d13d4e', '0xeb0f0b68'];
+// The deployed address the page is pointed at. The mock needs it as a literal; the H-01 test asserts the
+// page agrees, so this cannot drift silently.
+const BULK_FOR_MOCK = '0x91949d7328387a3613b29e56f6979ae893ccd23c';
+const padAddr = (a) => '0x' + a.slice(2).padStart(64, '0');
+// The batch summary BulkSend emits. The page now requires exactly one, naming the right token and sender,
+// before it will read a receipt at all, so a mocked send has to produce a real-shaped one.
+const SUMMARY_TOPIC = {
+  '721': '0x0650ec14a2586ec091c567c013a2e3ee5a6aac789d20c75c67208e1d8c9e69df',
+  '1155': '0x9bbedf900ea620d4c4355552ede90c302d1ada0fedc6a5537745ebd405c5502e',
+  '20': '0xcb7d29f13c142d4a4498ea2cedec3808e56c002b8c36c11ce2a9cde24fff86be',
+};
+const summaryLog = (bulk, std, token, from, sent, skipped) => ({
+  address: bulk, topics: [SUMMARY_TOPIC[std], padAddr(token), padAddr(from)],
+  data: '0x' + BigInt(sent).toString(16).padStart(64, '0') + BigInt(skipped || 0).toString(16).padStart(64, '0'),
+  blockNumber: '0x1000', transactionHash: '0x' + 'cd'.repeat(32), transactionIndex: '0x0',
+  blockHash: '0x' + '11'.repeat(32), logIndex: '0x0', removed: false,
+});
 const bulkAddress = (page) => page.evaluate(() => {
   const a = document.querySelector('#contractLine a');
   return a ? a.textContent.trim() : null;
@@ -59,6 +76,18 @@ function chainAnswer(O) {
       }
       case 'wallet_getCallsStatus': return O.callsStatus || { status: 200, receipts: [{ transactionHash: '0x' + 'ab'.repeat(32), status: '0x1', logs: [] }] };
       case 'eth_sendTransaction': return '0x' + 'cd'.repeat(32);
+      // Ethers looks the transaction up after sending it, to build the object it hands back. Answering null
+      // here leaves it polling forever, which is why a send used to appear to hang in these tests.
+      case 'eth_getTransactionByHash': {
+        const h = String(params[0] || '0x' + 'cd'.repeat(32));
+        return {
+          hash: h, blockHash: '0x' + '11'.repeat(32), blockNumber: '0x1000', transactionIndex: '0x0',
+          from: me, to: A(0xb01c), value: '0x0', gas: '0x186a0', gasPrice: '0x989680',
+          maxFeePerGas: '0x989680', maxPriorityFeePerGas: '0x0', input: '0x', nonce: '0x1',
+          type: '0x2', chainId: '0xb626', accessList: [],
+          v: '0x1', r: '0x' + '11'.repeat(32), s: '0x' + '22'.repeat(32),
+        };
+      }
       case 'eth_getTransactionReceipt': {
         if (O.noReceipt) return null;
         const h = String(params[0] || '0x' + 'cd'.repeat(32));
@@ -67,7 +96,8 @@ function chainAnswer(O) {
           status: '0x1', transactionHash: h, transactionIndex: '0x0', blockNumber: '0x1000',
           blockHash: '0x' + '11'.repeat(32), from: me, to: A(0xb01c), contractAddress: null,
           cumulativeGasUsed: '0x1', gasUsed: '0x1', effectiveGasPrice: '0x989680', type: '0x2',
-          logsBloom: '0x' + '00'.repeat(256), logs: O.receiptLogs || [],
+          logsBloom: '0x' + '00'.repeat(256),
+          logs: O.summary ? [summaryLog(O.summary.bulk, O.summary.std, O.summary.token, me, O.summary.sent, O.summary.skipped)] : (O.receiptLogs || []),
         };
       }
       case 'eth_estimateGas': return '0x186a0';
@@ -90,7 +120,16 @@ function chainAnswer(O) {
           return enc(0); }
         if (sel === '0x313ce567') return to === TOK ? enc(O.decimals ?? 18) : null;
         if (sel === '0x06fdde03' || sel === '0x95d89b41') return str('Test');
-        if (sel === '0x70a08231') return enc(O.balance ?? '1000000000000000000000');
+        // balanceOf(owner): the sender's balance is known; anyone else's is "could not ask" unless a test
+        // says otherwise, which the page treats as no evidence either way rather than as non-arrival.
+        if (sel === '0x70a08231') {
+          const who = '0x' + data.slice(34, 74);
+          if (who.toLowerCase() === me.toLowerCase()) return enc(O.balance ?? '1000000000000000000000');
+          if (O.recipientBalance !== undefined) return enc(O.recipientBalance);
+          return null;
+        }
+        // ownerOf(id): only answered when a test is exercising the after-the-fact arrival check
+        if (sel === '0x6352211e') return O.ownerOf ? '0x' + O.ownerOf.slice(2).padStart(64, '0') : null;
         if (sel === '0x00fdd58e') return enc(O.balance1155 ?? 1000);
         if (sel === '0xdd62ed3e') return enc(O.allowance ?? '1000000000000000000000');
         if (sel === '0x098144d4') return O.gated ? enc(BigInt('0xA000027A9B2802E1ddf7000061001e5c005A0000')) : null;
@@ -671,6 +710,60 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
     /Run in order/.test(logText) && /stops at/.test(logText), logText.slice(0, 300));
   check('T-M-01 and the page says the whole transaction would be lost, not just that row',
     /none of it would land/.test(logText), logText.slice(0, 400));
+  await page.close();
+}
+
+// ---- records written by the previous version are carried across, not dropped -----
+{
+  const page = await open(browser, { approved: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  const migrated = await page.evaluate(() => {
+    localStorage.setItem('bulksend:pending', JSON.stringify([
+      { pid: 'old1', run: 'r', chain: 46630, hash: '0x' + 'aa'.repeat(32), at: Date.now(), via: 'bulk', rows: [{ to: '0x1', id: null, amount: '1', k: 'a#1' }] },
+      { pid: 'old2', run: 'r', chain: 46630, hash: '0x' + 'bb'.repeat(32), at: Date.now(), via: 'bulk', rows: [{ to: '0x2', id: null, amount: '1', k: 'b#1' }] },
+    ]));
+    const keysBefore = Object.keys(localStorage).filter((k) => k.startsWith('bulksend:pending'));
+    window.__loadPendingForTest();
+    const keysAfter = Object.keys(localStorage).filter((k) => k.startsWith('bulksend:pending'));
+    return { before: keysBefore, after: keysAfter.sort() };
+  });
+  check('a pending record from the previous storage shape is not lost on upgrade',
+    migrated.after.includes('bulksend:pending:old1') && migrated.after.includes('bulksend:pending:old2'),
+    JSON.stringify(migrated));
+  check('and the old key is cleared once every record has been moved',
+    !migrated.after.includes('bulksend:pending'), JSON.stringify(migrated.after));
+  await page.close();
+}
+
+// ---- H-06: the token saying it sent is not the chain saying it arrived -----------
+{
+  const landed = A(0xe9);
+  const page = await open(browser, { approved: true, ownerOf: landed, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 } });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, landed + ',4\n');
+  await page.click('#send'); await page.waitForTimeout(7000);
+  const logText = await text(page, '#log');
+  check('H-06 a row the chain agrees arrived is recorded as arrived', /1 arrived/.test(logText), logText.slice(-200));
+  await page.close();
+}
+
+// ---- H-06: and a token that reports success while moving nothing is caught -------
+{
+  const page = await open(browser, { approved: true, ownerOf: A(0xdead), summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 } });   // still owned by the sender
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0xea) + ',4\n');
+  await page.click('#send'); await page.waitForTimeout(7000);
+  const logText = await text(page, '#log');
+  check('H-06 a transfer the token reported but the chain did not make is not recorded',
+    /have not arrived/.test(logText) && /NOT being recorded/.test(logText), logText.slice(-320));
+  check('H-06 and it is named as what it is', /accepts a transfer and moves nothing/.test(logText), logText.slice(-320));
+  const stillFresh = await page.evaluate(() => {
+    const k = Object.keys(localStorage).find((x) => x.startsWith('bulksend:46630:'));
+    return k ? JSON.parse(localStorage.getItem(k) || '[]').length : 0;
+  });
+  check('H-06 so the row is not suppressed on the next run', stillFresh === 0, 'delivered keys: ' + stillFresh);
   await page.close();
 }
 

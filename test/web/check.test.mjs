@@ -33,6 +33,7 @@ function answer(O) {
       case 'eth_getBalance': return '0xde0b6b3a7640000';
       case 'eth_getTransactionCount': return '0x5';
       case 'eth_getCode': {
+        if ((O.codeUnreadable || []).map((x) => x.toLowerCase()).includes(p0)) throw new Error('node unavailable');
         if (p0 === NFT || p0 === TOK) return codeWith([SEL.mint, SEL.pause]);
         if (p0 === NASTY) return codeWith([SEL.mint, SEL.blacklist, SEL.setFee]);
         if (p0 === PROXY) return '0x363d3d373d3d3d363d73' + IMPL.slice(2) + '5af43d82803e903d91602b57fd5bf3';
@@ -87,7 +88,9 @@ async function open(browser, opts = {}) {
     if (url.includes('api.coinbase.com')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { amount: '2500' } }) });
     if (url.includes('rpc.') && req.method() === 'POST') {
       let body; try { body = JSON.parse(req.postData() || '{}'); } catch { body = {}; }
-      const one = (r) => ({ jsonrpc: '2.0', id: r.id, result: ans(r.method, r.params || []) });
+      // A mock that throws stands for a node that will not answer, which is a case the page has to handle.
+      const one = (r) => { try { return { jsonrpc: '2.0', id: r.id, result: ans(r.method, r.params || []) }; }
+                           catch (e) { return { jsonrpc: '2.0', id: r.id, error: { code: -32000, message: String(e.message || 'node error') } }; } };
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify(Array.isArray(body) ? body.map(one) : one(body)) });
     }
     return route.fulfill({ status: 204, body: '' });
@@ -376,6 +379,74 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
     /Calls carried inside this one/.test(t), t.slice(0, 300));
   check('T-H-03 and an unlimited approval one level down still gets its warning',
     /inner call is an unlimited approval/.test(t), t.slice(0, 600));
+  await page.close();
+}
+
+// ---- H-04: a read that failed is not a read that came back empty -----------------
+{
+  const page = await open(browser, { codeUnreadable: [NASTY] });
+  const t = await ask(page, NASTY, null, 5000);
+  check('H-04 an unreadable code read is never called an ordinary wallet', !/ordinary wallet/.test(t), t.slice(0, 260));
+  check('H-04 it says the chain would not answer', /could not read the code/.test(t), t.slice(0, 300));
+  await page.close();
+}
+
+// ---- H-04: and the same on a call, where the wrong answer is an all-clear --------
+{
+  const page = await open(browser, { codeUnreadable: [NASTY] });
+  const t = await ask(page, JSON.stringify({ to: NASTY, data: '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + 'f'.repeat(64) }), ME, 6000);
+  check('H-04 a call to an unreadable address is not described as doing nothing',
+    !/There is no contract at that address/.test(t), t.slice(0, 300));
+  check('H-04 and the unknown is stated where the answer is', /could not be read/.test(t), t.slice(0, 400));
+  await page.close();
+}
+
+// ---- H-05: a limit that hides things has to say so ------------------------------
+{
+  const page = await open(browser, {});
+  const deep = await page.evaluate(([spender]) => {
+    const iface = new window.ethers.Interface(['function approve(address,uint256)', 'function multicall(bytes[])']);
+    let d = iface.encodeFunctionData('approve', [spender, (1n << 256n) - 1n]);
+    for (let i = 0; i < 8; i++) d = iface.encodeFunctionData('multicall', [[d]]);
+    return d;
+  }, [A(0x1111)]);
+  const t = await ask(page, JSON.stringify({ to: TOK, data: deep }), ME, 10000);
+  check('H-05 calls nested past the limit are reported as not shown, never dropped', /are NOT shown/.test(t), t.slice(0, 400));
+  await page.close();
+}
+
+// ---- H-05: an entry with no destination is still part of the request -------------
+{
+  const page = await open(browser, {});
+  const t = await ask(page, JSON.stringify([{ to: NFT, data: '0x06fdde03' }, { input: '0x60806040', value: '0x0' }]), ME, 6000);
+  check('H-05 a request entry with no destination is shown, not silently dropped',
+    /is 2 calls, not one/.test(t) && /no destination this page can read/.test(t), t.slice(0, 400));
+  await page.close();
+}
+
+// ---- M-01: the sentence says what it is a reading of ----------------------------
+{
+  const verified = {};
+  verified[NFT] = { is_verified: true, name: 'Test Collection', abi: [
+    { type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'tokenId', type: 'uint256' }] },
+  ] };
+  const page = await open(browser, { verified });
+  const t = await ask(page, JSON.stringify({ to: NFT, data: '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + word(1).slice(2) }), ME, 6000);
+  check('M-01 the plain-English sentence is labelled as a convention, next to itself', /conventionally mean/.test(t), t.slice(0, 400));
+  check('M-01 and the page does not claim to have read the code', !/decoded from the contract/.test(t), t.slice(0, 400));
+  await page.close();
+}
+
+// ---- M-02: a proxy is not decoded against the forwarder's ABI -------------------
+{
+  const verified = {};
+  verified[PROXY] = { is_verified: true, name: 'Forwarder', abi: [
+    { type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 'spender', type: 'address' }, { name: 'value', type: 'uint256' }] },
+  ] };
+  const page = await open(browser, { verified });   // the implementation has no explorer entry, so no ABI
+  const t = await ask(page, PROXY, null, 6000);
+  check('M-02 a proxy whose implementation published nothing does not borrow the forwarder source',
+    /the code it runs has published no source/.test(t) && !/source published and matched/.test(t), t.slice(0, 500));
   await page.close();
 }
 

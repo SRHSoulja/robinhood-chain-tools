@@ -50,6 +50,15 @@ WC_SHA256=""
 if [ "$TARGET" = "airdrop" ] && [ -n "${WC_BUNDLE_URL:-}" ]; then
   [ -f "$ROOT/web/wc.js" ] || { echo "WC_BUNDLE_URL is set but web/wc.js is missing: refusing to publish a connector nobody can check" >&2; exit 1; }
   WC_SHA256="$(sha256sum "$ROOT/web/wc.js" | cut -d' ' -f1)"
+  # The digest reviewers were given, not merely whatever file is sitting here at publish time.
+  EXPECTED="$(cat "$ROOT/web/wc-build/EXPECTED-SHA256" 2>/dev/null | tr -d '[:space:]')"
+  if [ -n "$EXPECTED" ] && [ "$EXPECTED" != "$WC_SHA256" ]; then
+    echo "web/wc.js does not match web/wc-build/EXPECTED-SHA256" >&2
+    echo "  file     $WC_SHA256" >&2
+    echo "  expected $EXPECTED" >&2
+    echo "Refusing to publish: update the expected digest deliberately if the bundle really changed." >&2
+    exit 1
+  fi
   echo "connector pinned to sha256 $WC_SHA256"
 fi
 

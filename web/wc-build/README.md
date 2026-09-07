@@ -4,9 +4,10 @@
 rather than from a third party's CDN. It is 2 MB, which is why it ships as a built file rather than as source.
 
     cd web/wc-build
-    npm ci            # the lockfile pins every transitive dependency
+    npm ci            # package-lock.json pins every transitive dependency
     npm run build     # writes ../wc.js
     sha256sum ../wc.js
+    cat EXPECTED-SHA256
 
 The digest of the committed file is in `EXPECTED-SHA256`, and `deploy/publish.sh` bakes that digest into the
 Worker, which refuses to serve a `/wc.js` that does not match it. So the guarantee is not "this file was
