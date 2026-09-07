@@ -5,14 +5,16 @@ on:
   push:
     branches: [main]
   pull_request:
+# Actions are pinned to commit hashes, not tags: a tag can be moved, and this repository's argument is
+# that what runs is what was reviewed.
 permissions:
   contents: read          # nothing else: this workflow only needs to read the code it tests
 jobs:
   suite:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09   # v1
         with:
           version: stable
       - name: contract tests
@@ -25,7 +27,7 @@ jobs:
           art = json.load(open('out/BulkSend.sol/BulkSend.json'))['deployedBytecode']['object']
           print('built runtime:', len(art) // 2 - 1, 'bytes')
           PY
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4
         with:
           node-version: '22'
       - name: browser tests

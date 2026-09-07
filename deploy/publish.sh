@@ -38,6 +38,19 @@ if [ -z "${CF_API_TOKEN:-}" ]; then
   CF_API_TOKEN="$(tr -d '\n' < "$CF_API_TOKEN_FILE")"
 fi
 
+# What is published has to be what was reviewed. Publishing from a dirty tree ships bytes that exist only on
+# this machine, and the live-versus-repository check then passes against a file nobody else can see.
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  DIRTY="$(git -C "$ROOT" status --porcelain -- web deploy src 2>/dev/null | head -5)"
+  if [ -n "$DIRTY" ] && [ "${ALLOW_DIRTY_PUBLISH:-}" != "1" ]; then
+    echo "Refusing to publish: these are not committed." >&2
+    echo "$DIRTY" >&2
+    echo "Commit them, or set ALLOW_DIRTY_PUBLISH=1 if you know why you are shipping something unreviewed." >&2
+    exit 1
+  fi
+  echo "publishing $(git -C "$ROOT" rev-parse --short HEAD)${DIRTY:+ (with uncommitted changes, by request)}"
+fi
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

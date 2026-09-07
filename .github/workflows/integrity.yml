@@ -10,13 +10,15 @@ on:
   schedule:
     - cron: '17 */6 * * *'     # four times a day, offset so it is not competing with everyone else's hour
   workflow_dispatch:
+# Actions are pinned to commit hashes, not tags: a tag can be moved, and this repository's argument is
+# that what runs is what was reviewed.
 permissions:
   contents: read
 jobs:
   live-matches-source:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
 
       - name: the served pages are the files in this repository
         run: |
@@ -71,13 +73,20 @@ jobs:
           grep -qF "LIVE_CHAINS = new Set([46630])" /tmp/live.html || { echo "mainnet may no longer be disabled"; exit 1; }
           echo "  ok    contract $want, mainnet disabled"
 
-      - name: the deployed contract is still the one this source builds
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09   # v1
+      - name: the deployed contract is byte-for-byte what this source builds
         run: |
           set -euo pipefail
+          forge build
           addr="$(python3 -c "import json;print(json.load(open('deployments.testnet.json'))['BulkSend'])")"
           chain="$(curl -sS --max-time 30 -X POST https://rpc.testnet.chain.robinhood.com \
             -H 'content-type: application/json' \
             -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"$addr\",\"latest\"]}" \
             | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"])')"
-          echo "  on-chain runtime: $(( (${#chain} - 2) / 2 )) bytes at $addr"
-          [ "${#chain}" -gt 100 ] || { echo "no code at the recorded address"; exit 1; }
+          local_code="$(python3 -c "import json;print(json.load(open('out/BulkSend.sol/BulkSend.json'))['deployedBytecode']['object'])")"
+          echo "  on chain : $(( (${#chain} - 2) / 2 )) bytes at $addr"
+          echo "  built    : $(( (${#local_code} - 2) / 2 )) bytes from this source"
+          # Equality, not "there is something there". The whole point of the address being in this file is
+          # that it can be checked against what this source produces.
+          [ "$chain" = "$local_code" ] || { echo "the deployed runtime is NOT what this source builds"; exit 1; }
+          echo "  ok    identical"
