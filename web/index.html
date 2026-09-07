@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-g8KAwOYgJOOJfuFEQLrp+RAA6vcr8uxvkId3M439+VU='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-pPxJGfwrq+M/D1GEPl1dEQ696JLkmJHjjzq16EOTVOg='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -544,11 +544,14 @@
     const a = String(raw == null ? '' : raw).trim();
     if (!a) return 'this line has no wallet address on it';
     if (/\.eth$|\.[a-z]{2,}$/i.test(a)) return 'names like vitalik.eth are not supported here; paste the 0x address';
-    if (/^0x[0-9a-fA-F]{40}$/.test(a)) return 'that address is the right length but its checksum does not match ("'
-      + a.slice(0, 8) + '\u2026' + a.slice(-6) + '"). The capital letters in an address are a checksum, so this '
-      + 'means a character was changed, dropped or re-cased between the source and here. Copy it again from '
-      + 'wherever it came from. If you wrote these addresses yourself, put them in all lower case: that makes '
-      + 'no checksum claim and is accepted, though then nothing here can catch a typo for you';
+    if (/^0x[0-9a-fA-F]{40}$/.test(a)) return 'that address is the right length, but its capitals do not match '
+      + 'its own checksum ("' + a.slice(0, 8) + '\u2026' + a.slice(-6) + '"). The pattern of capitals in an '
+      + 'address is a checksum over the address itself, so this says one of two things: a character in it is '
+      + 'wrong, or the capitals were altered after it was copied. Nothing here can tell you which \u2014 only '
+      + 'checking it against wherever it came from can. Written with no capitals at all it will be accepted, '
+      + 'because an address with no capitals makes no checksum claim, but understand what that does: it turns '
+      + 'the check off, it does not make a wrong address right. An address that is wrong by one character '
+      + 'belongs to nobody, and anything sent there is gone for good';
     if (/^0x[0-9a-fA-F]+$/.test(a)) return 'that is ' + ((a.length - 2) / 2).toFixed(0) + ' bytes; a wallet address is 20';
     return 'that is not a wallet address ("' + a.slice(0, 30) + '")';
   }

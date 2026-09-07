@@ -1122,13 +1122,13 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
     await page.evaluate(() => document.querySelector('#problems').style.display) !== 'none' && /line 2:/.test(problems),
     problems.slice(0, 200));
   check('and the reason names the checksum, not just "not a wallet address"',
-    /checksum does not match/.test(problems), problems.slice(0, 240));
+    /capitals do not match its own checksum/.test(problems), problems.slice(0, 240));
   check('with the way out spelled out',
-    /all lower case/.test(problems), problems.slice(0, 400));
+    /no capitals at all it will be accepted/.test(problems) && /does not make a wrong address right/.test(problems), problems.slice(0, 400));
 
   // the two forms that are correct must both go through
   await setList(page, 'address,tokenId,quantity\n' + RAW.map((a, i) => a.toLowerCase() + ',' + (i + 1) + ',1').join('\n') + '\n');
-  check('the same file in lower case is accepted, as the message promises',
+  check('the same file with no capitals is accepted, as the message says',
     /3 recipients/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
   await page.close();
 }
