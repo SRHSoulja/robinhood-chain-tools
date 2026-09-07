@@ -89,6 +89,17 @@ to Worker scripts alone; whether the registrar has a transfer lock; and whether 
 are control-plane facts, and client-side hashes cannot protect anyone if the domain or the deploy credential
 is taken.
 
+## Independent monitoring
+
+`.github/workflows/integrity.yml` runs four times a day on GitHub's infrastructure, deliberately not on the
+one being watched. It needs no secrets. It fetches both live pages and the connector and compares them with
+the files in this repository, checks that the connector still matches `web/wc-build/EXPECTED-SHA256`, that
+plain HTTP is still refused and HSTS still sent, that the page still names the recorded contract and still has
+mainnet disabled, and that code is still deployed at that address. Any drift fails the job.
+
+A monitor inside the Cloudflare account tells you nothing about the case where that account is the problem,
+which is the case worth monitoring for.
+
 ## Previous review
 
 - Six internal review passes.
