@@ -63,10 +63,12 @@ jobs:
       - name: the page still points at the reviewed contract, and mainnet is still off
         run: |
           set -euo pipefail
-          page="$(curl -sSL --max-time 30 https://rhairdrop.gmgnrepeat.com/)"
+          # Written to a file rather than piped: `grep -q` exits as soon as it matches, which closes the pipe
+          # and, under pipefail, fails the step for a page that is perfectly correct.
+          curl -sSL --max-time 30 https://rhairdrop.gmgnrepeat.com/ > /tmp/live.html
           want="$(python3 -c "import json;print(json.load(open('deployments.testnet.json'))['BulkSend'])")"
-          echo "$page" | grep -q "$want" || { echo "the live page does not name $want"; exit 1; }
-          echo "$page" | grep -q "LIVE_CHAINS = new Set(\[46630\])" || { echo "mainnet may no longer be disabled"; exit 1; }
+          grep -qF "$want" /tmp/live.html || { echo "the live page does not name $want"; exit 1; }
+          grep -qF "LIVE_CHAINS = new Set([46630])" /tmp/live.html || { echo "mainnet may no longer be disabled"; exit 1; }
           echo "  ok    contract $want, mainnet disabled"
 
       - name: the deployed contract is still the one this source builds
