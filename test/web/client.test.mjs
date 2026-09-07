@@ -993,6 +993,78 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.close();
 }
 
+// ---- a correct CSV must never be reported as a broken file -----------------------
+// Reported by a real user: "I uploaded the CSV correctly, but it kept saying there was an error with the
+// CSV's format. I never got to send it." The rows were fine; the heading was not one of the handful of words
+// the page recognised, so it was read as a recipient, reported as "that is not a wallet address", and the
+// send stayed disabled behind the acknowledge-bad-lines gate. A heading is now any first line with no
+// address attempt in it, whatever it calls its columns.
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const HEADINGS = ['Recipient Address,NFT ID', 'user,tokenId', 'destination,tokenId', 'wallets,ids',
+                    'Holder Wallet,Serial', 'my list,the id', 'address,tokenId'];
+  const bad = [];
+  for (const h of HEADINGS) {
+    await setList(page, h + '\n' + A(0x51) + ',1\n' + A(0x52) + ',2\n');
+    const stat = await text(page, '#parseOut');
+    const shown = await page.evaluate(() => document.querySelector('#ackRow').style.display);
+    if (!/2 recipients/.test(stat) || shown !== 'none') bad.push(h + ' -> ' + stat.replace(/\s+/g, ' ').slice(0, 60));
+  }
+  check('a heading the page does not recognise is skipped, not called a bad recipient',
+    bad.length === 0, bad.join(' | '));
+
+  // and a first line that tries to be an address is still a broken row, never silently skipped
+  await setList(page, '0xnot-an-address,1\n' + A(0x51) + ',2\n');
+  check('but a first line that tries to be an address is still reported',
+    /not a wallet address|right length/.test(await text(page, '#problems')), await text(page, '#problems'));
+  await page.close();
+}
+
+// ---- spreadsheets write whole numbers their own way ------------------------------
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, 'address,tokenId\n' + A(0x51) + ',1.0\n' + A(0x52) + ',2.000\n');
+  check('a token id written as 1.0 by a spreadsheet is the token id 1',
+    /2 recipients/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
+
+  await setList(page, 'address,tokenId\n' + A(0x51) + ',1.5\n');
+  check('but 1.5 is still not a token id',
+    /not a whole token id/.test(await text(page, '#problems')), await text(page, '#problems'));
+
+  await setList(page, 'address,tokenId\n' + A(0x51) + ',1.23457E+11\n');
+  check('and a number the spreadsheet has rounded says so, rather than "no token id"',
+    /spreadsheet/.test(await text(page, '#problems')) && /formatted as text/.test(await text(page, '#problems')),
+    await text(page, '#problems'));
+  await page.close();
+}
+
+// ---- a file that is missing a whole column says so once, about the file ----------
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, ED, '1155');
+  await setList(page, 'address,tokenId\n' + A(0x51) + ',1\n' + A(0x52) + ',2\n');
+  const msg = await text(page, '#msgList');
+  check('an ERC-1155 file with no amount column is told that, not shown "null" on every line',
+    /no amount column/.test(msg) && !/null/.test(msg + (await text(page, '#problems'))), msg.slice(0, 200));
+  await page.close();
+}
+
+// ---- a file saved in the wrong encoding is named as that --------------------------
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, 'address,tokenId\n' + A(0x51) + ',1\n'.split('').join('\u0000'));
+  check('a UTF-16 file is reported as an encoding problem, not as bad addresses',
+    /CSV UTF-8/.test(await text(page, '#msgList')), (await text(page, '#msgList')).slice(0, 200));
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

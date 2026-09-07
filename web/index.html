@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-g84GqPJV3pHxdB51kuWSaTqvEARl2F+izyIBX3x0G4w='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-ezgA12N8xOVW9yOFFG6GmtDIrSqM6YhkKTYQ7zCLQvI='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -497,9 +497,12 @@
   // Other airdrop tools export a header row and read columns by name, so the order varies and "quantity"
   // means how many, not which id. Reading positionally would take a quantity column for a token id.
   const COLS = {
-    to:  ['address', 'wallet', 'recipient', 'recipients', 'to', 'holder', 'owner', 'account', 'addr', 'walletaddress'],
-    id:  ['tokenid', 'token_id', 'token id', 'id', 'nftid', 'nft_id', 'tokenids', 'token'],
-    qty: ['amount', 'quantity', 'qty', 'value', 'count', 'tokens', 'number', 'num'],
+    to:  ['address', 'addresses', 'wallet', 'wallets', 'walletaddress', 'recipient', 'recipients',
+          'recipientaddress', 'receiver', 'to', 'holder', 'holders', 'owner', 'account', 'addr', 'user',
+          'useraddress', 'destination', 'beneficiary'],
+    id:  ['tokenid', 'token_id', 'token id', 'id', 'ids', 'nftid', 'nft_id', 'nft', 'nftnumber', 'tokenids',
+          'token', 'tokennumber', 'edition', 'serial'],
+    qty: ['amount', 'amounts', 'quantity', 'qty', 'value', 'count', 'tokens', 'number', 'num', 'howmany'],
   };
   // RFC 4180: quoted fields may contain the separator, and "" is a literal quote. Splitting on punctuation
   // turns "1,234.5" into two cells and silently changes what someone is sending.
@@ -535,13 +538,43 @@
       return 'that is the token\u2019s own contract address. Tokens sent to their own contract are almost never recoverable';
     return null;
   }
+  // Spreadsheets write whole numbers as 1.0, and Excel turns a long token id into 1.23457E+11. The first is
+  // the same number and is accepted; the second has genuinely lost digits and is refused by name, because the
+  // real id cannot be recovered from it and guessing would send the wrong NFT.
+  const SCIENTIFIC = /^\d(\.\d+)?[eE][+-]?\d+$/;
+  // "1.0" and "1.000" are 1. "1.50" is not a whole number and is still refused: only zeros may follow.
+  const wholeText = (v) => {
+    const t = String(v == null ? '' : v).trim();
+    const m = /^(\d+)(?:\.0+)?$/.exec(t);
+    return m ? m[1] : null;
+  };
   // A quantity has to be a plain whole number. Anything else is a mistake worth stopping for, never a silent 1.
   function wholeNumber(v) {
     if (typeof v !== 'string') return null;
-    const t = v.trim();
-    if (!/^\d+$/.test(t)) return null;
+    const t = wholeText(v);
+    if (t === null) return null;
     const n = parseInt(t, 10);
     return Number.isSafeInteger(n) && n > 0 ? n : null;
+  }
+  // Says what is wrong with a cell that should have held a whole number, in terms of what the file contains.
+  function numberProblem(raw, what) {
+    const t = String(raw == null ? '' : raw).trim();
+    if (!t) return 'no ' + what + ' on this line';
+    if (SCIENTIFIC.test(t)) return 'the ' + what + ' reads "' + t.slice(0, 24) + '", which is how a spreadsheet '
+      + 'writes a number too long for the column. The real digits are gone, so re-export the file with that '
+      + 'column formatted as text';
+    return '"' + t.slice(0, 24) + '" is not a whole ' + what;
+  }
+  // A first line that names its columns is a heading whatever it calls them. Recognising only a handful of
+  // opening words meant a file headed "Recipient Address,NFT ID" had its heading read as a recipient, reported
+  // as "that is not a wallet address", and the send left disabled behind the acknowledge-bad-lines gate --
+  // for a file that was completely correct. Nothing is lost by skipping it: a line with no address in it
+  // could never have been a recipient row. A cell that *tries* to be an address (starts with 0x) is still a
+  // broken row and still reported, so a typo is never silently dropped.
+  function looksLikeHeading(line) {
+    const cells = splitRow(String(line).trim());
+    if (!cells.length) return false;
+    return !cells.some(c => /^0x/i.test(c.trim()));
   }
   function readHeader(line) {
     const cells = splitRow(line).map(c => c.toLowerCase().replace(/[\s_-]/g, ''));
@@ -559,6 +592,15 @@
   function parseList() {
     const s = std();
     if (s === '20' && tokenLoadedFor !== $('token').value.trim().toLowerCase()) { setStat($('parseOut'), [['', 'Enter the token address first: the amounts depend on how many decimals it uses.', 'bad']]); rows = []; plan(); return; }
+    // Excel's "Unicode Text" save is UTF-16, which arrives here as every character separated by a NUL. The
+    // rows then fail one by one as "that is not a wallet address (\" 0 x 0 0 ...\")", which tells nobody
+    // anything. The file is not wrong, the way it was saved is.
+    if ($('list').value.indexOf('\u0000') !== -1) {
+      say('msgList', 'That file was saved in an encoding this page cannot read: every character has come '
+        + 'through separated by a blank. Re-save it from your spreadsheet as "CSV UTF-8" rather than "Unicode '
+        + 'Text", and upload it again. Nothing was changed.', 'bad');
+      rows = []; plan(); return;
+    }
     const want = s === '1155' ? 3 : 2;   // fields per line; more than this means a stray separator, such as a thousands comma
     const lines = $('list').value.split(/\r?\n/); const out = [], problems = []; const seenId = new Set(); let headers = 0;
     // If the file names its columns, follow the names rather than the order.
@@ -567,12 +609,29 @@
     if (colMap) {
       headers = 1;
       const named = [];
+      const headerCells = splitRow((lines.find(l => l.trim()) || '').trim());
+      const headerName = (i) => '"' + String(headerCells[i] || '').trim().slice(0, 24) + '"';
+      // ERC-1155 needs an amount per row and ERC-20 needs one too. Saying so once, about the file, beats
+      // repeating '"null" is not a whole amount' on every line of a file that simply has no such column.
+      if (colMap.qty === undefined && (s === '1155' || s === '20')) {
+        say('msgList', 'That file has no amount column, and ' + (s === '1155' ? 'an ERC-1155 airdrop' : 'a token airdrop')
+          + ' needs one: every line has to say how much. Add a column called "amount" and check it again. Nothing was changed.', 'bad');
+        rows = []; plan(); return;
+      }
+      if (colMap.id === undefined && s === '1155') {
+        say('msgList', 'That file has no token id column, and an ERC-1155 airdrop needs one. Add a column called "tokenId" and check it again. Nothing was changed.', 'bad');
+        rows = []; plan(); return;
+      }
       lines.forEach((line, i) => {
         const t = line.trim(); if (!t) return;
         const cells = splitRow(t);
         if (i === lines.findIndex(x => x.trim())) return;   // the header itself
         const addr = cells[colMap.to];
-        if (!addr || !ethers.isAddress(addr)) { problems.push('line ' + (i + 1) + ': no wallet address in the "' + Object.keys(COLS).find(k => COLS[k]) + '" column'); return; }
+        if (!addr || !ethers.isAddress(addr)) {
+          problems.push('line ' + (i + 1) + ': the ' + headerName(colMap.to) + ' column holds "'
+            + String(addr == null ? '' : addr).trim().slice(0, 30) + '", which is not a wallet address');
+          return;
+        }
         const a = ethers.getAddress(addr);
         { const bad = recipientProblem(a); if (bad) { problems.push('line ' + (i + 1) + ': ' + bad); return; } }
         const idCell = colMap.id !== undefined ? cells[colMap.id] : null;
@@ -587,6 +646,8 @@
         const blanks = named.filter(r => !String(r.idCell || '').trim());
         if (blanks.length && blanks.length < named.length) {
           for (const r of blanks) problems.push('line ' + r.line + ': the token id column is empty on this line');
+          // Reported once, here. Letting these fall through to the loop below reported each of them twice.
+          for (const r of blanks) r.skip = true;
         } else if (blanks.length === named.length && colMap.qty !== undefined && s === '721') {
           // Every id is blank and there are quantities: that is the "how many each" shape with an empty column,
           // and it still has to be confirmed below before it replaces anything.
@@ -618,17 +679,20 @@
         rows = []; plan(); return;
       }
       for (const r of named) {
+        if (r.skip) continue;
         try {
           if (s === '721') {
-            if (!/^\d+$/.test(r.idCell || '')) { problems.push('line ' + r.line + ': no token id'); continue; }
-            const idKey = BigInt(r.idCell).toString();
-            if (seenId.has(idKey)) { problems.push('line ' + r.line + ': token id ' + r.idCell + ' is listed twice'); continue; }
-            seenId.add(idKey); out.push({ to: r.a, id: BigInt(r.idCell), raw: r.idCell });
+            const idText = wholeText(r.idCell);
+            if (idText === null) { problems.push('line ' + r.line + ': ' + numberProblem(r.idCell, 'token id')); continue; }
+            const idKey = BigInt(idText).toString();
+            if (seenId.has(idKey)) { problems.push('line ' + r.line + ': token id ' + idText + ' is listed twice'); continue; }
+            seenId.add(idKey); out.push({ to: r.a, id: BigInt(idText), raw: idText });
           } else if (s === '1155') {
-            if (!/^\d+$/.test(r.idCell || '')) { problems.push('line ' + r.line + ': need a token id'); continue; }
+            const idText = wholeText(r.idCell);
+            if (idText === null) { problems.push('line ' + r.line + ': ' + numberProblem(r.idCell, 'token id')); continue; }
             const q = wholeNumber(r.qtyCell);
-            if (q === null) { problems.push('line ' + r.line + ': "' + String(r.qtyCell).slice(0, 20) + '" is not a whole amount'); continue; }
-            out.push({ to: r.a, id: BigInt(r.idCell), amount: BigInt(q), raw: String(q) });
+            if (q === null) { problems.push('line ' + r.line + ': ' + numberProblem(r.qtyCell, 'amount')); continue; }
+            out.push({ to: r.a, id: BigInt(idText), amount: BigInt(q), raw: String(q) });
           } else {
             const raw = String(r.qtyCell || '');
             if (!/^\d+(\.\d+)?$/.test(raw)) {
@@ -646,7 +710,7 @@
     }
     // Bare wallets, no ids: that is how most people start. Offer to fill the ids in rather than flagging every line.
     if (s === '721') {
-      const rowsIn = lines.map(l => l.trim()).filter(l => l && !/^(address|wallet|to)\b/i.test(l));
+      const rowsIn = lines.map(l => l.trim()).filter((l, i) => l && !(i === lines.findIndex(x => x.trim()) && looksLikeHeading(l)));
       const bareish = (l) => { const p = l.split(/[,\t; ]+/).filter(Boolean); return ethers.isAddress(p[0]) && (p.length === 1 || (p.length === 2 && /^x\d+$/i.test(p[1]))); };
       const bare = rowsIn.filter(bareish);
       if (rowsIn.length && bare.length === rowsIn.length) {
@@ -661,7 +725,7 @@
     }
     lines.forEach((line, i) => {
       const t = line.trim(); if (!t) return;
-      if (/^(address|wallet|to)\b/i.test(t) && !ethers.isAddress(t.split(/[,\t; ]+/)[0])) { headers++; return; }
+      if (i === lines.findIndex(x => x.trim()) && looksLikeHeading(t)) { headers++; return; }
       const parts = t.split(/[,\t;]+|\s+/).filter(Boolean);
       const addr = parts[0];
       if (!ethers.isAddress(addr)) {
@@ -676,13 +740,13 @@
       const a = ethers.getAddress(addr);
       { const bad = recipientProblem(a); if (bad) { problems.push('line ' + (i + 1) + ': ' + bad); return; } }
       try {
-        if (s === '721') { const id = parts[1]; if (!/^\d+$/.test(id || '')) { problems.push('line ' + (i + 1) + ': missing token id'); return; }
+        if (s === '721') { const id = wholeText(parts[1]); if (id === null) { problems.push('line ' + (i + 1) + ': ' + numberProblem(parts[1], 'token id')); return; }
           const idKey = BigInt(id).toString();   // 1 and 01 are the same token
           if (seenId.has(idKey)) { problems.push('line ' + (i + 1) + ': token id ' + id + ' is listed twice'); return; } seenId.add(idKey);
           out.push({ to: a, id: BigInt(id), raw: id }); }
-        else if (s === '1155') { const id = parts[1]; const q = wholeNumber(parts[2]);
-          if (!/^\d+$/.test(id || '')) { problems.push('line ' + (i + 1) + ': need a token id'); return; }
-          if (q === null) { problems.push('line ' + (i + 1) + ': "' + String(parts[2]).slice(0, 20) + '" is not a whole amount'); return; }
+        else if (s === '1155') { const id = wholeText(parts[1]); const q = wholeNumber(parts[2]);
+          if (id === null) { problems.push('line ' + (i + 1) + ': ' + numberProblem(parts[1], 'token id')); return; }
+          if (q === null) { problems.push('line ' + (i + 1) + ': ' + numberProblem(parts[2], 'amount')); return; }
           out.push({ to: a, id: BigInt(id), amount: BigInt(q), raw: String(q) }); }
         else { const amt = parts[1]; if (!/^\d+(\.\d+)?$/.test(amt || '')) { problems.push('line ' + (i + 1) + ': missing amount'); return; }
           const parsed = ethers.parseUnits(amt, decimals);
@@ -926,7 +990,9 @@
   // ---- re-pair an existing list: same wallets, same ids, different pairing ----
   $('shuffle').addEventListener('click', () => {
     const s = std();
-    const lines = $('list').value.split(/\r?\n/).map(l => l.trim()).filter(l => l && !/^(address|wallet|to)\b/i.test(l));
+    const rawLines = $('list').value.split(/\r?\n/);
+    const firstReal = rawLines.findIndex(x => x.trim());
+    const lines = rawLines.map(l => l.trim()).filter((l, i) => l && !(i === firstReal && looksLikeHeading(l)));
     const all = lines.map(l => l.split(/[,\t; ]+/).filter(Boolean));
     const parsed = all.filter(p => ethers.isAddress(p[0]) && p.length > 1);
     if (parsed.length < 2) { log('Put at least two lines with an id or amount in the box first.', 'bad'); return; }
