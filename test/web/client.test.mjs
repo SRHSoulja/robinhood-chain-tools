@@ -1065,6 +1065,74 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.close();
 }
 
+// ---- leaving the token field must not throw away the token that is in it ----------
+// Found by driving the real page against testnet, not by any of the nine audits. `change` fires when a field
+// is left, not only when its contents differ, so clicking from the token box into the recipient box discarded
+// a good load and re-read the token from the chain. For the second or so those calls take, "Check list"
+// refused an ERC-20 list with "Enter the token address first" -- about the address sitting right there. It
+// blocked every ERC-20 airdrop, intermittently, which is worse than blocking it outright.
+{
+  const page = await open(browser, { decimals: 18 });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, TOK, '20');
+  // exactly what a person does: click into the token box, then click into the list box, then press the button
+  await page.click('#token');
+  await page.fill('#token', TOK);
+  await page.click('#list');                       // <- blur fires change on #token
+  await page.fill('#list', A(0x41) + ',1.5\n' + A(0x42) + ',2.25\n');
+  await page.click('#parse');
+  await page.waitForTimeout(500);                  // deliberately short: the old code was still re-reading
+  const stat = await text(page, '#parseOut');
+  check('leaving the token field with the same address in it does not re-read the token',
+    /2 recipients/.test(stat), stat.slice(0, 160));
+  check('and the list is not refused with a step the user already did',
+    !/Enter the token address first/.test(stat), stat.slice(0, 160));
+
+  // a genuinely different address must still be re-read
+  await page.fill('#token', ED);
+  await page.dispatchEvent('#token', 'change');
+  await page.waitForTimeout(1200);
+  check('but changing the address really does load the new one',
+    (await text(page, '#tokenInfo')).length > 0, await text(page, '#tokenInfo'));
+  await page.close();
+}
+
+// ---- the file a real user sent in, exactly as they sent it ---------------------
+// "I have all the columns filled out, but it's still saying it's incorrect." Their addresses were sequential
+// test addresses whose EIP-55 checksums do not match, so every row was rejected. The page then treated an
+// empty result as "every token id is blank", switched to the how-many-each reading, threw away every reason
+// it had collected, and asked whether to replace the list with "0 wallets, 0 NFTs in total" -- while saying
+// nothing whatsoever about the addresses.
+{
+  const page = await open(browser, {});
+  const dialogs = [];
+  page.removeAllListeners('dialog');
+  page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss(); });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const RAW = ['0x02133af5C7A045A3782Fbb6Af344b9E91cD11088', '0x02133af5C7A045A3782Fbb6Af344b9E91cD11089',
+               '0x02133af5C7A045A3782Fbb6Af344b9E91cD11090'];
+  await setList(page, 'address,tokenId,quantity\n' + RAW.map((a, i) => a + ',' + (i + 1) + ',1').join('\n') + '\n');
+  const problems = await text(page, '#problems');
+  check('a file whose rows were all rejected is not read as "how many each"',
+    !dialogs.some((d) => /how many NFTs each wallet gets/.test(d)), dialogs.join(' | ').slice(0, 200));
+  check('and it never asks about 0 wallets and 0 NFTs',
+    !dialogs.some((d) => /0 wallets, 0 NFTs/.test(d)), dialogs.join(' | ').slice(0, 200));
+  check('the reasons are shown rather than discarded',
+    await page.evaluate(() => document.querySelector('#problems').style.display) !== 'none' && /line 2:/.test(problems),
+    problems.slice(0, 200));
+  check('and the reason names the checksum, not just "not a wallet address"',
+    /checksum does not match/.test(problems), problems.slice(0, 240));
+  check('with the way out spelled out',
+    /all lower case/.test(problems), problems.slice(0, 400));
+
+  // the two forms that are correct must both go through
+  await setList(page, 'address,tokenId,quantity\n' + RAW.map((a, i) => a.toLowerCase() + ',' + (i + 1) + ',1').join('\n') + '\n');
+  check('the same file in lower case is accepted, as the message promises',
+    /3 recipients/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

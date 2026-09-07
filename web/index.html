@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-ezgA12N8xOVW9yOFFG6GmtDIrSqM6YhkKTYQ7zCLQvI='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-g8KAwOYgJOOJfuFEQLrp+RAA6vcr8uxvkId3M439+VU='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -441,7 +441,15 @@
   }
 
   // ---- token lookup. Amounts depend on decimals, so nothing may be parsed or sent until this has answered. ----
-  $('token').addEventListener('change', () => { rows = []; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); tokenInfo(); });
+  $('token').addEventListener('change', () => {
+    // `change` fires when the field is left, not only when its contents differ. Clicking from here into the
+    // recipient box therefore threw away a perfectly good load and re-read the token, and for the second or
+    // so those calls take, "Check list" refused an ERC-20 list with "enter the token address first" -- about
+    // the address sitting in the box. Same address, same chain, already loaded: there is nothing to redo.
+    const addr = $('token').value.trim().toLowerCase();
+    if (addr && addr === tokenLoadedFor && tokenLoadedChain === chainId()) return;
+    rows = []; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); tokenInfo();
+  });
   $('std').addEventListener('change', () => {
     $('fmt').textContent = std() === '721' ? 'address, tokenId' : std() === '1155' ? 'address, tokenId, amount' : 'address, amount';
     $('safeRow').style.display = std() === '721' ? 'flex' : 'none';
@@ -529,6 +537,21 @@
   // Some addresses are not recipients. The zero address burns; BulkSend has no owner and no rescue function,
   // so anything sent there is gone; a token's own contract almost never gives it back either. The contract
   // refuses itself, but the wallet-batch path never reaches the contract, so the refusal has to live here too.
+  // Why this text is not a wallet address, in terms of what is wrong with it. Both readers use this: the
+  // named-column reader used to say only "is not a wallet address", which is the least useful true thing that
+  // can be said about a checksum failure.
+  function addressProblem(raw) {
+    const a = String(raw == null ? '' : raw).trim();
+    if (!a) return 'this line has no wallet address on it';
+    if (/\.eth$|\.[a-z]{2,}$/i.test(a)) return 'names like vitalik.eth are not supported here; paste the 0x address';
+    if (/^0x[0-9a-fA-F]{40}$/.test(a)) return 'that address is the right length but its checksum does not match ("'
+      + a.slice(0, 8) + '\u2026' + a.slice(-6) + '"). The capital letters in an address are a checksum, so this '
+      + 'means a character was changed, dropped or re-cased between the source and here. Copy it again from '
+      + 'wherever it came from. If you wrote these addresses yourself, put them in all lower case: that makes '
+      + 'no checksum claim and is accepted, though then nothing here can catch a typo for you';
+    if (/^0x[0-9a-fA-F]+$/.test(a)) return 'that is ' + ((a.length - 2) / 2).toFixed(0) + ' bytes; a wallet address is 20';
+    return 'that is not a wallet address ("' + a.slice(0, 30) + '")';
+  }
   function recipientProblem(a) {
     if (a === ethers.ZeroAddress) return 'the zero address would burn the token; not allowed';
     if (bulkReady() && a.toLowerCase() === String(cfg().bulk).toLowerCase())
@@ -591,7 +614,13 @@
   $('parse').addEventListener('click', parseList);
   function parseList() {
     const s = std();
-    if (s === '20' && tokenLoadedFor !== $('token').value.trim().toLowerCase()) { setStat($('parseOut'), [['', 'Enter the token address first: the amounts depend on how many decimals it uses.', 'bad']]); rows = []; plan(); return; }
+    if (s === '20' && tokenLoadedFor !== $('token').value.trim().toLowerCase()) {
+      const typed = $('token').value.trim();
+      setStat($('parseOut'), [['', ethers.isAddress(typed)
+        ? 'Still reading ' + typed.slice(0, 8) + '\u2026 from the chain, because the amounts depend on how many decimals it uses. Press "Check list" again in a moment.'
+        : 'Enter the token address first: the amounts depend on how many decimals it uses.', 'bad']]);
+      rows = []; plan(); return;
+    }
     // Excel's "Unicode Text" save is UTF-16, which arrives here as every character separated by a NUL. The
     // rows then fail one by one as "that is not a wallet address (\" 0 x 0 0 ...\")", which tells nobody
     // anything. The file is not wrong, the way it was saved is.
@@ -628,8 +657,7 @@
         if (i === lines.findIndex(x => x.trim())) return;   // the header itself
         const addr = cells[colMap.to];
         if (!addr || !ethers.isAddress(addr)) {
-          problems.push('line ' + (i + 1) + ': the ' + headerName(colMap.to) + ' column holds "'
-            + String(addr == null ? '' : addr).trim().slice(0, 30) + '", which is not a wallet address');
+          problems.push('line ' + (i + 1) + ': ' + addressProblem(addr));
           return;
         }
         const a = ethers.getAddress(addr);
@@ -638,6 +666,11 @@
         const qtyCell = colMap.qty !== undefined ? cells[colMap.qty] : null;
         named.push({ a, idCell, qtyCell, line: i + 1 });
       });
+      // Not one row was readable. That is not "every token id is blank", and it is certainly not "this file
+      // says how many each": it is a file whose rows could not be read, and the reasons gathered above are the
+      // whole answer. They used to be discarded here, and the page asked instead whether to replace the list
+      // with 0 wallets and 0 NFTs -- while saying nothing at all about the addresses.
+      if (!named.length) { finishParse(out, problems, headers, ''); return; }
       // In the wider ecosystem an NFT file with a quantity column but no id column means "how many of yours",
       // which is the same thing this page calls x3. Rewrite it into that form and let Assign fill the ids in.
       // A file that names an id column and then leaves it blank is not a file that means "assign some";
@@ -728,12 +761,7 @@
       if (i === lines.findIndex(x => x.trim()) && looksLikeHeading(t)) { headers++; return; }
       const parts = t.split(/[,\t;]+|\s+/).filter(Boolean);
       const addr = parts[0];
-      if (!ethers.isAddress(addr)) {
-        const why = /\.eth$|\.[a-z]{2,}$/i.test(String(addr)) ? 'names like vitalik.eth are not supported here; paste the 0x address'
-                  : /^0x[0-9a-fA-F]{40}$/.test(String(addr)) ? 'that address is the right length but its checksum does not match, which means a character was changed, dropped or re-cased somewhere between the source and here. Copy it again rather than correcting it by hand'
-                  : /^0x[0-9a-fA-F]+$/.test(String(addr)) ? 'that is ' + ((String(addr).length - 2) / 2).toFixed(0) + ' bytes; a wallet address is 20'
-                  : 'that is not a wallet address';
-        problems.push('line ' + (i + 1) + ': ' + why + ' ("' + String(addr).slice(0, 30) + '")'); return; }
+      if (!ethers.isAddress(addr)) { problems.push('line ' + (i + 1) + ': ' + addressProblem(addr)); return; }
       if (parts.length > want) {
         const looksLikeThousands = parts.length === want + 1 && /^\d{1,3}$/.test(parts[1] || '') && /^\d{3}(\.\d+)?$/.test(parts[2] || '');
         problems.push('line ' + (i + 1) + ': ' + parts.length + ' values, expected ' + want + (looksLikeThousands ? '. A thousands separator splits the line, so write 1234.5 rather than 1,234.5' : '')); return; }
