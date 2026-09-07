@@ -35,10 +35,10 @@ jobs:
           echo "  ok    $(( (${#built} - 2) / 2 )) bytes, identical at $addr"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4
         with:
-          node-version: '22'
+          node-version: '22.20.0'   # pinned: a major line moves under you
       - name: browser tests
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund      # the lockfile decides, not the registry
           npx playwright install --with-deps chromium
           npm test
       - name: the connector is reproducible from its pinned source

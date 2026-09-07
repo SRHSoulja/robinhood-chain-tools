@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-s9PGU4U8VVnFc5gr7Nz5sXYbQrolU7CyqHwPa55OeRU='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-0mgO49Pmlkb1nufbhJi2upQYFNv76HAXpKUEve5WhMI='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -65,7 +65,7 @@
   <div class="card">
     <h2>2 · Recipients</h2>
     <div class="row" style="margin-bottom:10px">
-      <div><label for="snapAddr">Read a collection's current holders</label><div style="display:flex;gap:8px"><input type="text" id="snapAddr" aria-label="Collection address to take a holder snapshot of" placeholder="holders of 0x… (snapshot)" spellcheck="false"><button class="secondary" id="snap">Fetch</button></div></div>
+      <div><label for="snapAddr">Read a collection's holders, as the explorer has them</label><div style="display:flex;gap:8px"><input type="text" id="snapAddr" aria-label="Collection address to take a holder snapshot of" placeholder="holders of 0x…" spellcheck="false"><button class="secondary" id="snap">Fetch</button></div></div>
       <div><label for="each">How many each, from the ones you hold</label><div style="display:flex;gap:8px"><input type="number" id="each" value="1" min="1" max="1000" style="width:88px" aria-label="How many each wallet receives"><button class="secondary" id="assign" style="flex:1">Assign my token ids</button><button class="secondary" id="shuffle">Shuffle</button></div>
       <div style="font-size:12px;color:var(--mut);margin-top:4px">To give one wallet more than the rest, write <span class="mono">x3</span> after its address.</div>
       <div class="row" id="weightRow" style="display:none;margin-top:8px">
@@ -847,7 +847,7 @@
       if (truncated) { say('msgList', 'Stopped after ' + holders.length + ' holders, so this list is incomplete. It has not been used.', 'bad'); log('The holder list was cut short, so nothing was loaded. Narrow the collection or bring your own list.', 'bad'); return; }
       const endBlock = await rpBlock.getBlockNumber().catch(() => null);
       if (startBlock && endBlock && endBlock !== startBlock) {
-        log('The chain moved from block ' + startBlock + ' to ' + endBlock + ' while this was being read, so it is a current reading rather than a fixed moment in time. If someone traded mid-read they can appear twice or not at all. Check the list before sending.', 'warn');
+        log('The chain moved from block ' + startBlock + ' to ' + endBlock + ' while this was being read. Those two numbers do not say which block the explorer had indexed, so they neither prove nor disprove that this list is consistent: someone who traded mid-read can appear twice or not at all.', 'warn');
       }
       if (!confirmOverwrite()) return;
       $('list').value = uniq.join('\n');
@@ -874,7 +874,7 @@
       };
       const total = [...snap.holdings.values()].reduce((a, b) => a + b, 0);
       const most = Math.max(0, ...snap.holdings.values());
-      log(uniq.length + ' holders read at around block ' + (endBlock || '?') + (me ? ', your own wallet left out' : '') + '. This is a live reading, not a snapshot pinned to one block.', 'ok');
+      log(uniq.length + ' holders in the explorer\u2019s latest indexed list' + (me ? ', your own wallet left out' : '') + '. That is not the same as who holds it right now: the explorer can lag behind the chain, and it was read across several pages while the chain kept moving' + (endBlock ? ', around block ' + endBlock : '') + '. Check the list before sending, whatever the block numbers say.', 'ok');
       if (total) {
         log('Between them they hold ' + total.toLocaleString() + ', and the largest holder has ' + most.toLocaleString() + '. "How many each" below can follow that instead of giving everyone the same.', 'ok');
         $('weightRow').style.display = 'flex';
