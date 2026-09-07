@@ -152,7 +152,7 @@ moved".
 
     forge build
     forge test                 # 82 contract tests
-    npm install && npm test    # 159 browser tests, every answer mocked, no network
+    npm install && npm test    # 166 browser tests, every answer mocked, no network
     ./test.sh                  # all of it
 
 The browser tests drive the real pages in headless Chromium and answer every RPC, explorer and price request
@@ -190,12 +190,11 @@ what makes Check's previews real; `debug_traceCall` and `eth_createAccessList` a
 
 ## Reviews
 
-Six internal review passes and five external audits, each by a different model given the code and no other
-context: 8/4/3, then 6/5/1, then 4/1/0, then 6/2/1, then 5/2/2 (High/Medium/Low), and a sixth asked to sort
-its findings by whether they block release: 4 blocking, 2 not, 1 an inherent limit that is disclosed rather
-than fixed. Every finding is fixed, and all six are published unedited in [`docs/`](docs/) — including the first audit's
-finding that a bug I had dismissed in a code comment as deliberate was in fact a double-payment path, and the
-second's finding that the Check page was printing safety conclusions on the strength of function names.
+Six internal review passes and eight external audits, each by a different model given the code and no other
+context. Every blocking finding is fixed, and all eight are published unedited in [`docs/`](docs/) including
+the parts that are unflattering: a bug dismissed in a code comment as deliberate that was a double-payment
+path, a page printing safety conclusions from function names, a build recipe that did not reproduce the file
+it described, and three occasions where a fix became the next round's finding.
 
 No human audit firm has reviewed this. If you are reviewing it, start with
 [`docs/for-reviewers.md`](docs/for-reviewers.md).

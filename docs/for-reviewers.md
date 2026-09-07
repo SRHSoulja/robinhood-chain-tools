@@ -20,7 +20,7 @@ here:
 ## Running everything
 
     forge test                    # 82 contract tests
-    npm install && npm test       # 159 browser tests, all answers mocked, no network
+    npm install && npm test       # 166 browser tests, all answers mocked, no network
     ./test.sh                     # both of the above
 
 The browser tests answer every RPC, explorer and price request from the test file itself, so a failure is the
@@ -103,12 +103,9 @@ which is the case worth monitoring for.
 ## Previous review
 
 - Six internal review passes.
-- Seven external audits, each by a different model with no prior context, all published unedited:
-  [the first](audit-2026-09-06-external.md) (8 High, 4 Medium, 3 Low),
-  [the second](audit-2026-09-06-second-external.md) (6 High, 5 Medium, 1 Low),
-  [the third](audit-2026-09-06-third-external.md) (4 High, 1 Medium) and
-  [the fourth](audit-2026-09-06-fourth-external.md) (6 High, 2 Medium, 1 Low) and
-  [the fifth](audit-2026-09-06-fifth-external.md) (5 High, 2 Medium, 2 Low) and
-  [the sixth](audit-2026-09-06-sixth-external.md) (4 blocking, 2 non-blocking, 1 inherent limit) and
-  [the seventh](audit-2026-09-07-seventh-external.md) (6 blocking, 6 non-blocking, 1 inherent). All blocking findings fixed.
+- Eight external audits, each by a different model with no prior context, all published unedited in
+  [`docs/`](.), in order: 8H/4M/3L, then 6H/5M/1L, then 4H/1M, then 6H/2M/1L, then 5H/2M/2L, then
+  4 blocking/2/1, then 6 blocking/6/1, then 3 blocking/8/3. Every blocking finding is fixed.
+- Three times, a fix from one round has been the next round's finding. That is the most useful thing this
+  history shows, and it is why recently changed code is listed first in the review scope rather than last.
 - No human audit firm has looked at this.
