@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-TSsqZy+Z/cm2pS9NGIPi/AP4bdC+Vtp7z5yYujqS2nU='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-s9PGU4U8VVnFc5gr7Nz5sXYbQrolU7CyqHwPa55OeRU='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -1423,8 +1423,10 @@
   }
 
   // ---- catch up on batches this browser sent but never saw the end of ----
-  async function reconcilePending(quiet) {
-    const list = loadPending(); if (!list.length) return 0;
+  async function reconcilePending(quiet, onlyRun) {
+    // `onlyRun` keeps a caller that already holds one run's lock from reaching for another's.
+    const list = loadPending().filter(e => !onlyRun || e.run === onlyRun);
+    if (!list.length) return 0;
     let resolved = 0;
     for (const e of list) {
       const c = CHAINS[e.chain]; if (!c) continue;
@@ -1787,6 +1789,9 @@
   });
   async function runSend() {
     stopFlag = false; skippedRows = [];
+    // Before any lock is held. Reconciliation walks every run, so it needs other runs' locks, and taking
+    // those while holding this run's is how two tabs deadlock on each other.
+    await reconcilePending(false);
     // Two tabs of the same list would both read "nothing delivered yet" and both send it.
     let releaseLock = null;
     const lockedRun = runKey();   // captured once: the key must not shift under the lock that was taken for it
@@ -1813,7 +1818,9 @@
     }
     try {
     if (!(await onSelectedChain())) return;
-    await reconcilePending(false);   // read back anything sent earlier and never accounted for
+    // Left deliberately empty: reconciliation happens before the lock is taken, a few lines above. Doing it
+    // here meant holding run A's lock while waiting for run B's, and two tabs doing that wait on each other
+    // forever.
     const base = workingList();
     if (base.skippedBefore) log(base.skippedBefore + ' of these were already delivered from this browser by this account, so they are left out. "Forget what was delivered" sends them again.', 'warn');
     if (base.heldBack) log(base.heldBack + ' of these are inside a batch this browser has sent and cannot yet account for, so they are held back. They come back once that transaction can be read on the chain.', 'warn');

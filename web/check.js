@@ -908,14 +908,22 @@
         // A pasted array can hold several independent requests, each for its own chain, sender and
         // atomicity. Flattening them under one envelope lets a mainnet call be inspected on testnet and
         // described with another request's rules. Boundaries are kept.
-        const asCallList = (o) => {
+        // An EIP-5792 call tuple has no sender of its own: the envelope's `from` is who sends every call in
+        // it. A `from` on a call is not something a wallet would honour, so simulating as it would answer a
+        // question nobody is being asked, and a hostile destination can behave differently for each.
+        const asRequest = (o) => {
           if (!o || typeof o !== 'object') return null;
           if (Array.isArray(o.calls)) {
+            const env = { chainId: o.chainId || null, atomicRequired: !!o.atomicRequired, from: o.from || null };
+            const conflicting = env.from
+              ? o.calls.filter((c) => c && c.from && String(c.from).toLowerCase() !== String(env.from).toLowerCase()).length
+              : 0;
             return {
-              envelope: { chainId: o.chainId || null, atomicRequired: !!o.atomicRequired, from: o.from || null },
+              envelope: env,
+              conflictingSenders: conflicting,
               // Every entry is kept, including one with no destination: dropping those is how a contract
               // creation disappeared and left the request looking like one benign call.
-              calls: o.calls.map((c) => ({ to: c.to || null, data: c.data || c.input || '0x', from: c.from || o.from || null, value: c.value })),
+              calls: o.calls.map((c) => ({ to: c.to || null, data: c.data || c.input || '0x', from: env.from || c.from || null, value: c.value })),
             };
           }
           return { envelope: null, calls: [{ to: o.to || null, data: o.data || o.input || '0x', from: o.from || null, value: o.value }] };
@@ -923,15 +931,18 @@
         const top = Array.isArray(j) ? j : [j];
         const requests = [];
         for (const entry of top) {
+          // A top-level object carrying `method` or `id` is a JSON-RPC request, and a JSON-RPC batch is a
+          // transport group: separate transactions that may be mined in any order, by different senders,
+          // with anything in between. Merging them into one sequence describes something that will not
+          // happen. Only a plain array of call objects is a list.
+          const isRpc = entry && typeof entry === 'object' && (entry.method !== undefined || entry.id !== undefined);
           const inner = entry && Array.isArray(entry.params) ? entry.params : [entry];
           for (const o of inner) {
-            const r = asCallList(o);
+            const r = asRequest(o);
             if (!r || !r.calls.length) continue;
-            // Entries with no envelope of their own are one list, because that is what someone pasting a
-            // plain array of calls means. Anything carrying its own chain or atomicity stays separate,
-            // because that is a request with its own rules.
+            if (isRpc) { r.method = entry.method || null; r.rpc = true; requests.push(r); continue; }
             const last = requests[requests.length - 1];
-            if (!r.envelope && last && !last.envelope) last.calls.push(...r.calls);
+            if (!r.envelope && last && !last.envelope && !last.rpc) last.calls.push(...r.calls);
             else requests.push(r);
           }
         }
@@ -979,9 +990,9 @@
           // the sender that is described. A request that names its own sender is authoritative; the box fills
           // in only where a call names none.
           const uiSender = from;
-          const calls = reqs[ri].calls.map((c) => Object.assign({}, c, {
-            from: c.from || (env && env.from) || uiSender || null,
-          }));
+          // readInput has already made the envelope's sender authoritative. All that is left is filling in
+          // the box's address where nothing named one at all.
+          const calls = reqs[ri].calls.map((c) => Object.assign({}, c, { from: c.from || uiSender || null }));
           const envSender = env && env.from ? ethers.getAddress(env.from) : null;
           const label = many ? 'Request ' + (ri + 1) + ' of ' + reqs.length + ': ' : '';
 
@@ -989,12 +1000,28 @@
           if (env && env.chainId) {
             let want = null;
             try { want = Number(BigInt(env.chainId)); } catch (e) { want = null; }
-            if (want !== null && want !== chainId()) {
+            if (want === null || !Number.isSafeInteger(want)) {
+              // A chain id that will not parse is not the same as a request that named no chain. Reading it
+              // against whatever this page happens to be set to is how a malformed field becomes an answer
+              // about the wrong network.
+              cards.push(note('bad', label + 'this request names a network that cannot be read',
+                'Its chainId is ' + JSON.stringify(String(env.chainId)).slice(0, 40) + ', which is not a number this page can interpret. '
+                + 'Nothing in it has been checked: an unreadable network is not the same as no network, and guessing would mean answering about the wrong chain.'));
+              continue;
+            }
+            if (want !== chainId()) {
               cards.push(note('bad', label + 'this request is for a different network',
                 'It names chain ' + want + (CHAINS[want] ? ' (' + CHAINS[want].name + ')' : '') + ', and this page is set to '
                 + chainId() + ' (' + cfg().name + '). Nothing in it has been checked: the same address is a different contract on a different chain, and an answer from the wrong one is worse than none.'));
               continue;
             }
+          }
+          if (reqs[ri].conflictingSenders) {
+            cards.push(note('bad', label + 'this request contradicts itself about who sends it',
+              reqs[ri].conflictingSenders + ' of its calls name a different sender than the request does. A call in a '
+              + 'wallet_sendCalls request has no sender of its own: the request\u2019s sender sends all of them. '
+              + short(envSender) + ' is what has been used here, and a wallet given this would either do the same or refuse it outright. '
+              + 'Treat a request that says two different things about who is signing as one to look at closely.'));
           }
           if (envSender && uiSender && envSender.toLowerCase() !== uiSender.toLowerCase()) {
             cards.push(note('warn', label + 'the request names a different sender than the box',
@@ -1023,7 +1050,10 @@
             if (bad >= 0) cards.push(note('bad', label + 'run in order, call ' + (bad + 1) + ' fails',
               decodeRevert(ordered[bad].reason, null) + (env && env.atomicRequired
                 ? '  Because this request asks for all or nothing, none of it would happen.'
-                : '  The calls before it would still happen.')));
+                : '  What happens to the calls before it is not settled: a wallet may run them and stop here, '
+                  + 'leaving those done; it may run the whole thing atomically anyway and leave none done; or it may '
+                  + 'refuse the request outright once it sees this. Not being required to be atomic is not a promise '
+                  + 'that the earlier ones survive.')));
             else cards.push(note('ok', label + 'run in order, every call succeeds',
               'Simulated as one sequence, as ' + short(calls[0].from || ethers.ZeroAddress) + ', against the chain as it is now.'));
           } else {

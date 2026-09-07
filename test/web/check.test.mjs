@@ -63,6 +63,7 @@ function answer(O) {
         return word(1);
       }
       case 'eth_simulateV1': {
+        O.__simBatches = (O.__simBatches || []).concat([((params[0].blockStateCalls[0] || {}).calls || []).length]);
         O.__senders = (O.__senders || []).concat(((params[0].blockStateCalls[0] || {}).calls || []).map((c) => c.from));
         // Answers for every call in the request, in order, so an ordered batch simulation can be tested.
         const calls = (params[0].blockStateCalls[0] || {}).calls || [];
@@ -562,6 +563,65 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
     !/every call succeeds/i.test(t), t.slice(0, 400));
   check('B-04 and says why the sequence cannot be judged',
     /cannot be checked as a sequence/.test(t), t.slice(0, 400));
+  await page.close();
+}
+
+// ---- B-01: a call cannot name its own sender in a wallet_sendCalls request -------
+{
+  const seen = {};
+  const page = await open(browser, seen);
+  await page.fill('#input', JSON.stringify({
+    jsonrpc: '2.0', id: 1, method: 'wallet_sendCalls',
+    params: [{ chainId: '0xb626', from: A(0x1111), calls: [{ to: NFT, from: A(0x2222), data: '0x06fdde03' }] }],
+  }));
+  await page.click('#go'); await page.waitForTimeout(7000);
+  const senders = (seen.__senders || []).map((x) => String(x).toLowerCase());
+  check('B-01 the request\'s sender is used, not the one written on the call',
+    senders.length > 0 && senders.every((f) => f === A(0x1111).toLowerCase()), JSON.stringify(senders.slice(0, 3)));
+  check('B-01 and the contradiction is pointed out',
+    /contradicts itself about who sends it/.test(await page.textContent('#out')), (await page.textContent('#out')).slice(0, 300));
+  await page.close();
+}
+
+// ---- B-02: separate transactions are not one sequence ---------------------------
+{
+  const seen = {};
+  const page = await open(browser, seen);
+  await page.fill('#input', JSON.stringify([
+    { jsonrpc: '2.0', id: 1, method: 'eth_sendTransaction', params: [{ from: A(0x1111), to: NFT, data: '0x06fdde03' }] },
+    { jsonrpc: '2.0', id: 2, method: 'eth_sendTransaction', params: [{ from: A(0x2222), to: TOK, data: '0x06fdde03' }] },
+  ]));
+  await page.click('#go'); await page.waitForTimeout(8000);
+  const t = await page.textContent('#out');
+  check('B-02 two separate transactions are read as two, not as one sequence',
+    /2 separate requests/.test(t), t.slice(0, 300));
+  const together = (seen.__simBatches || []).some((n) => n > 1);
+  check('B-02 and they are never simulated together', !together, JSON.stringify(seen.__simBatches));
+  await page.close();
+}
+
+// ---- B-03: not required to be atomic is not a promise that earlier calls survive --
+{
+  const page = await open(browser, { sequenceFailsAt: 1 });
+  const t = await ask(page, JSON.stringify({
+    method: 'wallet_sendCalls',
+    params: [{ chainId: '0xb626', from: ME, atomicRequired: false, calls: [{ to: NFT, data: '0x06fdde03' }, { to: TOK, data: '0x06fdde03' }] }],
+  }), ME, 8000);
+  check('B-03 a non-atomic batch does not promise the earlier calls happen',
+    !/would still happen/.test(t), t.slice(0, 400));
+  check('B-03 it states the range instead', /is not settled/.test(t), t.slice(0, 500));
+  await page.close();
+}
+
+// ---- S-03: a chain id that cannot be read is not "no chain named" ----------------
+{
+  const page = await open(browser, {});
+  const t = await ask(page, JSON.stringify({
+    method: 'wallet_sendCalls',
+    params: [{ chainId: 'not-a-number', from: ME, calls: [{ to: NFT, data: '0x06fdde03' }] }],
+  }), ME, 6000);
+  check('S-03 an unreadable chain id refuses rather than defaulting to this page\'s network',
+    /names a network that cannot be read/.test(t), t.slice(0, 300));
   await page.close();
 }
 

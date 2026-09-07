@@ -16,17 +16,23 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09   # v1
         with:
-          version: stable
+          version: v1.4.1        # pinned: "stable" is a moving target
       - name: contract tests
         run: forge test
       - name: the deployed bytecode is what this source builds
         run: |
+          set -euo pipefail
           forge build
-          python3 - <<'PY'
-          import json
-          art = json.load(open('out/BulkSend.sol/BulkSend.json'))['deployedBytecode']['object']
-          print('built runtime:', len(art) // 2 - 1, 'bytes')
-          PY
+          addr="$(python3 -c "import json;print(json.load(open('deployments.testnet.json'))['BulkSend'])")"
+          chain="$(curl -sS --max-time 30 -X POST https://rpc.testnet.chain.robinhood.com \
+            -H 'content-type: application/json' \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"$addr\",\"latest\"]}" \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"])')"
+          built="$(python3 -c "import json;print(json.load(open('out/BulkSend.sol/BulkSend.json'))['deployedBytecode']['object'])")"
+          # Equality. Printing a length and calling it an equality check is how a step's name outlives what
+          # it does.
+          [ "$chain" = "$built" ] || { echo "the deployed runtime is not what this source builds"; exit 1; }
+          echo "  ok    $(( (${#built} - 2) / 2 )) bytes, identical at $addr"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4
         with:
           node-version: '22'

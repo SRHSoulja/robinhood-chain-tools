@@ -75,15 +75,12 @@ html = open(path, encoding="utf-8").read()
 m = re.search(r'(<meta http-equiv="Content-Security-Policy" content=")([^"]*)(">)', html)
 assert m, "no CSP meta tag"
 policy = m.group(2)
+# This checks; it does not repair. A publisher that edits the file it is about to ship is a publisher that
+# ships bytes no commit contains, which is exactly what the dirty-tree guard above exists to prevent.
+if want not in policy:
+    raise SystemExit("the page's CSP does not name its script's hash (%s).\nRun web/sync.sh and commit the result." % want)
 # Only the hash is managed here. Rewriting the whole directive would silently drop any other source the
 # policy deliberately allows, which it did once.
-cur = re.search(r"script-src ([^;]*)", policy)
-assert cur, "no script-src to put the hash in"
-sources = [t for t in cur.group(1).split() if not t.startswith("'sha256-")]
-new = policy.replace(cur.group(0), "script-src " + " ".join(sources + ["'%s'" % want]), 1)
-if new != policy:
-    open(path, "w", encoding="utf-8").write(html[:m.start(2)] + new + html[m.end(2):])
-    print("  the page's own CSP was out of step with its script and has been corrected; commit that change")
 PY
 
 # The page is inlined into the worker as a string constant, so the worker serves it from the edge with no
@@ -186,15 +183,17 @@ PY
 
 node --check "$WORK/worker.js" 2>/dev/null || { echo "the generated worker does not parse" >&2; exit 1; }
 
+# The origin copy goes first. The worker refuses a connector whose digest does not match, so activating a new
+# worker before its bundle is published takes the connector offline for as long as that gap lasts.
+if [ -n "${ORIGIN_PUBLISH_CMD:-}" ]; then
+  $ORIGIN_PUBLISH_CMD "$SRC" "$ORIGIN_NAME"
+fi
+
 curl -s -m 90 -X PUT -H "Authorization: Bearer $CF_API_TOKEN" \
   -F 'metadata={"main_module":"worker.js","compatibility_date":"2026-09-01"};type=application/json' \
   -F "worker.js=@$WORK/worker.js;type=application/javascript+module" \
   "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/$WORKER" \
   | python3 -c "import sys,json;d=json.load(sys.stdin);ok=d.get('success');print('worker',('published' if ok else 'FAILED'),[(e.get('code'),e.get('message')) for e in d.get('errors',[])][:2]);sys.exit(0 if ok else 1)"
-
-if [ -n "${ORIGIN_PUBLISH_CMD:-}" ]; then
-  $ORIGIN_PUBLISH_CMD "$SRC" "$ORIGIN_NAME"
-fi
 
 # A 200 proves something answered, not that it answered with the file that was just reviewed. Compare the
 # bytes: a custom domain still pointing at an older worker returns 200 all day.
