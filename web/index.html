@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-3MCq8cC20z8ssyZkco8CYZihocbId3sNLvMXJ0R8opo='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-OfjhBfJPme4ovW9wj/buZQ/Ihhj97Vf4hGHkKxXn9eY='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -914,7 +914,10 @@
   //
   // Every string here comes off a chain and is therefore written by someone else: names go in as text, never
   // as markup, and an image source is used only when it is a data: URI of an image type.
-  const pick = { ids: [], meta: new Map(), chosen: new Set(), token: null };
+  // Enough to choose between by eye, and no more: past this many, picking one at a time is not what anyone
+  // wants and "Assign my token ids" is the tool for the job. The number is stated on screen, never silent.
+  const PICK_CAP = 250;
+  const pick = { ids: [], meta: new Map(), chosen: new Set(), token: null, held: 0 };
   const dataImage = (v) => (typeof v === 'string' && /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);/i.test(v)) ? v : null;
 
   function readTokenMetadata(uri) {
@@ -935,33 +938,56 @@
     pick.token = token.toLowerCase();
     say('pickMsg', 'Reading the ones you hold…', '');
     grid.textContent = '';
-    const ids = await myTokenIds(token, 200).catch(() => []);
-    pick.ids = ids.slice(0, 60);
+    const ids = await myTokenIds(token, PICK_CAP + 40).catch(() => []);
+    pick.held = ids.length;
+    pick.ids = ids.slice(0, PICK_CAP);
     if (!pick.ids.length) {
       say('pickMsg', 'Your wallet does not appear to hold anything in this collection, or the explorer would not say.', 'bad');
       return;
     }
+    // The ids are known now, so the grid is drawn now. Waiting for every picture first meant seven seconds of
+    // nothing on sixty tiles, and a list long enough for a real drop would have been half a minute.
+    renderPick();
+    say('pickMsg', 'Reading the pictures\u2026 you can start choosing already.', '');
     const rp = new ethers.JsonRpcProvider(cfg().rpc);
     const t = new ethers.Contract(token, ['function tokenURI(uint256) view returns (string)'], rp);
     let offchain = 0;
-    for (const id of pick.ids) {
-      let m = null, why = 'no picture published';
-      const uri = await t.tokenURI(id).catch(() => null);
-      if (typeof uri === 'string' && uri.startsWith('data:')) {
-        const j = readTokenMetadata(uri);
-        if (j) m = { name: typeof j.name === 'string' ? j.name : null, img: dataImage(j.image) || dataImage(j.image_url) };
-        if (m && !m.img) why = 'its picture is not stored on the chain';
-      } else if (typeof uri === 'string' && /^https?:/i.test(uri)) {
-        offchain++; why = 'this collection keeps its art on its own server, which this page does not fetch';
-      }
-      pick.meta.set(String(id), m || { name: null, img: null, why });
-      if (m && !m.why) pick.meta.get(String(id)).why = why;
+    // In parallel, in modest groups: one call at a time is the difference between a second and a minute, and
+    // all of them at once is a request storm at whatever node the reader is on.
+    for (let i = 0; i < pick.ids.length; i += 8) {
+      const group = pick.ids.slice(i, i + 8);
+      await Promise.all(group.map(async (id) => {
+        let m = null, why = 'no picture published';
+        const uri = await t.tokenURI(id).catch(() => null);
+        if (typeof uri === 'string' && uri.startsWith('data:')) {
+          const j = readTokenMetadata(uri);
+          if (j) m = { name: typeof j.name === 'string' ? j.name : null, img: dataImage(j.image) || dataImage(j.image_url) };
+          if (m && !m.img) why = 'its picture is not stored on the chain';
+        } else if (typeof uri === 'string' && /^https?:/i.test(uri)) {
+          offchain++; why = 'this collection keeps its art on its own server, which this page does not fetch';
+        }
+        pick.meta.set(String(id), m || { name: null, img: null, why });
+        if (m && !m.why) pick.meta.get(String(id)).why = why;
+      }));
+      paintTiles();
+      if (pick.token !== token.toLowerCase()) return;   // the token changed under us; this answer is stale
     }
-    renderPick();
     const shown = pick.ids.filter((id) => (pick.meta.get(String(id)) || {}).img).length;
     say('pickMsg', shown + ' of ' + pick.ids.length + ' have their picture on the chain.'
       + (offchain ? '  ' + offchain + ' keep theirs on a web server, which this page will not fetch: allowing that would tell that server who is looking, on a page that also signs transactions. Those still send normally.' : '')
-      + (ids.length > pick.ids.length ? '  Showing the first ' + pick.ids.length + ' of ' + ids.length + '.' : ''), shown ? 'ok' : 'warn');
+      + (ids.length > pick.ids.length ? '  You hold ' + ids.length + '; this shows the first ' + pick.ids.length + ', which is as many as are worth choosing between by eye. For more than that, "Assign my token ids" uses everything you hold.' : ''), shown ? 'ok' : 'warn');
+  }
+  // Fills in pictures on tiles already on screen, without rebuilding the grid and losing what is selected.
+  function paintTiles() {
+    for (const el of $('pickGrid').querySelectorAll('.tile')) {
+      const m = pick.meta.get(el.dataset.id);
+      if (!m || el.dataset.painted === '1') continue;
+      el.dataset.painted = '1';
+      const slot = el.firstChild;
+      if (m.img) { const im = document.createElement('img'); im.src = m.img; im.alt = ''; el.replaceChild(im, slot); }
+      else { const d = document.createElement('div'); d.className = 'no'; d.textContent = m.why || 'no picture'; el.replaceChild(d, slot); }
+      if (m.name) el.querySelector('.id').textContent = String(m.name).slice(0, 40);
+    }
   }
 
   function renderPick() {
@@ -970,10 +996,11 @@
     for (const id of pick.ids) {
       const m = pick.meta.get(String(id)) || {};
       const b = document.createElement('button');
-      b.type = 'button'; b.className = 'tile';
+      b.type = 'button'; b.className = 'tile'; b.dataset.id = String(id);
       b.setAttribute('aria-pressed', pick.chosen.has(String(id)) ? 'true' : 'false');
-      if (m.img) { const im = document.createElement('img'); im.src = m.img; im.alt = ''; b.appendChild(im); }
-      else { const d = document.createElement('div'); d.className = 'no'; d.textContent = m.why || 'no picture'; b.appendChild(d); }
+      if (m.img) { const im = document.createElement('img'); im.src = m.img; im.alt = ''; b.appendChild(im); b.dataset.painted = '1'; }
+      else if (m.why) { const d = document.createElement('div'); d.className = 'no'; d.textContent = m.why; b.appendChild(d); b.dataset.painted = '1'; }
+      else { const d = document.createElement('div'); d.className = 'no'; d.textContent = '\u2026'; b.appendChild(d); }
       const lab = document.createElement('span'); lab.className = 'id';
       lab.textContent = m.name ? String(m.name).slice(0, 40) : '#' + id;   // text, never markup
       b.appendChild(lab);
@@ -1007,6 +1034,13 @@
     if (!ethers.isAddress(token) || !me) { say('msgList', 'Connect a wallet and enter the token address first.', 'bad'); return; }
     if (std() === '20') { say('msgList', 'A token has amounts, not individual items to choose between.', 'warn'); return; }
     if (std() === '1155') { say('msgList', 'An edition is one id held many times over, so there is nothing to choose between. Use "How many each".', 'warn'); return; }
+    const need = walletsInBox().length;
+    if (need > PICK_CAP) {
+      say('msgList', 'There are ' + need + ' wallets in the box. Choosing that many one at a time is not what '
+        + 'this is for: use "Assign my token ids", which pairs everything you hold without picking. The picker '
+        + 'is for a drop small enough to care which piece goes where.', 'warn');
+      return;
+    }
     $('pickBox').style.display = 'block';
     $('pick').disabled = true;
     try { if (pick.token !== token.toLowerCase()) { pick.chosen.clear(); pick.meta.clear(); await loadPickable(); } else { renderPick(); } }
@@ -1025,9 +1059,24 @@
     const chosen = pick.ids.map(String).filter((id) => pick.chosen.has(id));
     if (!chosen.length) { say('pickMsg', 'Nothing is chosen yet. Click the ones you want to send.', 'bad'); return; }
     if (chosen.length !== wallets.length) {
-      say('pickMsg', 'You have chosen ' + chosen.length + ' NFT' + (chosen.length === 1 ? '' : 's')
-        + ' and there ' + (wallets.length === 1 ? 'is 1 wallet' : 'are ' + wallets.length + ' wallets') + ' in the box. '
-        + 'Choose exactly one for each wallet, or change the list.', 'bad');
+      // "Choose one for each wallet" is true and useless when the reason you cannot is that you do not own
+      // enough of them. Name the thing that is actually in the way, and where the short list came from.
+      const short = wallets.length - chosen.length;
+      let why = 'You have chosen ' + chosen.length + ' NFT' + (chosen.length === 1 ? '' : 's')
+        + ' and there ' + (wallets.length === 1 ? 'is 1 wallet' : 'are ' + wallets.length + ' wallets') + ' in the box. ';
+      if (short > 0 && pick.held < wallets.length) {
+        why += 'You hold ' + pick.held + ' in this collection, which is ' + (wallets.length - pick.held)
+          + ' fewer than there are wallets, so one each is not possible however they are chosen. Shorten the '
+          + 'list, or send more than one round.';
+      } else if (short > 0 && pick.ids.length < wallets.length) {
+        why += 'This grid shows the first ' + pick.ids.length + ' of the ' + pick.held + ' you hold, which is not '
+          + 'enough to cover the list by hand. "Assign my token ids" uses all of them without picking one at a time.';
+      } else if (short > 0) {
+        why += 'Choose ' + short + ' more, or shorten the list.';
+      } else {
+        why += 'That is ' + (-short) + ' too many. Unpick some, or add more wallets.';
+      }
+      say('pickMsg', why, 'bad');
       return;
     }
     // Paired in the order shown, not at random: choosing them and then shuffling would undo the choosing.

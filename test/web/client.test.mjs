@@ -1280,7 +1280,7 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.evaluate(() => document.querySelectorAll('#pickGrid .tile')[0].click());
   await page.click('#pickUse'); await page.waitForTimeout(800);
   check('choosing fewer NFTs than wallets is refused, not silently padded',
-    /Choose exactly one for each wallet/.test(await text(page, '#pickMsg')), await text(page, '#pickMsg'));
+    /Choose 1 more, or shorten the list/.test(await text(page, '#pickMsg')), await text(page, '#pickMsg'));
 
   await page.evaluate(() => document.querySelectorAll('#pickGrid .tile')[1].click());
   await page.click('#pickUse'); await page.waitForTimeout(1500);
@@ -1308,6 +1308,41 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   check('the reason is given once at the top too, with what it protects',
     /web server/.test(msg) && /signs transactions/.test(msg), msg.slice(0, 260));
   check('and those NFTs can still be sent', /still send normally/.test(msg), msg.slice(0, 260));
+  await page.close();
+}
+
+// ---- the picker is for curation; mass drops have their own tool -------------------
+// "Does it work in a way that is good with a mass drop tool?" It did not: it capped silently at 60 tiles,
+// loaded pictures one call at a time, and when it could not cover the list it said "choose exactly one for
+// each wallet" -- true, useless, and a dead end when the real reason is that you do not own that many.
+{
+  const page = await open(browser, { approved: true, artOnchain: true, ownedIds: [1, 2, 3, 4, 5] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+
+  // more wallets than NFTs held: name the thing actually in the way
+  await page.fill('#list', Array.from({ length: 9 }, (_, i) => A(0x300 + i)).join('\n'));
+  await page.waitForTimeout(300);
+  await page.click('#pick'); await page.waitForTimeout(5000);
+  await page.click('#pickAll'); await page.waitForTimeout(400);
+  await page.click('#pickUse'); await page.waitForTimeout(800);
+  const why = await text(page, '#pickMsg');
+  check('being short of NFTs is reported as being short of NFTs, not as a counting mistake',
+    /You hold 5 in this collection/.test(why) && /4 fewer than there are wallets/.test(why), why.slice(0, 260));
+  check('and it says one each is impossible however they are chosen',
+    /not possible however they are chosen/.test(why), why.slice(0, 260));
+  const untouched = await page.evaluate(() => document.querySelector('#list').value.split('\n').length);
+  check('the recipient list is never silently shortened to fit', untouched === 9, untouched + ' lines');
+  await page.evaluate(() => document.querySelector('#pickClose').click());
+
+  // a list too long to pick by hand is sent to the tool that does handle it
+  await page.fill('#list', Array.from({ length: 300 }, (_, i) => A(0x400 + i)).join('\n'));
+  await page.waitForTimeout(400);
+  await page.click('#pick'); await page.waitForTimeout(1500);
+  check('a mass list does not open a grid of 300 tiles',
+    (await page.evaluate(() => document.querySelector('#pickBox').style.display)) !== 'block');
+  check('it points at "Assign my token ids", which is the tool for that size',
+    /Assign my token ids/.test(await text(page, '#msgList')), (await text(page, '#msgList')).slice(0, 200));
   await page.close();
 }
 
