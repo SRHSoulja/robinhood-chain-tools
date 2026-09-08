@@ -55,7 +55,12 @@ function chainAnswer(O) {
   const enc = (v) => '0x' + BigInt(v).toString(16).padStart(64, '0');
   const str = (t) => {
     const b = Buffer.from(t, 'utf8');
-    return '0x' + (32).toString(16).padStart(64, '0') + BigInt(b.length).toString(16).padStart(64, '0') + b.toString('hex').padEnd(64, '0');
+    // ABI strings are padded up to a whole 32-byte word. Padding to a fixed 64 hex characters only works
+    // while the string is short; anything longer came back unaligned and would not decode at all, which is
+    // why a tokenURI holding a data: URI arrived as nothing.
+    const hex = b.toString('hex');
+    const padded = hex.padEnd(Math.ceil(Math.max(hex.length, 1) / 64) * 64, '0');
+    return '0x' + (32).toString(16).padStart(64, '0') + BigInt(b.length).toString(16).padStart(64, '0') + padded;
   };
   let blockTick = 0;
   let sentYet = false;
@@ -150,6 +155,17 @@ function chainAnswer(O) {
         }
         // ownerOf(id): only answered when a test is exercising the after-the-fact arrival check
         if (sel === '0x6352211e') return O.ownerOf ? '0x' + O.ownerOf.slice(2).padStart(64, '0') : null;
+        // tokenURI(uint256): art on the chain, or a URL this page will not fetch
+        if (sel === '0xc87b56dd') {
+          const id = BigInt('0x' + data.slice(10, 74)).toString();
+          if (O.artOffchain) return str('https://example.invalid/meta/' + id + '.json');
+          if (O.artOnchain) {
+            const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#123"/></svg>';
+            const json = '{"name":"Piece #' + id + '","image":"data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64') + '"}';
+            return str('data:application/json;base64,' + Buffer.from(json).toString('base64'));
+          }
+          return null;
+        }
         if (sel === '0x00fdd58e') return enc(O.balance1155 ?? 1000);
         if (sel === '0xdd62ed3e') return enc(O.allowance ?? '1000000000000000000000');
         if (sel === '0x098144d4') return O.gated ? enc(BigInt('0xA000027A9B2802E1ddf7000061001e5c005A0000')) : null;
@@ -1239,6 +1255,59 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
     Object.keys(localStorage).filter((k) => /^bulksend:46630:/.test(k))
       .reduce((n, k) => n + JSON.parse(localStorage.getItem(k) || '[]').length, 0));
   check('and nothing goes into the delivered ledger', ledger === 0, 'ledger holds ' + ledger);
+  await page.close();
+}
+
+// ---- choosing which NFTs go out, rather than leaving it to chance ------------------
+// Asked for by the first outside tester. Three of the five largest collections on this chain keep their art
+// on the chain -- a data: URI of JSON whose image is a data: URI of an SVG -- so the picture is already in
+// the answer and nothing has to be fetched from anywhere.
+{
+  const page = await open(browser, { approved: true, artOnchain: true, ownedIds: [11, 12, 13] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#list', A(0x71) + '\n' + A(0x72) + '\n');
+  await page.waitForTimeout(300);
+  await page.click('#pick'); await page.waitForTimeout(6000);
+  const tiles = await page.evaluate(() => [...document.querySelectorAll('#pickGrid .tile')].map((t) => ({
+    src: (t.querySelector('img') || {}).src || null, label: (t.querySelector('.id') || {}).textContent })));
+  check('the picker shows the NFTs the wallet holds', tiles.length >= 2, tiles.length + ' tiles');
+  check('with art read straight off the chain, not fetched from anywhere',
+    tiles.every((t) => /^data:image\//.test(t.src || '')), JSON.stringify(tiles[0] || {}));
+  check('and each one named from its own metadata', /Piece #/.test((tiles[0] || {}).label || ''), (tiles[0] || {}).label);
+
+  // choosing a different number than there are wallets must not quietly pair them up wrong
+  await page.evaluate(() => document.querySelectorAll('#pickGrid .tile')[0].click());
+  await page.click('#pickUse'); await page.waitForTimeout(800);
+  check('choosing fewer NFTs than wallets is refused, not silently padded',
+    /Choose exactly one for each wallet/.test(await text(page, '#pickMsg')), await text(page, '#pickMsg'));
+
+  await page.evaluate(() => document.querySelectorAll('#pickGrid .tile')[1].click());
+  await page.click('#pickUse'); await page.waitForTimeout(1500);
+  const list = await page.evaluate(() => document.querySelector('#list').value);
+  check('the chosen ids are paired with the wallets in the order shown',
+    list.split('\n').length === 2 && /,\d+$/.test(list.split('\n')[0]), list.replace(/\n/g, ' | '));
+  check('and the randomiser is switched off, since choosing then shuffling would undo the choosing',
+    (await page.evaluate(() => document.querySelector('#rand').checked)) === false);
+  await page.close();
+}
+// ---- a collection that keeps its art on its own server ----------------------------
+{
+  const page = await open(browser, { approved: true, artOffchain: true, ownedIds: [21, 22] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#list', A(0x81) + '\n');
+  await page.waitForTimeout(300);
+  await page.click('#pick'); await page.waitForTimeout(6000);
+  const msg = await text(page, '#pickMsg');
+  const tiles = await page.evaluate(() => [...document.querySelectorAll('#pickGrid .tile')].map((t) => ({
+    img: !!t.querySelector('img'), why: (t.querySelector('.no') || {}).textContent })));
+  check('art on someone else\u2019s server is not fetched', tiles.every((t) => !t.img), JSON.stringify(tiles[0] || {}));
+  check('and the tile says why rather than showing an empty box',
+    /own server/.test((tiles[0] || {}).why || ''), (tiles[0] || {}).why);
+  check('the reason is given once at the top too, with what it protects',
+    /web server/.test(msg) && /signs transactions/.test(msg), msg.slice(0, 260));
+  check('and those NFTs can still be sent', /still send normally/.test(msg), msg.slice(0, 260));
   await page.close();
 }
 

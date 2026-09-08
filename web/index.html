@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-BytoJNCpoc4EovT5aJGD42COMx6tvEMNOIroNbFCxds='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-3MCq8cC20z8ssyZkco8CYZihocbId3sNLvMXJ0R8opo='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -34,6 +34,13 @@
   .msg{font-size:12.5px;margin-top:6px;min-height:1px}
   .hint{font-size:12.5px;color:var(--mut);margin-top:8px}
   button.danger{border-color:var(--bad);color:var(--bad);background:transparent}
+  #pickBox{display:none;margin-top:10px;border:1px solid var(--line);border-radius:10px;padding:12px}
+  #pickGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px;max-height:340px;overflow:auto;margin-top:10px}
+  .tile{border:2px solid var(--line);border-radius:10px;padding:6px;background:transparent;cursor:pointer;text-align:center;font:inherit;color:inherit}
+  .tile[aria-pressed="true"]{border-color:var(--acc)}
+  .tile img{width:100%;aspect-ratio:1;object-fit:contain;border-radius:6px;display:block;background:rgba(128,128,128,.12)}
+  .tile .no{width:100%;aspect-ratio:1;border-radius:6px;display:flex;align-items:center;justify-content:center;background:rgba(128,128,128,.12);font-size:11px;color:var(--mut);padding:4px}
+  .tile span.id{display:block;font-size:11px;color:var(--mut);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   @media(max-width:640px){ input[type=text],select,textarea{font-size:16px} textarea{min-height:38vh} input[type=checkbox]{width:20px;height:20px} }
   .check{display:flex;gap:8px;align-items:center;font-size:13px;margin:8px 0}
   footer{color:var(--mut);font-size:12.5px;padding:18px 22px;border-top:1px solid var(--line);max-width:920px;margin:0 auto}
@@ -82,6 +89,8 @@
           <div style="font-size:12px;color:var(--mut);margin-top:4px">A cap keeps one large holder from taking the whole drop.</div>
         </div>
       </div>
+      <div style="margin-top:8px"><button class="secondary" id="pick">Choose which ones</button>
+        <span style="font-size:12px;color:var(--mut);margin-left:8px">Pick the exact NFTs to send, instead of leaving it to chance.</span></div>
       <div class="check" style="margin:6px 0 0"><input type="checkbox" id="rand" checked><label for="rand" style="margin:0;font-size:12px">Random, so nobody can pick which NFT they get. Costs nothing: they still go out cheapest-first.</label></div></div>
     </div>
     <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV. A file whose first line names its columns works too, and then the order does not matter: <span class="mono">address</span>, <span class="mono">tokenId</span> (<em>which</em> one), <span class="mono">quantity</span> (<em>how many</em>). A file of nothing but addresses works as well: press &ldquo;Assign my token ids&rdquo;.</label>
@@ -92,6 +101,18 @@
       <button class="secondary" id="dropContracts" style="display:none">Remove contract addresses</button>
       <span id="parseOut" class="stat" aria-live="polite"></span>
       <div id="msgList" class="msg" aria-live="polite" style="flex-basis:100%"></div>
+    </div>
+    <div id="pickBox">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <strong style="font-size:14px">Choose which ones to send</strong>
+        <span id="pickCount" class="pill"></span>
+        <button class="secondary" id="pickAll" style="margin-left:auto">Select the first <span id="pickNeed">0</span></button>
+        <button class="secondary" id="pickNone">Clear</button>
+        <button id="pickUse">Use these</button>
+        <button class="secondary" id="pickClose">Close</button>
+      </div>
+      <div id="pickMsg" class="msg" aria-live="polite"></div>
+      <div id="pickGrid"></div>
     </div>
     <div id="problems" class="log" tabindex="0" aria-live="assertive" style="display:none"></div>
     <div class="check" id="ackRow" style="display:none"><input type="checkbox" id="ack"><label for="ack" style="margin:0">Send to the good lines and leave the unreadable ones out</label></div>
@@ -881,6 +902,141 @@
     $('ackRow').style.display = problems.length ? 'flex' : 'none'; $('ack').checked = false;
     plan(); refreshRevoke();
   }
+
+  // ---- choosing which NFTs go out, rather than leaving it to chance ----
+  // Where a collection keeps its art on chain -- a data: URI holding JSON that holds an SVG -- the picture is
+  // already in the answer and nothing has to be fetched from anywhere. Three of the five largest collections
+  // on this chain do exactly that, Howl Street among them.
+  //
+  // Where the art lives at an https URL it is NOT fetched. `img-src` on this page does not allow arbitrary
+  // hosts, and widening it would let any collection's server see the IP of everyone previewing an airdrop,
+  // on a page whose other job is signing transactions. Those tiles say so instead of quietly showing nothing.
+  //
+  // Every string here comes off a chain and is therefore written by someone else: names go in as text, never
+  // as markup, and an image source is used only when it is a data: URI of an image type.
+  const pick = { ids: [], meta: new Map(), chosen: new Set(), token: null };
+  const dataImage = (v) => (typeof v === 'string' && /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);/i.test(v)) ? v : null;
+
+  function readTokenMetadata(uri) {
+    // data:application/json;base64,… or data:application/json;utf8,{…} or the plain percent-encoded form
+    if (typeof uri !== 'string' || !uri.startsWith('data:')) return null;
+    const comma = uri.indexOf(',');
+    if (comma < 0) return null;
+    const head = uri.slice(5, comma).toLowerCase(), body = uri.slice(comma + 1);
+    let text;
+    try { text = head.includes('base64') ? atob(body) : decodeURIComponent(body); }
+    catch (e) { try { text = body; } catch (e2) { return null; } }
+    try { return JSON.parse(text); } catch (e) { return null; }
+  }
+
+  async function loadPickable() {
+    const token = $('token').value.trim();
+    const grid = $('pickGrid');
+    pick.token = token.toLowerCase();
+    say('pickMsg', 'Reading the ones you hold…', '');
+    grid.textContent = '';
+    const ids = await myTokenIds(token, 200).catch(() => []);
+    pick.ids = ids.slice(0, 60);
+    if (!pick.ids.length) {
+      say('pickMsg', 'Your wallet does not appear to hold anything in this collection, or the explorer would not say.', 'bad');
+      return;
+    }
+    const rp = new ethers.JsonRpcProvider(cfg().rpc);
+    const t = new ethers.Contract(token, ['function tokenURI(uint256) view returns (string)'], rp);
+    let offchain = 0;
+    for (const id of pick.ids) {
+      let m = null, why = 'no picture published';
+      const uri = await t.tokenURI(id).catch(() => null);
+      if (typeof uri === 'string' && uri.startsWith('data:')) {
+        const j = readTokenMetadata(uri);
+        if (j) m = { name: typeof j.name === 'string' ? j.name : null, img: dataImage(j.image) || dataImage(j.image_url) };
+        if (m && !m.img) why = 'its picture is not stored on the chain';
+      } else if (typeof uri === 'string' && /^https?:/i.test(uri)) {
+        offchain++; why = 'this collection keeps its art on its own server, which this page does not fetch';
+      }
+      pick.meta.set(String(id), m || { name: null, img: null, why });
+      if (m && !m.why) pick.meta.get(String(id)).why = why;
+    }
+    renderPick();
+    const shown = pick.ids.filter((id) => (pick.meta.get(String(id)) || {}).img).length;
+    say('pickMsg', shown + ' of ' + pick.ids.length + ' have their picture on the chain.'
+      + (offchain ? '  ' + offchain + ' keep theirs on a web server, which this page will not fetch: allowing that would tell that server who is looking, on a page that also signs transactions. Those still send normally.' : '')
+      + (ids.length > pick.ids.length ? '  Showing the first ' + pick.ids.length + ' of ' + ids.length + '.' : ''), shown ? 'ok' : 'warn');
+  }
+
+  function renderPick() {
+    const grid = $('pickGrid');
+    grid.textContent = '';
+    for (const id of pick.ids) {
+      const m = pick.meta.get(String(id)) || {};
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'tile';
+      b.setAttribute('aria-pressed', pick.chosen.has(String(id)) ? 'true' : 'false');
+      if (m.img) { const im = document.createElement('img'); im.src = m.img; im.alt = ''; b.appendChild(im); }
+      else { const d = document.createElement('div'); d.className = 'no'; d.textContent = m.why || 'no picture'; b.appendChild(d); }
+      const lab = document.createElement('span'); lab.className = 'id';
+      lab.textContent = m.name ? String(m.name).slice(0, 40) : '#' + id;   // text, never markup
+      b.appendChild(lab);
+      b.addEventListener('click', () => {
+        const k = String(id);
+        if (pick.chosen.has(k)) pick.chosen.delete(k); else pick.chosen.add(k);
+        b.setAttribute('aria-pressed', pick.chosen.has(k) ? 'true' : 'false');
+        updatePickCount();
+      });
+      grid.appendChild(b);
+    }
+    updatePickCount();
+  }
+  function walletsInBox() {
+    const out = [];
+    for (const line of $('list').value.split(/\r?\n/)) {
+      const p = line.trim().split(/[,\t; ]+/).filter(Boolean);
+      if (p.length && ethers.isAddress(p[0])) out.push(ethers.getAddress(p[0]));
+    }
+    return out;
+  }
+  function updatePickCount() {
+    const need = walletsInBox().length;
+    $('pickNeed').textContent = String(need);
+    $('pickCount').textContent = pick.chosen.size + ' chosen' + (need ? ' of ' + need + ' wallet' + (need === 1 ? '' : 's') : '');
+    $('pickCount').className = 'pill' + (need && pick.chosen.size === need ? ' ok' : '');
+  }
+
+  $('pick').addEventListener('click', async () => {
+    const token = $('token').value.trim();
+    if (!ethers.isAddress(token) || !me) { say('msgList', 'Connect a wallet and enter the token address first.', 'bad'); return; }
+    if (std() === '20') { say('msgList', 'A token has amounts, not individual items to choose between.', 'warn'); return; }
+    if (std() === '1155') { say('msgList', 'An edition is one id held many times over, so there is nothing to choose between. Use "How many each".', 'warn'); return; }
+    $('pickBox').style.display = 'block';
+    $('pick').disabled = true;
+    try { if (pick.token !== token.toLowerCase()) { pick.chosen.clear(); pick.meta.clear(); await loadPickable(); } else { renderPick(); } }
+    finally { $('pick').disabled = false; }
+  });
+  $('pickClose').addEventListener('click', () => { $('pickBox').style.display = 'none'; });
+  $('pickNone').addEventListener('click', () => { pick.chosen.clear(); renderPick(); });
+  $('pickAll').addEventListener('click', () => {
+    pick.chosen.clear();
+    for (const id of pick.ids.slice(0, walletsInBox().length)) pick.chosen.add(String(id));
+    renderPick();
+  });
+  $('pickUse').addEventListener('click', () => {
+    const wallets = walletsInBox();
+    if (!wallets.length) { say('pickMsg', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
+    const chosen = pick.ids.map(String).filter((id) => pick.chosen.has(id));
+    if (!chosen.length) { say('pickMsg', 'Nothing is chosen yet. Click the ones you want to send.', 'bad'); return; }
+    if (chosen.length !== wallets.length) {
+      say('pickMsg', 'You have chosen ' + chosen.length + ' NFT' + (chosen.length === 1 ? '' : 's')
+        + ' and there ' + (wallets.length === 1 ? 'is 1 wallet' : 'are ' + wallets.length + ' wallets') + ' in the box. '
+        + 'Choose exactly one for each wallet, or change the list.', 'bad');
+      return;
+    }
+    // Paired in the order shown, not at random: choosing them and then shuffling would undo the choosing.
+    $('list').value = wallets.map((w, i) => w + ',' + chosen[i]).join('\n');
+    $('rand').checked = false;
+    $('pickBox').style.display = 'none';
+    say('msgList', 'Using the ' + chosen.length + ' you chose, paired in the order they are listed.', 'ok');
+    parseList();
+  });
 
   // ---- a record of what already went out, so closing the tab mid-airdrop cannot pay anyone twice ----
   // Scoped to the sending account as well as the chain, token and standard: two accounts airdropping the same

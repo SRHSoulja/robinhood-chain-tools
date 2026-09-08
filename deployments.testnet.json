@@ -15,5 +15,6 @@
  "BulkSend_v8_prior": "0x3159f3abf0235eacedff866312cb1bb335d6f80e",
  "Fee20": "0xe279e4269c544b96c5547a4061530b5a54fbfca9",
  "Blacklist20": "0x32e3053be3693d47228b710e0fcaad4218c51c2c",
- "PolitelyDoesNothing": "0x7d69510a6d842ff7444af6310916c1022766f4a2"
+ "PolitelyDoesNothing": "0x7d69510a6d842ff7444af6310916c1022766f4a2",
+ "OnChainArt": "0x73bcbabd0109038d221ec6e2c930ba9d0d73d593"
 }
