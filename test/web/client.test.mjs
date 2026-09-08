@@ -1159,6 +1159,55 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.close();
 }
 
+// ---- a list of addresses nobody ever created ------------------------------------
+// A wallet address is twenty random bytes. Two real ones sharing eight characters is a one-in-four-billion
+// coincidence, and two landing within a few values of each other is far less likely still. A list that does
+// both was written by counting, and an address nobody generated has no key behind it: what goes there cannot
+// be moved again by anyone. The first outside tester's failing file was exactly this shape.
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  // the nine addresses from that tester's successful airdrop, read off the chain. These must stay clean:
+  // a false positive here would cry wolf on every real list and teach people to ignore the warning.
+  const REAL = ['0x8f72075dAe23ccC4aE4CcCBafeB4e3937f1E916a', '0xe10dc380237a83A84B2e8ae527d86E3f3FDC43A6',
+    '0xbB2287a8CcD2cCF2F439e766353Ad9b91264D253', '0x464b83236B6C9236C4e59e3a836D00fd5F2590bd',
+    '0x7a793C0b94fCd60582ac5aa0Cc82377E7d090Ebf', '0xad773b7E54c5d1412116269bDaf506025a32E25C',
+    '0xB932Fdc1de9BBC384070c71d87e480C6f1338834', '0xa58165E81452a84A30964B039BB3B9D164dDca5D',
+    '0x877ed07A554a88568f620B3d6455cf8850a1f20d'];
+  await setList(page, REAL.map((a, i) => a + ',' + (240 + i)).join('\n'));
+  check('nine real addresses are not called made up',
+    !/look made up/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
+
+  // the fabricated list, lower-cased so the checksum is not what stops it
+  const FAKE = [0, 1, 2, 3, 4, 5].map((i) => '0x02133af5c7a045a3782fbb6af344b9e91cd110' + (88 + i));
+  await setList(page, FAKE.map((a, i) => a + ',' + (300 + i)).join('\n'));
+  const stat = await text(page, '#parseOut'), why = await text(page, '#problems');
+  check('a counted list is called what it is', /look made up/.test(stat), stat.slice(0, 140));
+  check('and it says which two things gave it away',
+    /identical for its first 38 characters/.test(why) && /within a few values/.test(why), why.slice(0, 260));
+  check('it says what it costs: no key, no way back',
+    /no key behind it/.test(why) && /never be moved again/.test(why), why.slice(0, 400));
+  check('it does not claim the reverse for a list that passes',
+    /has not been checked, only found unremarkable/.test(why), why.slice(-200));
+  check('and it warns rather than blocks, because a testnet rehearsal is a fair use of it',
+    (await page.evaluate(() => document.querySelector('#ackRow').style.display)) === 'none'
+    && (await page.evaluate(() => document.querySelector('#send').disabled)) === false,
+    'ackRow=' + await page.evaluate(() => document.querySelector('#ackRow').style.display)
+    + ' send disabled=' + await page.evaluate(() => document.querySelector('#send').disabled));
+
+  // low sequential addresses, the other way people make lists up
+  await setList(page, [1, 2, 3, 4].map((i) => '0x' + i.toString(16).padStart(40, '0') + ',' + (270 + i)).join('\n'));
+  check('burn-style sequential addresses are caught too', /look made up/.test(await text(page, '#parseOut')),
+    await text(page, '#parseOut'));
+
+  // two is not enough to tell anything from
+  await setList(page, FAKE.slice(0, 2).map((a, i) => a + ',' + (280 + i)).join('\n'));
+  check('two addresses are too few to judge, and it says nothing rather than guessing',
+    !/look made up/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

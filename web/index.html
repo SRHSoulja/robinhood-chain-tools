@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-JgWEVC4GIbm2LvN3ZciMATIxkJgSv6EeWf++A65fJsw='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-BytoJNCpoc4EovT5aJGD42COMx6tvEMNOIroNbFCxds='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -811,6 +811,33 @@
     $('assign').style.borderColor = 'var(--warn)'; $('assign').style.color = 'var(--warn)';
     plan();
   }
+  // ---- addresses that were made up rather than collected ----
+  // A wallet address is twenty random bytes, so a list of real ones has almost nothing in common: two of them
+  // sharing even eight characters is a one-in-four-billion coincidence, and two landing within a few values of
+  // each other is far less likely than that. A list that does both was produced by counting, and an address
+  // nobody generated has no key behind it: whatever is sent there cannot be moved again by anyone, ever.
+  //
+  // This is reported, never blocked. Rehearsing an airdrop to made-up addresses on a test network is a
+  // sensible thing to do, and the page has no business refusing it.
+  //
+  // It can only ever say a list looks made up. It cannot say the reverse: a list that trips nothing here has
+  // not been shown to be real, only to be unremarkable, and the wording below has to keep saying so.
+  function looksGenerated(wallets) {
+    const list = [...wallets].map((a) => a.toLowerCase());
+    if (list.length < 3) return null;
+    const signals = [];
+    let pre = 2;
+    while (pre < 42 && new Set(list.map((a) => a.slice(0, pre + 1))).size === 1) pre++;
+    const shared = pre - 2;
+    if (shared >= 8) signals.push('every one of the ' + list.length + ' is identical for its first ' + shared + ' characters');
+    let ints = [];
+    try { ints = list.map((a) => BigInt(a)).sort((x, y) => (x < y ? -1 : x > y ? 1 : 0)); } catch (e) { ints = []; }
+    let close = 0;
+    for (let i = 1; i < ints.length; i++) if (ints[i] - ints[i - 1] <= 256n) close++;
+    if (close >= 2) signals.push(close + ' of them sit within a few values of another one, which is what counting produces');
+    return signals.length ? signals : null;
+  }
+
   function finishParse(out, problems, headers, note) {
     rows = out;
     lastManifest = null; $('manifest').disabled = true;   // a different list is not the list that was agreed to
@@ -830,8 +857,24 @@
     else if (repeatWallets) parts.push(['', repeatWallets + ' wallets appear more than once', 'warn']);
     if (selfSends) parts.push(['', selfSends + ' of these are your own wallet', 'warn']);
     if (headers && !note) parts.push(['', headers + ' line' + (headers === 1 ? '' : 's') + ' skipped as a heading', 'warn']);
+    const madeUp = looksGenerated(wallets);
+    if (madeUp) parts.push(['', 'these addresses look made up', 'bad']);
     setStat($('parseOut'), parts);
-    $('problems').style.display = problems.length ? 'block' : 'none'; $('problems').textContent = problems.join('\n');
+    const notices = [];
+    if (madeUp) {
+      const live = chainId() === 4663;
+      notices.push('These addresses do not look collected, they look counted: ' + madeUp.join(', and ')
+        + '. Twenty random bytes do not line up like that.'
+        + '\n\nAn address nobody generated has no key behind it, so anything sent to one can never be moved '
+        + 'again, by you or by anyone. ' + (live
+          ? 'You are on ' + cfg().name + '. Nothing here can be undone: check where this list came from before you send.'
+          : 'On a test network that is a perfectly reasonable rehearsal. If these were meant to be real wallets, check where the list came from first.')
+        + '\n\nThis can only tell you a list looks made up. It cannot tell you a list is real: one that says '
+        + 'nothing here has not been checked, only found unremarkable.');
+    }
+    const box = $('problems');
+    box.style.display = (problems.length || notices.length) ? 'block' : 'none';
+    box.textContent = notices.concat(problems.length ? [problems.join('\n')] : []).join('\n\n');
     badLines = problems.length; badLinesOk = false;
     if (problems.length) say('msgList', (note ? note + ' ' : '') + problems.length + ' line' + (problems.length === 1 ? '' : 's') + ' could not be read and will not be sent. Fix them, or tick the box below to go ahead without them.', 'bad');
     else say('msgList', note || '', note ? 'ok' : '');
