@@ -1346,6 +1346,76 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.close();
 }
 
+// ---- Stop, which had no test at all, mocked or live -------------------------------
+// It is the control someone presses when an airdrop is going wrong, and nothing had ever checked it worked.
+// It does: verified live on testnet halting after batch 1 of 3, with 2 delivered and the ledger holding
+// exactly those 2. This is the deterministic version.
+{
+  const page = await open(browser, { approved: true, ownerOf: A(0xd1),
+    summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 },
+    slowMethod: { method: 'eth_getTransactionReceipt', ms: 2500 } });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#batch', '1'); await page.waitForTimeout(200);
+  await setList(page, A(0xd1) + ',1\n' + A(0xd2) + ',2\n' + A(0xd3) + ',3\n');
+  check('three recipients, one per transaction, is planned as three transactions',
+    /3 transactions/.test(await text(page, '#plan')), (await text(page, '#plan')).slice(0, 140));
+  await page.click('#send');
+  await page.waitForTimeout(1200);
+  check('Stop is enabled while a send is running',
+    (await page.evaluate(() => document.querySelector('#stop').disabled)) === false);
+  await page.click('#stop');
+  await page.waitForTimeout(12000);
+  const l = await text(page, '#log');
+  const sent = await page.evaluate(() => window.__sent.length);
+  check('pressing Stop halts the run before every batch has gone', sent < 3, sent + ' of 3 transactions signed');
+  check('and it says so rather than just going quiet', /Stopped/.test(l), l.slice(-200));
+  const ledger = await page.evaluate(() =>
+    Object.keys(localStorage).filter((k) => /^bulksend:46630:/.test(k))
+      .reduce((n, k) => n + JSON.parse(localStorage.getItem(k) || '[]').length, 0));
+  check('a stopped run records only what actually went out', ledger <= sent, 'ledger ' + ledger + ' for ' + sent + ' sent');
+  await page.close();
+}
+
+// ---- proportional airdrops from a holder snapshot ---------------------------------
+// One passing reference and never run against real holdings. Verified live against a collection minted
+// deliberately uneven (3 / 2 / 1) and it is exact. The page writes one line with an "xN" multiplier rather
+// than N lines, which is what a reader of this test needs to know before believing the counts.
+{
+  const big = A(0xe3), mid = A(0xe2), one = A(0xe1);
+  const page = await open(browser, { approved: true, explorer: { items: [
+    { address: { hash: big }, value: '3' }, { address: { hash: mid }, value: '2' },
+    { address: { hash: one }, value: '1' }] } });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#snapAddr', NFT);
+  await page.click('#snap'); await page.waitForTimeout(5000);
+  check('the weighting controls appear once holders have been read',
+    (await page.evaluate(() => document.querySelector('#weightRow').style.display)) !== 'none');
+  const share = async () => {
+    const v = await page.evaluate(() => document.querySelector('#list').value);
+    const m = new Map();
+    for (const line of v.split('\n').filter(Boolean)) {
+      const p = line.trim().split(/[,\s]+/).filter(Boolean);
+      const mult = p.slice(1).find((x) => /^x\d+$/i.test(x));
+      m.set(p[0].toLowerCase(), (m.get(p[0].toLowerCase()) || 0) + (mult ? parseInt(mult.slice(1), 10) : 1));
+    }
+    return m;
+  };
+  await page.selectOption('#weight', 'per'); await page.fill('#cap', '10'); await page.waitForTimeout(200);
+  await page.click('#applyWeight'); await page.waitForTimeout(1500);
+  let m = await share();
+  check('"one for each one they hold" gives each wallet exactly what it holds',
+    m.get(big.toLowerCase()) === 3 && m.get(mid.toLowerCase()) === 2 && m.get(one.toLowerCase()) === 1,
+    JSON.stringify([...m]));
+  await page.selectOption('#weight', 'per'); await page.fill('#cap', '2'); await page.waitForTimeout(200);
+  await page.click('#applyWeight'); await page.waitForTimeout(1500);
+  m = await share();
+  check('and a cap stops the largest holder taking the whole drop',
+    m.get(big.toLowerCase()) === 2 && m.get(one.toLowerCase()) === 1, JSON.stringify([...m]));
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
