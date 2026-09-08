@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-pPxJGfwrq+M/D1GEPl1dEQ696JLkmJHjjzq16EOTVOg='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-v+ulbpd236nLRyR8mGiXglv04c73U6VmyMJO6QG4wl8='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -674,6 +674,8 @@
       // whole answer. They used to be discarded here, and the page asked instead whether to replace the list
       // with 0 wallets and 0 NFTs -- while saying nothing at all about the addresses.
       if (!named.length) { finishParse(out, problems, headers, ''); return; }
+      // A file that names an address column and nothing else is a list of wallets with no ids yet.
+      if (s === '721' && colMap.id === undefined && colMap.qty === undefined) { offerToAssign(named.length); return; }
       // In the wider ecosystem an NFT file with a quantity column but no id column means "how many of yours",
       // which is the same thing this page calls x3. Rewrite it into that form and let Assign fill the ids in.
       // A file that names an id column and then leaves it blank is not a file that means "assign some";
@@ -749,14 +751,7 @@
       const rowsIn = lines.map(l => l.trim()).filter((l, i) => l && !(i === lines.findIndex(x => x.trim()) && looksLikeHeading(l)));
       const bareish = (l) => { const p = l.split(/[,\t; ]+/).filter(Boolean); return ethers.isAddress(p[0]) && (p.length === 1 || (p.length === 2 && /^x\d+$/i.test(p[1]))); };
       const bare = rowsIn.filter(bareish);
-      if (rowsIn.length && bare.length === rowsIn.length) {
-        rows = [];
-        setStat($('parseOut'), [['', bare.length + ' wallets, no token ids yet', 'warn']]);
-        $('problems').style.display = 'block';
-        $('problems').textContent = 'These are wallets with no token ids yet. Press "Assign my token ids" and the ones you hold are filled in for you. Set "How many each" to give everyone more than one, or write x3 after a single address to give that wallet more than the rest.';
-        $('assign').style.borderColor = 'var(--warn)'; $('assign').style.color = 'var(--warn)';
-        plan(); return;
-      }
+      if (rowsIn.length && bare.length === rowsIn.length) { offerToAssign(bare.length); return; }
       $('assign').style.borderColor = ''; $('assign').style.color = '';
     }
     lines.forEach((line, i) => {
@@ -786,6 +781,18 @@
       } catch (err) { problems.push('line ' + (i + 1) + ': ' + String(err.shortMessage || err.message).slice(0, 90)); }
     });
     finishParse(out, problems, headers, '');
+  }
+  // A list of wallets and no ids is not a broken list, it is the usual way to start one. Both readers end up
+  // here: a file headed "address" with nothing else in it used to reach the named-column reader instead, and
+  // be answered with "no token id on this line" once per wallet -- the same list pasted without a heading got
+  // this offer. That difference is exactly the friction a first-time user reports as the file being wrong.
+  function offerToAssign(n) {
+    rows = [];
+    setStat($('parseOut'), [['', n + ' wallet' + (n === 1 ? '' : 's') + ', no token ids yet', 'warn']]);
+    $('problems').style.display = 'block';
+    $('problems').textContent = 'These are wallets with no token ids yet. Press "Assign my token ids" and the ones you hold are filled in for you. Set "How many each" to give everyone more than one, or write x3 after a single address to give that wallet more than the rest.';
+    $('assign').style.borderColor = 'var(--warn)'; $('assign').style.color = 'var(--warn)';
+    plan();
   }
   function finishParse(out, problems, headers, note) {
     rows = out;

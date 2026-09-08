@@ -1133,6 +1133,32 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.close();
 }
 
+// ---- a file of nothing but addresses is how most people start ---------------------
+// Asked for by the first outside tester: "allow them to upload a CSV of just the addresses and enter the
+// number of NFTs they want to send. From there it should just choose any of the available token IDs." That
+// already existed -- but only for a list pasted with no heading. The same list as a CSV, headed `address`,
+// went to the named-column reader and was answered with "no token id on this line" once per wallet.
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const readEl = text;
+  for (const [name, text] of [
+    ['pasted with no heading', A(0x61) + '\n' + A(0x62) + '\n' + A(0x63) + '\n'],
+    ['as a CSV headed address', 'address\n' + A(0x61) + '\n' + A(0x62) + '\n' + A(0x63) + '\n'],
+    ['headed with another word', 'Recipient Wallet\n' + A(0x61) + '\n' + A(0x62) + '\n' + A(0x63) + '\n'],
+  ]) {
+    await setList(page, text);
+    const stat = await readEl(page, '#parseOut'), prob = await readEl(page, '#problems');
+    check('a list of bare wallets offers to fill the ids in (' + name + ')',
+      /3 wallets, no token ids yet/.test(stat) && /Press "Assign my token ids"/.test(prob),
+      stat.slice(0, 90) + ' | ' + prob.slice(0, 90));
+    check('and never reports a missing id as a broken line (' + name + ')',
+      !/no token id on this line/.test(prob) && !/problem lines/.test(stat), prob.slice(0, 120));
+  }
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
