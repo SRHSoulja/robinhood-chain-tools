@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-v+ulbpd236nLRyR8mGiXglv04c73U6VmyMJO6QG4wl8='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-JgWEVC4GIbm2LvN3ZciMATIxkJgSv6EeWf++A65fJsw='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -84,7 +84,7 @@
       </div>
       <div class="check" style="margin:6px 0 0"><input type="checkbox" id="rand" checked><label for="rand" style="margin:0;font-size:12px">Random, so nobody can pick which NFT they get. Costs nothing: they still go out cheapest-first.</label></div></div>
     </div>
-    <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV. A file with named columns works too, in any order: <span class="mono">address</span>, <span class="mono">tokenId</span>, <span class="mono">quantity</span>.</label>
+    <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV. A file whose first line names its columns works too, and then the order does not matter: <span class="mono">address</span>, <span class="mono">tokenId</span> (<em>which</em> one), <span class="mono">quantity</span> (<em>how many</em>). A file of nothing but addresses works as well: press &ldquo;Assign my token ids&rdquo;.</label>
     <textarea id="list" aria-label="Recipient list" placeholder="0xabc…, 12&#10;0xdef…, 13"></textarea>
     <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
       <input type="file" id="csv" aria-label="Upload a CSV of recipients" accept=".csv,.txt,text/csv">
@@ -574,6 +574,19 @@
     const m = /^(\d+)(?:\.0+)?$/.exec(t);
     return m ? m[1] : null;
   };
+  // More decimal places than the token has cannot be sent without rounding, and rounding someone's payment
+  // silently is not a thing this page will do. ethers throws "too many decimals for format" here, which is
+  // ethers talking to itself; the reader needs to know the number and what to write instead.
+  function tooPrecise(raw) {
+    const t = String(raw == null ? '' : raw).trim();
+    const dot = t.indexOf('.');
+    if (dot < 0 || decimals === null) return null;
+    const places = t.length - dot - 1;
+    if (places <= decimals) return null;
+    return '"' + t.slice(0, 24) + '" has ' + places + ' decimal place' + (places === 1 ? '' : 's')
+      + ', and this token has ' + decimals + '. Sending it would mean rounding the amount, so nothing has been '
+      + 'assumed: write it with at most ' + decimals + ' decimal place' + (decimals === 1 ? '' : 's');
+  }
   // A quantity has to be a plain whole number. Anything else is a mistake worth stopping for, never a silent 1.
   function wholeNumber(v) {
     if (typeof v !== 'string') return null;
@@ -737,6 +750,8 @@
               problems.push('line ' + r.line + ': "' + raw.slice(0, 20) + '" is not an amount' + (/[,\s]/.test(raw) ? '. Write it without separators, so 1234.5 rather than 1,234.5' : ''));
               continue;
             }
+            const over = tooPrecise(raw);
+            if (over) { problems.push('line ' + r.line + ': ' + over); continue; }
             const parsed = ethers.parseUnits(raw, decimals);
             if (parsed === 0n) { problems.push('line ' + r.line + ': an amount of zero sends nothing'); continue; }
             out.push({ to: r.a, amount: parsed, raw });
@@ -775,6 +790,8 @@
           if (q === null) { problems.push('line ' + (i + 1) + ': ' + numberProblem(parts[2], 'amount')); return; }
           out.push({ to: a, id: BigInt(id), amount: BigInt(q), raw: String(q) }); }
         else { const amt = parts[1]; if (!/^\d+(\.\d+)?$/.test(amt || '')) { problems.push('line ' + (i + 1) + ': missing amount'); return; }
+          const over = tooPrecise(amt);
+          if (over) { problems.push('line ' + (i + 1) + ': ' + over); return; }
           const parsed = ethers.parseUnits(amt, decimals);
           if (parsed === 0n) { problems.push('line ' + (i + 1) + ': an amount of zero sends nothing'); return; }
           out.push({ to: a, amount: parsed, raw: amt }); }
