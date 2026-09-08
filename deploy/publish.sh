@@ -166,7 +166,13 @@ x_route = """
       headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' },
       cf: { cacheEverything: true, cacheTtl: 60 },
     });
-    return new Response(upstream.body, { status: upstream.status, headers: Object.assign(secure(), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=60' }) });
+    // Only a real answer is worth keeping. The explorer occasionally answers a challenge page instead, and
+    // caching that for a minute serves the failure to everyone who asks in that minute -- including after the
+    // explorer has recovered. A transient error must not become the cached answer.
+    const good = upstream.ok && String(upstream.headers.get('content-type') || '').includes('json');
+    return new Response(upstream.body, { status: upstream.status, headers: Object.assign(secure(), {
+      'content-type': good ? 'application/json; charset=utf-8' : (upstream.headers.get('content-type') || 'text/plain; charset=utf-8'),
+      'cache-control': good ? 'public, max-age=60' : 'no-store' }) });
   }
 """ if target == "check" else ""
 
