@@ -12,5 +12,8 @@
  "BulkSend_v5_prior": "0x752960a560ea676bec736f55d98773eb0e1fb3df",
  "BulkSend_v6_prior": "0x83b2a9c4a09976e0f5221ad198bce1cb2a12abd1",
  "BulkSend_v7_prior": "0xc6ae3189edae544ed60adf5ec057e338ce224f74",
- "BulkSend_v8_prior": "0x3159f3abf0235eacedff866312cb1bb335d6f80e"
+ "BulkSend_v8_prior": "0x3159f3abf0235eacedff866312cb1bb335d6f80e",
+ "Fee20": "0xe279e4269c544b96c5547a4061530b5a54fbfca9",
+ "Blacklist20": "0x32e3053be3693d47228b710e0fcaad4218c51c2c",
+ "PolitelyDoesNothing": "0x7d69510a6d842ff7444af6310916c1022766f4a2"
 }

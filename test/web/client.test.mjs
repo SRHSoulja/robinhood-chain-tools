@@ -58,6 +58,7 @@ function chainAnswer(O) {
     return '0x' + (32).toString(16).padStart(64, '0') + BigInt(b.length).toString(16).padStart(64, '0') + b.toString('hex').padEnd(64, '0');
   };
   let blockTick = 0;
+  let sentYet = false;
   return function answer(method, params = []) {
     switch (method) {
       case 'eth_chainId': return '0xb626';
@@ -82,7 +83,7 @@ function chainAnswer(O) {
           : { status: '0x1', gasUsed: '0x1', returnData: '0x', logs: [] })) }];
       }
       case 'wallet_getCallsStatus': return O.callsStatus || { status: 200, receipts: [{ transactionHash: '0x' + 'ab'.repeat(32), status: '0x1', logs: [] }] };
-      case 'eth_sendTransaction': return '0x' + 'cd'.repeat(32);
+      case 'eth_sendTransaction': sentYet = true; return '0x' + 'cd'.repeat(32);
       // Ethers looks the transaction up after sending it, to build the object it hands back. Answering null
       // here leaves it polling forever, which is why a send used to appear to hang in these tests.
       case 'eth_getTransactionByHash': {
@@ -141,6 +142,9 @@ function chainAnswer(O) {
         if (sel === '0x70a08231') {
           const who = '0x' + data.slice(34, 74);
           if (who.toLowerCase() === me.toLowerCase()) return enc(O.balance ?? '1000000000000000000000');
+            // A token that takes a cut on transfer: the recipient's balance rises by less than was sent, which
+          // is only visible as a difference between the read before and the read after.
+          if (O.shortBy !== undefined) return enc(sentYet ? BigInt(O.sendAmount) - BigInt(O.shortBy) : 0n);
           if (O.recipientBalance !== undefined) return enc(O.recipientBalance);
           return null;
         }
@@ -1205,6 +1209,36 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await setList(page, FAKE.slice(0, 2).map((a, i) => a + ',' + (280 + i)).join('\n'));
   check('two addresses are too few to judge, and it says nothing rather than guessing',
     !/look made up/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
+  await page.close();
+}
+
+// ---- a token that takes a cut on transfer -----------------------------------------
+// Proved live against a real 2% fee token on testnet, which reported: "received 98.0 of the 100.0 sent. This
+// token takes a cut on transfer, so nothing here is recorded as paid in full" -- 0 arrived, 1 held. This
+// guards that: recording a short delivery as paid in full is how someone is quietly underpaid and then
+// suppressed from the retry, which is worse than not sending at all.
+{
+  const AMOUNT = 100n * 10n ** 18n;
+  const page = await open(browser, {
+    approved: true, decimals: 18,
+    sendAmount: AMOUNT.toString(), shortBy: (AMOUNT / 50n).toString(),   // 2% taken
+    summary: { bulk: BULK_FOR_MOCK, std: '20', token: TOK, sent: 1 },
+  });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, TOK, '20');
+  await setList(page, A(0xfee1) + ',100\n');
+  await page.click('#send'); await page.waitForTimeout(8000);
+  const l = await text(page, '#log');
+  check('a recipient who received less than was listed is named, with both numbers',
+    /received 98\.0 of the 100\.0 sent/.test(l), l.slice(-320));
+  check('and it is not recorded as paid in full',
+    /not recorded as paid in full|nothing here is recorded as paid/.test(l) && !/1 arrived/.test(l), l.slice(-320));
+  check('the row is held rather than released for another attempt',
+    /unsettled and held/.test(l), l.slice(-260));
+  const ledger = await page.evaluate(() =>
+    Object.keys(localStorage).filter((k) => /^bulksend:46630:/.test(k))
+      .reduce((n, k) => n + JSON.parse(localStorage.getItem(k) || '[]').length, 0));
+  check('and nothing goes into the delivered ledger', ledger === 0, 'ledger holds ' + ledger);
   await page.close();
 }
 
