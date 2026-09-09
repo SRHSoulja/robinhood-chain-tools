@@ -106,11 +106,16 @@ which is the case worth monitoring for.
 ## Previous review
 
 - Six internal review passes.
-- Nine external audits, each by a different model with no prior context, all published unedited in
+- Ten external audits, each by a different model with no prior context, all published unedited in
   [`docs/`](.), in order: 8H/4M/3L, then 6H/5M/1L, then 4H/1M, then 6H/2M/1L, then 5H/2M/2L, then
-  4 blocking/2/1, then 6 blocking/6/1, then 3 blocking/8/5, then 4 blocking/6/5. Every blocking finding is
-  fixed. The counts are blocking / should-fix / inherent-limit, and the last group is not a backlog: those are
-  the things a browser page cannot prove, written down so nobody has to rediscover them.
-- Three times, a fix from one round has been the next round's finding. That is the most useful thing this
+  4 blocking/2/1, then 6 blocking/6/1, then 3 blocking/8/5, then 4 blocking/6/5, then 3 blocking/6/5. Every
+  blocking finding is fixed. The counts are blocking / should-fix / inherent-limit, and the last group is not
+  a backlog: those are the things a browser page cannot prove, written down so nobody has to rediscover them.
+- Four times, a fix from one round has been the next round's finding, and in the tenth round it was every
+  blocker: all three were written between the ninth round and the tenth, two of them on the same day. The
+  contract has been clean for seven rounds and has not changed since the third. **The unreviewed thing in this
+  repository is always whatever was written last**, which is worth knowing before trusting anything recent
+  here more than the rest.
+- Three times before that, a fix from one round has been the next round's finding. That is the most useful thing this
   history shows, and it is why recently changed code is listed first in the review scope rather than last.
 - No human audit firm has looked at this.
