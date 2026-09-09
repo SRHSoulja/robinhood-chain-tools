@@ -1621,6 +1621,53 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.close();
 }
 
+// ---- the settled shape of a recipient list, all of it -------------------------------
+// docs/recipient-lists.md is the promise; this is the enforcement. Every shape that page says will work is
+// here, and so is every shape it says will be refused. If one of these changes, that document is wrong.
+{
+  const page = await open(browser, { approved: true, decimals: 18, ownedIds: [251, 252, 253, 254] });
+  page.removeAllListeners('dialog');
+  page.on('dialog', (d) => d.accept());
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const A1 = A(0xa1), B2 = A(0xb2);
+  const stat = () => text(page, '#parseOut');
+  for (const [name, csv, want] of [
+    ['one id per line', A1 + ',251\n', /1 recipients/],
+    ['several ids on one line', A1 + ',251,252,253\n', /3 recipients/],
+    ['several ids, several wallets', A1 + ',251,252\n' + B2 + ',253\n', /3 recipients/],
+    ['the same, one per line', A1 + ',251\n' + A1 + ',252\n', /2 recipients/],
+    ['a tokenIds cell holding several', 'address,tokenIds\n' + A1 + ',251 252 253\n', /3 recipients/],
+    ['quantity before id, by name', 'address,quantity,tokenId\n' + A1 + ',1,251\n', /1 recipients/],
+  ]) {
+    await setList(page, csv);
+    check('ERC-721: ' + name, want.test(await stat()), name + ' -> ' + (await stat()).slice(0, 80));
+  }
+  check('one wallet getting three is counted as one wallet, not two repeats',
+    /1 wallet gets more than one/.test(await stat()) || !/wallets get more/.test(await stat()), await stat());
+
+  for (const [name, csv, want] of [
+    ['a non-id among the ids is refused', A1 + ',251,abc,253\n', /values, expected/],
+    ['and says several ids are allowed if they are ids', A1 + ',251,abc\n', /several ids on one line/],
+    ['a repeated id is caught', A1 + ',251,251\n', /listed twice/],
+    ['a fractional id is not a token id', A1 + ',251,1\.5\n', /values, expected|not a whole/],
+  ]) {
+    await setList(page, csv);
+    const seen = (await text(page, '#problems')) + ' ' + (await stat());
+    check('ERC-721 refuses: ' + name, want.test(seen), name + ' -> ' + seen.replace(/\s+/g, ' ').slice(0, 130));
+  }
+
+  await useToken(page, ED, '1155');
+  await setList(page, A1 + ',1,5\n');
+  check('ERC-1155: an id and an amount, both load-bearing', /1 recipients/.test(await stat()), await stat());
+  await setList(page, 'amount,address,tokenId\n5,' + A1 + ',1\n');
+  check('ERC-1155: read by column name in any order', /1 recipients/.test(await stat()), await stat());
+  await setList(page, A1 + ',1,2,3\n');
+  check('ERC-1155: several ids on one line is refused, because 3 could be an id or an amount',
+    /values, expected 3/.test(await text(page, '#problems')), await text(page, '#problems'));
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

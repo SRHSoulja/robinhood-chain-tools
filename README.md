@@ -14,6 +14,10 @@ community. Both are free, both are open source, and neither takes a fee.
 
 ---
 
+**How to say who gets what:** [docs/recipient-lists.md](docs/recipient-lists.md) is the whole of the
+recipient-list format — every shape that is read, every file from another tool that works unedited, and every
+input that is refused with the reason. A list that works today is meant to work in a year.
+
 ## BulkSend
 
 One contract, three functions. It holds nothing: every transfer is `transferFrom(msg.sender, …)`, so it can

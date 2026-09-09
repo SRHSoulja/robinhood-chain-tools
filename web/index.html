@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-FyxKlNfrU6reM17FEPRaROy4DgQzPTHKichG0JDRc38='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-0cYL0uqgfxsL/ieLsSjSW/OUsnoT//HK9/gP9hTELFM='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -93,7 +93,7 @@
         <span style="font-size:12px;color:var(--mut);margin-left:8px">Pick the exact NFTs to send, instead of leaving it to chance.</span></div>
       <div class="check" style="margin:6px 0 0"><input type="checkbox" id="rand" checked><label for="rand" style="margin:0;font-size:12px">Random, so nobody can pick which NFT they get. Costs nothing: they still go out cheapest-first.</label></div></div>
     </div>
-    <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV. A file whose first line names its columns works too, and then the order does not matter at all: <span class="mono">address</span>, <span class="mono">tokenId</span> (<em>which</em> one), <span class="mono">quantity</span> (<em>how many</em>) &mdash; put them in whatever order suits you. A file of nothing but addresses works as well: press &ldquo;Assign my token ids&rdquo;.</label>
+    <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV. Several ids on one line send several: <span class="mono">0xabc,1,2,3</span>. A file whose first line names its columns works too, and then the order does not matter at all: <span class="mono">address</span>, <span class="mono">tokenId</span> (<em>which</em> one), <span class="mono">quantity</span> (<em>how many</em>). Exports from Etherscan, Safe, thirdweb, Dune, OpenSea and disperse are read as they come. A file of nothing but addresses works as well: press &ldquo;Assign my token ids&rdquo;.</label>
     <textarea id="list" aria-label="Recipient list" placeholder="0xabc…, 12&#10;0xdef…, 13"></textarea>
     <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
       <input type="file" id="csv" aria-label="Upload a CSV of recipients" accept=".csv,.txt,text/csv">
@@ -801,6 +801,16 @@
         if (r.skip) continue;
         try {
           if (s === '721') {
+            // A tokenIds column holding "1 2 3" is the same thing one column over.
+            const many = String(r.idCell == null ? '' : r.idCell).trim().split(/[\s|]+/).filter(Boolean);
+            if (many.length > 1 && many.every((x) => wholeText(x) !== null)) {
+              for (const one2 of many) {
+                const idT = wholeText(one2), k2 = BigInt(idT).toString();
+                if (seenId.has(k2)) { problems.push('line ' + r.line + ': token id ' + idT + ' is listed twice'); continue; }
+                seenId.add(k2); out.push({ to: r.a, id: BigInt(idT), raw: idT });
+              }
+              continue;
+            }
             const idText = wholeText(r.idCell);
             if (idText === null) { problems.push('line ' + r.line + ': ' + numberProblem(r.idCell, 'token id')); continue; }
             const idKey = BigInt(idText).toString();
@@ -854,9 +864,30 @@
         problems.push('line ' + (i + 1) + ': ' + addressProblem(addr) + extra);
         return;
       }
+      // An NFT is unique, so listing its ids already says how many: three ids are three NFTs and there is no
+      // second number that could disagree with the first. That is why this is offered for ERC-721 and not for
+      // ERC-1155, where the id says which edition and the amount says how many of it, and both are needed.
+      // One line becomes one row per id, so batching, the ledger, the manifest and the skipped list are
+      // untouched: the file format and what the page works with do not have to be the same shape.
+      if (s === '721' && parts.length > 2 && parts.slice(1).every((x) => wholeText(x) !== null)) {
+        const a2 = ethers.getAddress(addr);
+        const bad2 = recipientProblem(a2);
+        if (bad2) { problems.push('line ' + (i + 1) + ': ' + bad2); return; }
+        for (const idRaw of parts.slice(1)) {
+          const id = wholeText(idRaw);
+          const idKey = BigInt(id).toString();
+          if (seenId.has(idKey)) { problems.push('line ' + (i + 1) + ': token id ' + id + ' is listed twice'); continue; }
+          seenId.add(idKey);
+          out.push({ to: a2, id: BigInt(id), raw: id });
+        }
+        return;
+      }
       if (parts.length > want) {
         const looksLikeThousands = parts.length === want + 1 && /^\d{1,3}$/.test(parts[1] || '') && /^\d{3}(\.\d+)?$/.test(parts[2] || '');
-        problems.push('line ' + (i + 1) + ': ' + parts.length + ' values, expected ' + want + (looksLikeThousands ? '. A thousands separator splits the line, so write 1234.5 rather than 1,234.5' : '')); return; }
+        const idHint = (s === '721')
+          ? '. For an NFT you may list several ids on one line \u2014 "0xabc,1,2,3" sends three \u2014 but every value after the address has to be a whole token id.'
+          : (looksLikeThousands ? '. A thousands separator splits the line, so write 1234.5 rather than 1,234.5' : '');
+        problems.push('line ' + (i + 1) + ': ' + parts.length + ' values, expected ' + want + idHint); return; }
       const a = ethers.getAddress(addr);
       { const bad = recipientProblem(a); if (bad) { problems.push('line ' + (i + 1) + ': ' + bad); return; } }
       try {
@@ -928,16 +959,20 @@
     // delivered can hold both, instead of the second disappearing behind the first.
     { const count = new Map();
       for (const r of out) { const base = rowKey(r); const n = (count.get(base) || 0) + 1; count.set(base, n); r.k = base + '#' + n; } }
-    const seen = new Set(); let dupes = 0, selfSends = 0, repeatWallets = 0; const wallets = new Set();
+    const seen = new Set(); let dupes = 0, selfSends = 0; const wallets = new Set();
+    // Count wallets, not rows. Three NFTs to one wallet was reported as "2 wallets appear more than once",
+    // which names a number of wallets that does not exist: it was counting the repeats, not the repeaters.
+    const perWallet = new Map();
     for (const r of out) {
       const k = r.to + ':' + (r.id ?? ''); if (seen.has(k)) dupes++; seen.add(k);
       if (me && r.to.toLowerCase() === me.toLowerCase()) selfSends++;
-      if (wallets.has(r.to)) repeatWallets++; wallets.add(r.to);
+      wallets.add(r.to); perWallet.set(r.to, (perWallet.get(r.to) || 0) + 1);
     }
+    const repeatWallets = [...perWallet.values()].filter((n) => n > 1).length;
     const parts = [['', out.length + ' recipients'], ['', wallets.size + ' distinct wallets']];
     if (problems.length) parts.push(['', problems.length + ' problem lines skipped', 'bad']);
     if (dupes) parts.push(['', dupes + ' identical lines (each one sends again)', 'warn']);
-    else if (repeatWallets) parts.push(['', repeatWallets + ' wallets appear more than once', 'warn']);
+    else if (repeatWallets) parts.push(['', repeatWallets + (repeatWallets === 1 ? ' wallet gets' : ' wallets get') + ' more than one', 'warn']);
     if (selfSends) parts.push(['', selfSends + ' of these are your own wallet', 'warn']);
     if (headers && !note) parts.push(['', headers + ' line' + (headers === 1 ? '' : 's') + ' skipped as a heading', 'warn']);
     const madeUp = looksGenerated(wallets);
