@@ -100,6 +100,16 @@ PY
 # it is 2 MB, so the worker is given the digest of the file in this repository and refuses to serve anything
 # else. Drift, replacement or misconfiguration upstream then breaks the page rather than changing it.
 WC_SHA256=""
+# Every check on the connector -- the reviewed digest, the origin publication, the digest-keyed prefetch --
+# used to hang off WC_BUNDLE_URL being set, and that variable was documented as optional. Leaving it out
+# therefore skipped the lot and shipped a page whose phone-wallet button cannot work, without ever reaching
+# the deliberate ALLOW_CONNECTOR_GAP exception. Not configuring the connector is now a decision that has to be
+# made out loud.
+if [ "$TARGET" = "airdrop" ] && [ -z "${WC_BUNDLE_URL:-}" ] && [ "${NO_PHONE_WALLET:-}" != "1" ]; then
+  echo "WC_BUNDLE_URL is not set, so /wc.js would be a 404 and the phone-wallet button would not work." >&2
+  echo "Set it, or set NO_PHONE_WALLET=1 to publish deliberately without phone wallets." >&2
+  exit 1
+fi
 if [ "$TARGET" = "airdrop" ] && [ -n "${WC_BUNDLE_URL:-}" ]; then
   [ -f "$ROOT/web/wc.js" ] || { echo "WC_BUNDLE_URL is set but web/wc.js is missing: refusing to publish a connector nobody can check" >&2; exit 1; }
   WC_SHA256="$(sha256sum "$ROOT/web/wc.js" | cut -d' ' -f1)"
@@ -201,7 +211,10 @@ export default { async fetch(request) {
   const visitor = request.headers.get('cf-visitor') || '';
   if (url.protocol === 'http:' || visitor.includes('"scheme":"http"')) {
     url.protocol = 'https:';
-    return Response.redirect(url.toString(), 301);
+    // A browser ignores HSTS on a plain-HTTP response, so this header changes nothing on its own -- but the
+    // documentation said every response carries it, and a claim that is false anywhere is a claim nobody can
+    // check. It is carried here too, and the sentence in SECURITY.md now says what actually pins a visitor.
+    return new Response(null, { status: 301, headers: Object.assign(secure(), { location: url.toString() }) });
   }
 %s%s  // Anything else goes to the page rather than to a 404. Cloudflare replaces the headers on an error
   // response from a worker, so a 404 here arrives without HSTS or the rest of the hardening: a visitor whose
@@ -276,6 +289,9 @@ verify_body () {
 }
 
 FAILED=0
+if [ -z "$VERIFY" ]; then
+  echo "No URL to verify against (URL_${TARGET^^} unset): the published bytes were not compared with this repository." >&2
+fi
 [ -n "$VERIFY" ] && { verify_body "$VERIFY" "$SRC" "page:" || FAILED=1; }
 if [ "$TARGET" = "airdrop" ] && [ -n "$VERIFY" ] && [ -f "$ROOT/web/wc.js" ]; then
   verify_body "${VERIFY%/}/wc.js" "$ROOT/web/wc.js" "connector:" || FAILED=1

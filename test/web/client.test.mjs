@@ -159,6 +159,11 @@ function chainAnswer(O) {
         if (sel === '0xc87b56dd') {
           const id = BigInt('0x' + data.slice(10, 74)).toString();
           if (O.artOffchain) return str('https://example.invalid/meta/' + id + '.json');
+          if (O.artHuge) {
+            const svg = '<svg xmlns="http://www.w3.org/2000/svg">' + 'x'.repeat(500000) + '</svg>';
+            const json = '{"name":"Huge","image":"data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64') + '"}';
+            return str('data:application/json;base64,' + Buffer.from(json).toString('base64'));
+          }
           if (O.artOnchain) {
             const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#123"/></svg>';
             const json = '{"name":"Piece #' + id + '","image":"data:image/svg+xml;base64,' + Buffer.from(svg).toString('base64') + '"}';
@@ -1473,6 +1478,60 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   check('and it says why, rather than failing silently',
     /only means something inside one collection/.test(await text(page, '#pickMsg')),
     (await text(page, '#pickMsg')).slice(0, 200));
+  await page.close();
+}
+
+// ---- S-01 (round ten): one reading of where the address is -------------------------
+// `readHeader` has always allowed the address column to be anywhere. Assign, weighting and the picker each
+// looked at the first cell instead, so `label,address` was two wallets to one reader and none at all to the
+// others: the same valid file, contradictory answers, from the same page.
+{
+  const page = await open(browser, { approved: true, ownedIds: [7, 8] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, 'label,address\none,' + A(0x51) + '\ntwo,' + A(0x52) + '\n');
+  check('a file whose address column is not first is read as wallets',
+    /2 wallets, no token ids yet|2 recipients/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
+  await page.click('#assign'); await page.waitForTimeout(3000);
+  const after = await page.evaluate(() => document.querySelector('#list').value);
+  check('and Assign agrees with the reader that they are there',
+    !/Put the recipient wallets in the box first/.test(await text(page, '#msgList')),
+    (await text(page, '#msgList')).slice(0, 160));
+  check('assigning rewrites those wallets with ids', /,\d+/.test(after), after.replace(/\n/g, ' | ').slice(0, 140));
+  await page.close();
+}
+
+// ---- S-05 (round ten): a shared prefix alone is what vanity addresses look like -----
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  // three vanity addresses sharing a long prefix but nowhere near each other in value: real keys, real people
+  await setList(page, '0xdeadbeef00000000000000000000000000000001,1\n'
+    + '0xdeadbeef7c19f0b4a2d5e6318a9c4d2b1e5f0a72,2\n'
+    + '0xdeadbeefc3a41e0d9b8672f5104e3a7d6b2c9f81,3\n');
+  check('vanity addresses that merely share a prefix are not called made up',
+    !/look made up/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
+  // counted addresses trip both signals and are still caught
+  await setList(page, [1, 2, 3, 4].map((i) => '0x' + i.toString(16).padStart(40, '0') + ',' + (10 + i)).join('\n'));
+  check('and a counted list, which trips both signals, still is',
+    /look made up/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
+  await page.close();
+}
+
+// ---- S-02 (round ten): untrusted metadata gets a budget ----------------------------
+{
+  const page = await open(browser, { approved: true, artHuge: true, ownedIds: [1, 2] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#list', A(0x61)); await page.waitForTimeout(300);
+  await page.click('#pick'); await page.waitForTimeout(8000);
+  const tiles = await page.evaluate(() => [...document.querySelectorAll('#pickGrid .tile')].map((t) => ({
+    img: !!t.querySelector('img'), why: (t.querySelector('.no') || {}).textContent })));
+  check('a collection returning megabytes per token is not decoded and rendered',
+    tiles.length > 0 && tiles.every((t) => !t.img), JSON.stringify(tiles[0] || {}));
+  check('and the tile says it was not previewed rather than hanging the tab',
+    /too large to preview/.test((tiles[0] || {}).why || ''), (tiles[0] || {}).why);
   await page.close();
 }
 

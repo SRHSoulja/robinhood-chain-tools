@@ -9,8 +9,11 @@ fine. There is no bounty.
 
 ## Transport
 
-Both pages are served over HTTPS only. Plain HTTP is redirected permanently, and every response carries
-`Strict-Transport-Security`, so a browser that has seen the site once will not try HTTP again. This matters
+Both pages are served over HTTPS only. Plain HTTP is redirected permanently, and every HTTPS response carries
+`Strict-Transport-Security` -- the successes, the redirects and the errors alike -- so a browser that has seen
+the site once over HTTPS will not try HTTP again. The header is sent on the HTTP redirect too, but say what
+that is worth: a browser is required to ignore HSTS on a plain-HTTP response, so it is the first *HTTPS*
+answer that pins someone, not the redirect that got them there. This matters
 more here than on an ordinary site: the page builds transactions, and a page delivered once over HTTP could be
 replaced in transit before any of its own protections exist. HSTS preload is deliberately not set, because
 that is a commitment on behalf of every subdomain of the domain rather than just these two.

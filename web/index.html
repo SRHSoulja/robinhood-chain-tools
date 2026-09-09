@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-2bp3nKaFiFwCnFAd7s0PUwLSfF8ZpfeMtouD5yLEhv8='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-7kldfqWMAyaEV5uwruArgKcTHNRBuN6ykRPmO0vErsY='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -559,6 +559,23 @@
     while (cells.length > 1 && cells[cells.length - 1] === '') cells.pop();   // a trailing separator is not a column
     return cells;
   }
+  // Where the address is on a line, once, for everything that reads the box. `readHeader` has always allowed
+  // the address column to be anywhere; assign, weighting and the picker each looked only at the first cell, so
+  // a file headed `label,address` was read as two wallets by one and as none at all by the others -- the same
+  // valid file getting contradictory answers from the same page.
+  function boxColumns() {
+    const lines = $('list').value.split(/\r?\n/);
+    const first = lines.find((l) => l.trim());
+    return first ? readHeader(first.trim()) : null;
+  }
+  // Returns the address on a line, or null. `col` comes from boxColumns() and may be null for a plain list.
+  function addressOn(line, col) {
+    const t = String(line || '').trim();
+    if (!t) return null;
+    const cells = col ? splitRow(t) : t.split(/[,\t; ]+/).filter(Boolean);
+    const raw = col ? cells[col.to] : cells[0];
+    return (raw && ethers.isAddress(raw)) ? ethers.getAddress(raw) : null;
+  }
   // Some addresses are not recipients. The zero address burns; BulkSend has no owner and no rescue function,
   // so anything sent there is gone; a token's own contract almost never gives it back either. The contract
   // refuses itself, but the wallet-batch path never reaches the contract, so the refusal has to live here too.
@@ -873,12 +890,16 @@
     while (pre < 42 && new Set(list.map((a) => a.slice(0, pre + 1))).size === 1) pre++;
     const shared = pre - 2;
     if (shared >= 8) signals.push('every one of the ' + list.length + ' is identical for its first ' + shared + ' characters');
+    const sharedHit = shared >= 8;
     let ints = [];
     try { ints = list.map((a) => BigInt(a)).sort((x, y) => (x < y ? -1 : x > y ? 1 : 0)); } catch (e) { ints = []; }
     let close = 0;
     for (let i = 1; i < ints.length; i++) if (ints[i] - ints[i - 1] <= 256n) close++;
     if (close >= 2) signals.push(close + ' of them sit within a few values of another one, which is what counting produces');
-    return signals.length ? signals : null;
+    // Both, or neither. A shared prefix alone is what a set of vanity addresses looks like, and those have
+    // real keys behind them: warning on that one signal makes a claim about provenance the evidence does not
+    // support, in language about funds being unrecoverable. Counting produces both signals together.
+    return (sharedHit && close >= 2) ? signals : null;
   }
 
   function finishParse(out, problems, headers, note) {
@@ -954,17 +975,28 @@
     $('pickBox').style.display = 'none';
     if (why) say('pickMsg', why, 'warn');
   }
-  const dataImage = (v) => (typeof v === 'string' && /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);/i.test(v)) ? v : null;
+  // A collection can return whatever it likes from tokenURI, and this page then base64-decodes it, JSON-parses
+  // it and hands an image to the decoder -- on the main thread, up to 250 times. Nothing here can be tricked
+  // into signing, but a megabyte per token, or an SVG built to be expensive, can make a tab that is also used
+  // for signing stop responding. So everything is measured before it is decoded, and anything over budget
+  // becomes a tile that says it was not previewed rather than work nobody asked for.
+  const URI_CAP = 400000;    // the tokenURI string itself
+  const JSON_CAP = 200000;   // what it decodes to
+  const IMG_CAP = 250000;    // the image data URI that comes out of it
+  const dataImage = (v) => (typeof v === 'string' && v.length <= IMG_CAP
+    && /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);/i.test(v)) ? v : null;
 
   function readTokenMetadata(uri) {
     // data:application/json;base64,… or data:application/json;utf8,{…} or the plain percent-encoded form
     if (typeof uri !== 'string' || !uri.startsWith('data:')) return null;
+    if (uri.length > URI_CAP) return { oversize: true };
     const comma = uri.indexOf(',');
     if (comma < 0) return null;
     const head = uri.slice(5, comma).toLowerCase(), body = uri.slice(comma + 1);
     let text;
     try { text = head.includes('base64') ? atob(body) : decodeURIComponent(body); }
     catch (e) { try { text = body; } catch (e2) { return null; } }
+    if (typeof text !== 'string' || text.length > JSON_CAP) return { oversize: true };
     try { return JSON.parse(text); } catch (e) { return null; }
   }
 
@@ -1001,8 +1033,9 @@
         const uri = await t.tokenURI(id).catch(() => null);
         if (typeof uri === 'string' && uri.startsWith('data:')) {
           const j = readTokenMetadata(uri);
-          if (j) m = { name: typeof j.name === 'string' ? j.name : null, img: dataImage(j.image) || dataImage(j.image_url) };
-          if (m && !m.img) why = 'its picture is not stored on the chain';
+          if (j && j.oversize) { why = 'this one is too large to preview safely'; }
+          else if (j) m = { name: typeof j.name === 'string' ? j.name : null, img: dataImage(j.image) || dataImage(j.image_url) };
+          if (m && !m.img) why = 'its picture is not stored on the chain, or is too large to show';
         } else if (typeof uri === 'string' && /^https?:/i.test(uri)) {
           offchain++; why = 'this collection keeps its art on its own server, which this page does not fetch';
         }
@@ -1055,11 +1088,9 @@
     updatePickCount();
   }
   function walletsInBox() {
+    const col = boxColumns();
     const out = [];
-    for (const line of $('list').value.split(/\r?\n/)) {
-      const p = line.trim().split(/[,\t; ]+/).filter(Boolean);
-      if (p.length && ethers.isAddress(p[0])) out.push(ethers.getAddress(p[0]));
-    }
+    for (const line of $('list').value.split(/\r?\n/)) { const a = addressOn(line, col); if (a) out.push(a); }
     return out;
   }
   function updatePickCount() {
@@ -1070,6 +1101,7 @@
   }
 
   $('pick').addEventListener('click', async () => {
+    if (sending) return;
     const token = $('token').value.trim();
     if (!ethers.isAddress(token) || !me) { say('msgList', 'Connect a wallet and enter the token address first.', 'bad'); return; }
     if (std() === '20') { say('msgList', 'A token has amounts, not individual items to choose between.', 'warn'); return; }
@@ -1084,7 +1116,7 @@
     $('pickBox').style.display = 'block';
     $('pick').disabled = true;
     try { if (pick.context !== pickContext()) { pick.chosen.clear(); pick.meta.clear(); await loadPickable(); } else { renderPick(); } }
-    finally { $('pick').disabled = false; }
+    finally { $('pick').disabled = sending; }   // a load that finishes mid-send must not re-enable it
   });
   $('pickClose').addEventListener('click', () => { $('pickBox').style.display = 'none'; });
   $('pickNone').addEventListener('click', () => { pick.chosen.clear(); renderPick(); });
@@ -1094,6 +1126,7 @@
     renderPick();
   });
   $('pickUse').addEventListener('click', () => {
+    if (sending) return;   // the list being sent is not the list to rewrite
     // Checked here, not only when it was opened. Everything between those two moments -- a new collection, a
     // different account, a switched network, a change of standard -- makes these ids mean something else.
     if (!pick.context || pick.context !== pickContext()) {
@@ -1359,6 +1392,7 @@
 
   // Writes the per-wallet quantity into the list, in the "0xabc… x3" form the rest of the page already reads.
   $('applyWeight').addEventListener('click', () => {
+    if (sending) return;
     const mode = $('weight').value;
     const cap = Math.max(1, Math.min(1000, parseInt($('cap').value) || 10));
     const each = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
@@ -1367,15 +1401,16 @@
     if (mode !== 'flat') {
       if (!snap || !snap.holdings.size) { say('msgList', 'This page does not know what these wallets hold. Read a collection\u2019s holders first, and it will.', 'bad'); return; }
       if (snap.chain !== chainId()) { forgetSnapshot('the network changed'); say('msgList', 'Those holdings were read on a different network. Read the collection again.', 'bad'); return; }
-      const listed = lines.map(l => l.split(/[,\t; ]+/).filter(Boolean)[0]).filter(a => ethers.isAddress(a)).map(a => ethers.getAddress(a));
+      const wcol = boxColumns();
+      const listed = lines.map((l) => addressOn(l, wcol)).filter(Boolean);
       const foreign = listed.filter(a => !snap.wallets.has(a)).length;
       if (foreign > listed.length / 2) { say('msgList', 'Most of the wallets in the box are not in the holder reading, so those numbers do not describe this list. Read the collection again, or use "the same for everyone".', 'bad'); return; }
     }
     let capped = 0, unknown = 0, total = 0;
+    const acol = boxColumns();
     const out = lines.map(l => {
-      const a = l.split(/[,\t; ]+/).filter(Boolean)[0];
-      if (!ethers.isAddress(a)) return l;
-      const addr = ethers.getAddress(a);
+      const addr = addressOn(l, acol);
+      if (!addr) return l;
       if (mode === 'flat') { total += each; return addr + (each > 1 ? ' x' + each : ''); }
       const held = snap.holdings.get(addr);
       if (!held) { unknown++; total += 1; return addr; }
@@ -1400,6 +1435,7 @@
   });
 
   $('dropContracts').addEventListener('click', () => {
+    if (sending) return;
     const drop = new Set((window.__snapContracts || []).map(a => a.toLowerCase()));
     if (!drop.size) return;
     const kept = $('list').value.split(/\r?\n/).filter(l => { const a = l.trim().split(/[,\t; ]+/)[0]; return !(a && drop.has(a.toLowerCase())); });
@@ -1415,19 +1451,22 @@
 
   // ---- assign the ids you hold to a list of bare addresses ----
   $('assign').addEventListener('click', async () => {
+    if (sending) return;
     const token = $('token').value.trim();
     if (!ethers.isAddress(token) || !me) { say('msgList', 'Connect a wallet and enter the token address first.', 'bad'); return; }
     if (std() === '20') { log('For a token, write the amount after each address; there are no ids to assign.', 'warn'); return; }
     // Each line may carry its own quantity ("0xabc… x3"); the rest use the "how many each" field.
     const perWallet = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
     const wants = [];
+    const col = boxColumns();
     for (const line of $('list').value.split(/\r?\n/)) {
+      const addr = addressOn(line, col);
+      if (!addr) continue;
       const p = line.trim().split(/[,\t; ]+/).filter(Boolean);
-      if (!p.length || !ethers.isAddress(p[0])) continue;
       const m = p.slice(1).find(x => /^x\d+$/i.test(x));
       const q = m ? wholeNumber(m.slice(1)) : perWallet;
       if (q === null || q > 1000) { say('msgList', 'One line asks for "' + String(m).slice(0, 12) + '", which is not a workable number. Fix it and try again.', 'bad'); return; }
-      wants.push({ to: ethers.getAddress(p[0]), n: q });
+      wants.push({ to: addr, n: q });
     }
     if (!wants.length) { say('msgList', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
     const wallets = wants.map(w => w.to);
@@ -1615,7 +1654,8 @@
   }
 
   // ---- form lock while a send is in flight, so the list cannot change under the loop ----
-  const FORM = ['net', 'std', 'token', 'list', 'csv', 'parse', 'batch', 'mode', 'safe', 'connect', 'snap', 'snapAddr', 'assign', 'shuffle', 'rand', 'revoke', 'forget', 'export', 'gasPer', 'gasReset', 'manifest', 'each', 'review', 'weight', 'cap', 'applyWeight'];
+  const FORM = ['pick', 'pickAll', 'pickNone', 'pickUse', 'pickClose', 'dropContracts', 'applyWeight', 'weight', 'cap', 'each',
+    'net', 'std', 'token', 'list', 'csv', 'parse', 'batch', 'mode', 'safe', 'connect', 'snap', 'snapAddr', 'assign', 'shuffle', 'rand', 'revoke', 'forget', 'export', 'gasPer', 'gasReset', 'manifest', 'each', 'review', 'weight', 'cap', 'applyWeight'];
   function lockForm(on) { sending = on; for (const id of FORM) { const el = $(id); if (el) el.disabled = on; } }
 
   // ---- delivery order ----
