@@ -66,7 +66,11 @@ function chainAnswer(O) {
   let sentYet = false;
   return function answer(method, params = []) {
     switch (method) {
-      case 'eth_chainId': return '0xb626';
+      case 'eth_chainId': return O.walletChain || '0xb626';
+      case 'wallet_switchEthereumChain': { if (!O.walletChain) return null;
+        const e = new Error('Unrecognized chain ID'); e.code = 4902; throw e; }
+      case 'wallet_addEthereumChain': { if (!O.refuseAddChain) return null;
+        const e = new Error('User rejected'); e.code = 4001; throw e; }
       case 'net_version': return '46630';
       case 'eth_accounts': case 'eth_requestAccounts': return [me];
       case 'eth_gasPrice': return '0x989680';
@@ -263,11 +267,13 @@ async function open(browser, opts = {}) {
     window.__sent = [];
     const __listeners = {};
     window.__emit = (ev, arg) => (__listeners[ev] || []).slice().forEach((f) => { try { f(arg); } catch (e) {} });
+    window.__asked = [];
     window.ethereum = {
       isMetaMask: true,
       on(ev, fn) { (__listeners[ev] = __listeners[ev] || []).push(fn); },
       removeListener(ev, fn) { __listeners[ev] = (__listeners[ev] || []).filter((f) => f !== fn); },
       async request({ method, params }) {
+        window.__asked.push(method);
         if (method === 'wallet_sendCalls' || method === 'eth_sendTransaction') window.__sent.push((params || [])[0]);
         const r = await window.__chain(method, params || []);
         if (r && r.ok) return r.result;
@@ -1665,6 +1671,27 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await setList(page, A1 + ',1,2,3\n');
   check('ERC-1155: several ids on one line is refused, because 3 could be an id or an amount',
     /values, expected 3/.test(await text(page, '#problems')), await text(page, '#problems'));
+  await page.close();
+}
+
+// ---- a wallet that will not add the network must not leave you stuck ---------------
+// Found by the operator on a phone: "i dont think it's adding the testnet.. it's sensing the nfts though".
+// The NFTs showed because reads go straight to the chain; only sending needs the wallet on the right network.
+// And the page never even asked a phone wallet to add it -- a comment said phone wallets "generally will not
+// add one on request", so it skipped asking and told the user to switch instead. You cannot switch to a
+// network you do not have. True, and a dead end.
+{
+  const page = await open(browser, { walletChain: '0x1', refuseAddChain: true });
+  await page.click('#connect'); await page.waitForTimeout(3000);
+  const msg = (await text(page, '#msgTop')).replace(/\s+/g, ' ');
+  check('a wallet on the wrong network is asked to add this one',
+    (await page.evaluate(() => window.__asked || [])).includes('wallet_addEthereumChain'),
+    JSON.stringify(await page.evaluate(() => window.__asked || [])));
+  check('and when it refuses, every field needed to add it by hand is on screen',
+    msg.includes('46630') && msg.includes('rpc.testnet.chain.robinhood.com')
+    && msg.includes('Robinhood Chain Testnet') && msg.includes('explorer.testnet'), msg.slice(0, 260));
+  check('with what to do, not just what went wrong',
+    /Add it by hand/.test(msg) && /Settings/.test(msg), msg.slice(0, 200));
   await page.close();
 }
 

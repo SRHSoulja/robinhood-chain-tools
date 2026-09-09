@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-0cYL0uqgfxsL/ieLsSjSW/OUsnoT//HK9/gP9hTELFM='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-igstxlbfXJyMUtNVA/SeYsd2A8ibUdcHx2zeydisdjE='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -438,20 +438,56 @@
       walletBatchReady = st === 'ready';   // the wallet can do it, but will ask to upgrade the account first
     } catch (e) { walletBatch = false; }
   }
+  const addChainParams = () => ({
+    chainId: '0x' + chainId().toString(16), chainName: cfg().name, rpcUrls: [cfg().rpc],
+    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, blockExplorerUrls: [cfg().explorer],
+  });
+  // A wallet that will not add a network on request leaves exactly one way forward: adding it by hand. So put
+  // what that takes on the screen, selectable, instead of naming the network and wishing them luck.
+  function showManualNetwork(onChain) {
+    const box = $('msgTop');
+    box.textContent = ''; box.className = 'msg bad';
+    const c = cfg();
+    const line = (label, value) => {
+      const row = document.createElement('div');
+      const k = document.createElement('span'); k.textContent = label + ': ';
+      const v = document.createElement('span'); v.className = 'mono'; v.style.userSelect = 'all'; v.textContent = value;
+      row.appendChild(k); row.appendChild(v); return row;
+    };
+    const head = document.createElement('div');
+    head.textContent = (onChain ? 'Your wallet is on chain ' + onChain + ', and it ' : 'Your wallet ')
+      + 'would not add ' + c.name + ' when asked. Add it by hand \u2014 in MetaMask that is Settings, '
+      + 'Networks, Add network, Add manually \u2014 then come back and reconnect.';
+    head.style.marginBottom = '6px';
+    box.appendChild(head);
+    box.appendChild(line('Network name', c.name));
+    box.appendChild(line('RPC URL', c.rpc));
+    box.appendChild(line('Chain ID', String(chainId())));
+    box.appendChild(line('Currency symbol', 'ETH'));
+    box.appendChild(line('Block explorer', c.explorer));
+  }
   async function switchChain() {
     const id = chainId(), c = cfg(), hex = '0x' + id.toString(16);
     if (eth === wcProvider) {
-      // Phone wallets connect to a fixed set of networks and generally will not add one on request.
-      try { const net = await new ethers.BrowserProvider(eth).getNetwork();
-        if (Number(net.chainId) !== id) say('msgTop', 'Your phone wallet is on chain ' + net.chainId + '. Switch it to ' + c.name + ' in the app, or reconnect with that network selected here first.', 'bad');
-      } catch (e) {}
+      // "Phone wallets generally will not add a network on request" was true and useless: a wallet that does
+      // not have this network cannot be switched to it, so telling someone to switch is telling them to do
+      // the impossible. Ask anyway -- some wallets honour it -- and when that fails put the five fields they
+      // need on the screen rather than sending them off to find a chain id somewhere.
+      let net = null;
+      try { net = await new ethers.BrowserProvider(eth).getNetwork(); } catch (e) {}
+      if (net && Number(net.chainId) === id) return;
+      try { await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }); return; }
+      catch (e) {
+        try { await eth.request({ method: 'wallet_addEthereumChain', params: [addChainParams()] }); return; }
+        catch (e2) { showManualNetwork(net ? Number(net.chainId) : null); }
+      }
       return;
     }
     try { await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }); }
     catch (e) {
       if (e.code === 4902 || /unrecognized|not added/i.test(e.message || '')) {
-        try { await eth.request({ method: 'wallet_addEthereumChain', params: [{ chainId: hex, chainName: c.name, rpcUrls: [c.rpc], nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, blockExplorerUrls: [c.explorer] }] }); }
-        catch (e2) { log(walletError(e2), 'bad'); }
+        try { await eth.request({ method: 'wallet_addEthereumChain', params: [addChainParams()] }); }
+        catch (e2) { log(walletError(e2), 'bad'); showManualNetwork(null); }
       } else { log('Could not switch network: ' + walletError(e), 'bad'); }
     }
     provider = new ethers.BrowserProvider(eth); signer = await provider.getSigner();
