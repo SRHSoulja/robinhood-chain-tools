@@ -317,6 +317,39 @@ const useToken = async (page, addr, std) => {
 const text = (page, sel) => page.evaluate((s) => (document.querySelector(s) || {}).textContent || '', sel);
 const val = (page, sel) => page.evaluate((s) => (document.querySelector(s) || {}).value || '', sel);
 
+
+// ---- the page has to be one the browser will actually run -----------------------------------------------
+// Each page's CSP names the SHA-256 of the inline script it carries. Edit that script and forget to run
+// web/sync.sh and the browser silently refuses to execute any of it. Nothing throws, nothing reaches
+// pageerror, and every test after that fails as a timeout waiting for an element that was never going to
+// appear, which reads like a broken test or a slow machine rather than the real cause. It cost fifteen
+// minutes once. Checking it here costs a millisecond and turns it into one line.
+const CSP_PAGES = [['../../web/index.html', null]];
+{
+  const { readFileSync } = await import('node:fs');
+  const { createHash } = await import('node:crypto');
+  const die = (m) => { console.error('\n' + m + '\nRun web/sync.sh and try again.\n'); process.exit(1); };
+  const inlineScript = (src, name) => {
+    const blocks = (src.match(/<script>([\s\S]*?)<\/script>/g) || [])
+      .map((b) => b.slice(8, -9)).filter((b) => b.trim());
+    if (blocks.length !== 1) die(name + ' has ' + blocks.length + ' inline scripts; expected exactly 1.');
+    return blocks[0];
+  };
+  for (const [rel, source] of CSP_PAGES) {
+    const src = readFileSync(new URL(rel, import.meta.url), 'utf8');
+    const block = inlineScript(src, rel);
+    // check.html carries a copy of check.js. A stale copy hashes correctly against itself, so the hash alone
+    // would not notice that the page is running last week's script.
+    if (source) {
+      const js = readFileSync(new URL(source, import.meta.url), 'utf8');
+      if (block !== '\n' + js) die(rel + ' does not carry the current ' + source + '.');
+    }
+    const want = 'sha256-' + createHash('sha256').update(block, 'utf8').digest('base64');
+    const csp = (src.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/) || [])[1] || '';
+    if (!csp.includes("'" + want + "'")) die(rel + ': its CSP does not name the script it carries, so the browser will refuse to run it. Expected ' + want);
+  }
+}
+
 // --allow-file-access-from-files: the page imports its phone-wallet connector as a module from its own
 // directory, which a file:// origin otherwise refuses. Nothing here is ever served over the network.
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--allow-file-access-from-files'] });
@@ -1927,6 +1960,97 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
     /every one of edition/.test(l), l.slice(-220));
   check('and never claims an id order that does not exist',
     !/lowest id first/.test(l.split('Assigned').pop() || ''), l.slice(-220));
+  await page.close();
+}
+
+// ---- if the page knows which wallet it is, it should say so --------------------------
+// Two wallets were named and one was not: with a single extension the button read "Connect wallet", which is
+// the page knowing perfectly well it is MetaMask and declining to mention it.
+{
+  const mk = (name, rdns) => ({ name, rdns });
+  for (const [what, announce, want] of [
+    ['none', [], /^Connect wallet$/],
+    ['one', [mk('MetaMask', 'io.metamask')], /^Connect MetaMask$/],
+  ]) {
+    const page = await browser.newPage();
+    await page.addInitScript((list) => {
+      window.addEventListener('eip6963:requestProvider', () => {
+        for (const w of list) {
+          window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: {
+            info: { uuid: w.rdns, name: w.name, icon: 'data:image/svg+xml;base64,PHN2Zy8+', rdns: w.rdns },
+            provider: { on() {}, removeListener() {}, request: async () => { throw new Error('no'); } } } }));
+        }
+      });
+    }, announce);
+    await page.goto(PAGE, { waitUntil: 'load' });
+    await page.waitForTimeout(1500);
+    const label = await page.evaluate(() => (document.querySelector('#connect') || {}).textContent || '');
+    check('with ' + what + ' wallet announced, the button says what it will connect', want.test(label.trim()), label);
+    await page.close();
+  }
+  // and the id stays put, because that is the primary way in whatever it is called
+  const page = await open(browser, {});
+  check('the connect button keeps its id whatever it is labelled',
+    await page.evaluate(() => !!document.querySelector('#connect')));
+  await page.close();
+}
+
+
+// ---- the delivery order, which is load-bearing and was guarded by nothing --------------------------------
+// A lazily-minted collection charges by how far a transfer has to walk back to find an owner record.
+// Ascending order makes that walk one step. Measured on testnet against a real ERC721A: 100 recipients cost
+// 6.1M gas ascending, 8.9M shuffled, and descending does not finish at all, it reverts on OutOfGasForBatch.
+// The page has always sorted; nothing has ever checked that it still does, and the ids are BigInt, so a sort
+// that ever compared them as text would put 1000 before 9 and nobody would notice until a send failed.
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  // Chosen so that text order and number order disagree everywhere they can.
+  const ids = [9, 1000, 40, 2, 100, 7, 803, 19, 55, 3];
+  await setList(page, ids.map((id, i) => A(0x100 + i) + ',' + id).join('\n'));
+  await page.click('#send'); await page.waitForTimeout(2500);
+  const data = await page.evaluate(() => (window.__sent[0] || {}).data || '');
+  const words = (data.slice(10).match(/.{64}/g) || []).map((w) => BigInt('0x' + w));
+  // airdrop721(address,address[],uint256[],bool,bool): word 2 is the offset of the ids array
+  const at = words.length > 2 ? Number(words[2]) / 32 : -1;
+  const sentIds = at > 0 ? words.slice(at + 1, at + 1 + Number(words[at])).map(Number) : [];
+  check('the ids that go out are in ascending numeric order, which is what makes a lazy collection affordable',
+    sentIds.length === ids.length && sentIds.every((v, i) => i === 0 || sentIds[i - 1] < v),
+    JSON.stringify(sentIds));
+  check('sorting is numeric and not textual, so 1000 comes after 9',
+    sentIds.indexOf(1000) === sentIds.length - 1 && sentIds.indexOf(2) === 0, JSON.stringify(sentIds));
+  check('every id listed still goes out, the sort reorders and never drops',
+    ids.slice().sort((a, b) => a - b).join(',') === sentIds.join(','), JSON.stringify(sentIds));
+  check('and the page says it reordered, rather than silently handing back a different list',
+    (await text(page, '#log')).includes('ascending token id order'));
+  await page.close();
+}
+
+// ---- the recipients-per-transaction box says what it will do -------------------------------------------
+// It used to accept 400 in every mode while quietly using 200 in the two modes that cost more gas per
+// transfer. The number in the box was not the number being sent, and nothing on the page said so.
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, Array.from({ length: 450 }, (_, i) => A(0x1000 + i) + ',' + (i + 1)).join('\n'));
+  await page.waitForTimeout(400);
+  check('the field explains what the number costs instead of only holding it',
+    /less per wallet/.test(await text(page, '#batchNote')) && /at most/.test(await text(page, '#batchNote')),
+    await text(page, '#batchNote'));
+  const capNow = () => page.evaluate(() => document.querySelector('#batch').getAttribute('max'));
+  check('with the recipient check on, the box will not offer more than the page will use', await capNow() === '200', await capNow());
+  await page.fill('#batch', '400'); await page.waitForTimeout(400);
+  check('asking for more than that is answered, not silently ignored',
+    /You asked for 400/.test(await text(page, '#batchClamp')), await text(page, '#batchClamp'));
+  check('and the plan counts the transactions it will really send',
+    (await text(page, '#plan')).includes('3 transactions'), await text(page, '#plan'));
+  await page.uncheck('#safe'); await page.selectOption('#mode', 'strict'); await page.waitForTimeout(400);
+  check('without the check and without a stipend the cap really is 400', await capNow() === '400', await capNow());
+  check('and the clamp message goes away once it no longer applies', (await text(page, '#batchClamp')) === '');
+  check('the plan calls its gas figure a ceiling, because that is what the per-recipient constant is',
+    (await text(page, '#plan')).includes('at most'), await text(page, '#plan'));
   await page.close();
 }
 

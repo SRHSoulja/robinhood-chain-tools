@@ -120,6 +120,39 @@ const ask = async (page, q, from, waitMs) => {
   return (await page.textContent('#out')) || '';
 };
 
+
+// ---- the page has to be one the browser will actually run -----------------------------------------------
+// Each page's CSP names the SHA-256 of the inline script it carries. Edit that script and forget to run
+// web/sync.sh and the browser silently refuses to execute any of it. Nothing throws, nothing reaches
+// pageerror, and every test after that fails as a timeout waiting for an element that was never going to
+// appear, which reads like a broken test or a slow machine rather than the real cause. It cost fifteen
+// minutes once. Checking it here costs a millisecond and turns it into one line.
+const CSP_PAGES = [['../../web/check.html', '../../web/check.js']];
+{
+  const { readFileSync } = await import('node:fs');
+  const { createHash } = await import('node:crypto');
+  const die = (m) => { console.error('\n' + m + '\nRun web/sync.sh and try again.\n'); process.exit(1); };
+  const inlineScript = (src, name) => {
+    const blocks = (src.match(/<script>([\s\S]*?)<\/script>/g) || [])
+      .map((b) => b.slice(8, -9)).filter((b) => b.trim());
+    if (blocks.length !== 1) die(name + ' has ' + blocks.length + ' inline scripts; expected exactly 1.');
+    return blocks[0];
+  };
+  for (const [rel, source] of CSP_PAGES) {
+    const src = readFileSync(new URL(rel, import.meta.url), 'utf8');
+    const block = inlineScript(src, rel);
+    // check.html carries a copy of check.js. A stale copy hashes correctly against itself, so the hash alone
+    // would not notice that the page is running last week's script.
+    if (source) {
+      const js = readFileSync(new URL(source, import.meta.url), 'utf8');
+      if (block !== '\n' + js) die(rel + ' does not carry the current ' + source + '.');
+    }
+    const want = 'sha256-' + createHash('sha256').update(block, 'utf8').digest('base64');
+    const csp = (src.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/) || [])[1] || '';
+    if (!csp.includes("'" + want + "'")) die(rel + ': its CSP does not name the script it carries, so the browser will refuse to run it. Expected ' + want);
+  }
+}
+
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
 
 // ---- what was pasted -------------------------------------------------------

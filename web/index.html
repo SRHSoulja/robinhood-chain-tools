@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-Sh76+dQg/+TVrvu5cKUl30ODxSWBy9UPZIpexv/KAM0='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-jTZGEYvQaiCyewGpIBI/ZdAVqpICVyZZGw53s1F0fhk='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -121,7 +121,10 @@
   <div class="card">
     <h2>3 · Options</h2>
     <div class="row">
-      <div><label for="batch">Recipients per transaction</label><input type="number" inputmode="numeric" min="1" max="400" id="batch" value="100" aria-label="Recipients per transaction"></div>
+      <div><label for="batch">Recipients per transaction</label><input type="number" inputmode="numeric" min="1" max="400" id="batch" value="100" aria-label="Recipients per transaction" aria-describedby="batchNote">
+        <div id="batchNote" style="font-size:12px;color:var(--mut);margin-top:4px"></div>
+        <div id="batchClamp" class="msg"></div>
+      </div>
       <div><label for="mode">If a wallet cannot receive</label><select id="mode" aria-label="What to do if a wallet cannot receive"><option value="lenient">Keep going: skip that wallet and deliver to everyone else</option><option value="strict">All or nothing: if any wallet fails, send nothing</option></select></div>
     </div>
     <div class="row" id="gasRow" style="margin-top:10px">
@@ -131,7 +134,7 @@
       </div>
       <div id="gasNote" class="msg" style="align-self:end"></div>
     </div>
-    <div class="check" id="safeRow"><input type="checkbox" id="safe" checked><label for="safe" style="margin:0">Check that each recipient can hold NFTs (recommended). It costs about 5% more gas, measured. Leave it on unless the test run tells you a recipient is a wallet that has been upgraded and does not accept the check: those are real wallets and a plain transfer reaches them. An NFT sent to a <em>contract</em> that cannot handle it is stuck there for good, which is what this is really guarding against.</label></div>
+    <div class="check" id="safeRow"><input type="checkbox" id="safe" checked><label for="safe" style="margin:0">Check that each recipient can hold NFTs (recommended). It costs between 5 and 8% more gas, measured, more of it the larger the batch. Leave it on unless the test run tells you a recipient is a wallet that has been upgraded and does not accept the check: those are real wallets and a plain transfer reaches them. An NFT sent to a <em>contract</em> that cannot handle it is stuck there for good, which is what this is really guarding against.</label></div>
   </div>
 
   <div class="card">
@@ -273,8 +276,17 @@
   const lenient = () => $('mode').value === 'lenient';
   const safeMode = () => $('safe').checked;
   const bulkReady = () => ethers.isAddress(cfg().bulk || '');
-  // From live receipts: 37k per recipient for plain 721 transfers, 54-57k once a receive hook runs (safe or lenient).
+  // From live receipts and a full estimate sweep against real tokens, per recipient, to addresses that held
+  // nothing before: 28.8k for an ERC-20, 34.1k for an ERC-1155, 35.8k for a plain 721 transfer, 38.6k with the
+  // receiver check on, and 56.6k for the same check against a lazily-minted (ERC721A) collection. These are
+  // deliberately the ceiling of that range rather than the middle, so the figure on screen is the most this
+  // can cost and not a number that can be beaten by an ordinary collection.
   const gasPer = () => (std() === '20' ? 32 : (safeMode() || lenient()) ? 57 : 37);
+  // One transaction on this chain stops at about 32M gas. Measured: a plain 721 batch reverts above 819
+  // recipients, at 32.2M, and the contract's own OutOfGasForBatch is what stops it rather than anything
+  // silent. The caps below sit well inside that. 200 rather than 400 in the careful modes is the receiver
+  // check and the failure stipend, which together take a lazily-minted collection to 23M at 400 and leave
+  // too little room for a collection dearer than the ones measured.
   const maxBatch = () => deliveryPath() === 'wallet' ? 25 : (safeMode() || lenient()) ? 200 : 400;
 
   const EXPLORER_API = () => (chainId() === 4663 ? 'https://robinhoodchain.blockscout.com/api/v2' : 'https://explorer.testnet.chain.robinhood.com/api/v2');
@@ -320,9 +332,16 @@
       const label = document.createElement('span'); label.className = 'pill'; label.textContent = 'connect with'; box.appendChild(label);
       for (const [key, d] of wallets) box.appendChild(walletButton(d.info.name, () => connect(d.provider, key)));
     } else {
-      const b = document.createElement('button'); b.id = 'connect'; b.textContent = 'Connect wallet';
+      // Two wallets get named and one used to get "Connect wallet", which is the page knowing perfectly well
+      // it is MetaMask and declining to say so. The id stays `connect` because that is the primary way in;
+      // only the words change. The name is announced by the extension, so it is set as text and clipped.
+      const only = wallets.size === 1 ? [...wallets.entries()][0] : null;
+      const name = only && only[1].info && typeof only[1].info.name === 'string' ? only[1].info.name.slice(0, 24) : null;
+      const b = document.createElement('button'); b.id = 'connect';
+      b.textContent = name ? 'Connect ' + name : 'Connect wallet';
       // `() => connect()`, never `connect`: the click event would arrive as the chosen wallet provider
-      b.addEventListener('click', () => connect()); box.appendChild(b);
+      b.addEventListener('click', () => (only ? connect(only[1].provider, only[0]) : connect()));
+      box.appendChild(b);
     }
     // however many extensions announce themselves, a phone wallet must still be reachable
     // "Phone wallet" is what it is for and "WalletConnect" is what people look for. Both, or the button is
@@ -1808,11 +1827,12 @@
               : path === 'wallet' ? 'your wallet, as itself (no approval)'
               : path === 'bulk' ? 'BulkSend ' + (bulkReady() ? shortAddr(c.bulk) : '')
               : path === 'blocked' ? 'this collection needs a wallet that batches' : 'not deployed on this network yet';
+    syncBatchRow();
     setStat($('plan'), [
       ['network', c.name],
       ['sent by', how],
       ['', n + ' recipients in ' + batches + ' transaction' + (batches === 1 ? '' : 's')],
-      ['about', costLine(n)],
+      ['at most', costLine(n)],
     ]);
     const strictSplit = !lenient() && batches > 1;
     if (strictSplit) ready = false;
@@ -1838,6 +1858,39 @@
     $('review').style.borderColor = held ? 'var(--warn)' : ''; $('review').style.color = held ? 'var(--warn)' : '';
   }
   function batchSize() { const v = parseInt($('batch').value); return Math.max(1, Math.min(maxBatch(), isNaN(v) ? 100 : v)); }
+
+  // ---- what the number in that box actually buys -------------------------------------------------------
+  // Measured on this chain, delivering to addresses that held nothing before: 28,800 gas per wallet for an
+  // ERC-20, 34,100 for an ERC-1155, 38,600 for a standard ERC-721 and 56,600 for a lazily-minted one, on top
+  // of a fixed cost every transaction pays whatever it carries. That fixed cost is the entire argument for
+  // larger batches, and it is smaller than people expect: a 1000-piece collection is about 8% cheaper sent
+  // 400 at a time than 100 at a time, and about 42% dearer sent 25 at a time. The argument for smaller
+  // batches is the other side of the same coin, that a transaction which fails takes its own batch down and
+  // nothing else. Neither argument is worth much if the number is simply displayed and never explained,
+  // which is what it was doing.
+  function syncBatchRow() {
+    // Declared in here on purpose. A const at module scope that a handler can reach before the script has
+    // finished running is the temporal dead zone that has silently killed this whole script twice.
+    const BATCH_WHY = {
+      wallet: 'Your wallet sends these as itself and wallets refuse long batches, so this page keeps them short.',
+      careful: 'Checking that each recipient can hold the token, and leaving each transfer room to fail, both cost gas, so a transaction fills up sooner.',
+      plain: 'With no recipient check and no room to fail, a transfer is lean enough that many more fit in one transaction.',
+    };
+    const cap = maxBatch();
+    // The box must never offer a number the page will not use. It used to say 400 while quietly sending 200.
+    $('batch').max = String(cap);
+    const typed = parseInt($('batch').value);
+    const over = !isNaN(typed) && typed > cap;
+    const why = deliveryPath() === 'wallet' ? BATCH_WHY.wallet : (safeMode() || lenient()) ? BATCH_WHY.careful : BATCH_WHY.plain;
+    $('batchNote').textContent =
+      'A bigger batch costs less per wallet and asks for fewer signatures. A smaller one loses less when a '
+      + 'transaction fails, because a failure takes its own batch down and nothing else. Measured on this chain, '
+      + 'a thousand NFTs cost about 8% less delivered 400 at a time than 100 at a time, and about 42% more '
+      + 'delivered 25 at a time. As this page is set now it will use at most ' + cap + ' per transaction. ' + why;
+    say('batchClamp', over
+      ? 'You asked for ' + typed + '. This page will use ' + cap + ', which is as many as it will put in one transaction the way this send is set up.'
+      : '', over ? 'warn' : '');
+  }
   // What this will actually cost the sender, in ETH always and in dollars when a price is available.
   let gasPriceWei = null, gasPriceFor = null;
   async function refreshGasPrice() {
@@ -1867,6 +1920,14 @@
   // Measured on a 200-token mint: ascending 52,489 gas per recipient, descending 158,109, and in lenient mode
   // 54 of 200 honest recipients were skipped for running out of the per-transfer allowance. Every recipient
   // still receives exactly the id it was given; only the order of delivery changes.
+  // Ascending token id, and it is not cosmetic. A lazily-minted collection (ERC721A and its relatives) only
+  // writes an owner record at the start of each mint batch, so a transfer walks backwards through the ids
+  // until it finds one. Delivered in order, each transfer leaves a record the next one lands on and the walk
+  // is a single step. Delivered scattered, every transfer walks again. Measured against a real 400-token
+  // ERC721A on this chain, 100 recipients: 6.1M gas in ascending order, 8.9M shuffled, and in descending
+  // order it does not complete at all, it reverts on OutOfGasForBatch. So this sort is the difference between
+  // a working airdrop and one that refuses for a reason nobody could see. Ids are BigInt, so this compares as
+  // numbers; comparing them as text would order 1000 before 9 and quietly undo the whole thing.
   function orderForDelivery(list) {
     if (std() === '20') return list.slice();
     return list.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

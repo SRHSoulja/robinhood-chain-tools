@@ -14,6 +14,11 @@ community. Both are free, both are open source, and neither takes a fee.
 
 ---
 
+**What a batch costs:** [docs/gas-and-batches.md](docs/gas-and-batches.md) is every gas figure this tool
+relies on, measured on the chain rather than estimated: what one recipient costs for each kind of token, what
+a thousand-piece airdrop costs at each batch size, where one transaction stops (819 recipients, 32.2M gas),
+and why the order of the token ids changes the price by 45% on a lazily-minted collection.
+
 **How to say who gets what:** [docs/recipient-lists.md](docs/recipient-lists.md) is the whole of the
 recipient-list format — every shape that is read, every file from another tool that works unedited, and every
 input that is refused with the reason. A list that works today is meant to work in a year.
