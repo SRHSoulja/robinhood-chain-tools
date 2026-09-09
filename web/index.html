@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-1s856FD7+D9hXj07oR+yoZg8UatiI6FSdsXjeAsELng='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-smr5qR2LTX//2vgSyMQLHP1U232vcBAgJHsItnfIKno='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -285,7 +285,7 @@
     box.textContent = '';
     if (me) {
       const pill = document.createElement('span'); pill.className = 'pill ok mono';
-      pill.textContent = me.slice(0, 6) + '…' + me.slice(-4);
+      pill.textContent = shortAddr(me);
       if (connectedVia) { const via = document.createElement('span'); via.className = 'pill'; via.style.marginLeft = '6px'; via.textContent = connectedVia; box.appendChild(pill); box.appendChild(via); }
       else box.appendChild(pill);
       box.appendChild(walletButton('Change wallet', disconnectWallet));
@@ -409,7 +409,7 @@
         try { signer = await provider.getSigner(); me = await signer.getAddress();
           if (pick.context) closePicker('The wallet changed, so those may not be yours to send.');
           renderWalletChoice();
-          log('Switched to ' + me.slice(0, 6) + '…' + me.slice(-4) + '.'); await detectWalletBatch(); refreshRevoke(); plan();
+          log('Switched to ' + shortAddr(me) + '.'); await detectWalletBatch(); refreshRevoke(); plan();
         } catch (e) { log('Could not read the new account: ' + String(e.shortMessage || e.message).slice(0, 90), 'bad'); }
       });
     }
@@ -1293,6 +1293,10 @@
   // arrival moves the key to `anon` underneath the send: the ledger it reads is empty and the ledger it
   // writes is one nothing will ever read again.
   const runKey = () => sendRunKey || computeRunKey();
+  // Both ends, always. A head-only "0x000000…" is the same string for every address in a list of test
+  // wallets, and the confirmation that used it was asking someone to approve four transfers to what looked
+  // like one destination. The tail is the half that tells them apart.
+  const shortAddr = (a) => { const t = String(a || ''); return t.length > 14 ? t.slice(0, 6) + '\u2026' + t.slice(-6) : t; };
   // Keyed on the parsed id and amount, not the typed text, so "100" and "100.0" are the same payment and a
   // second, different-sized drop to the same wallet is not mistaken for a repeat of the first.
   const rowKey = (r) => r.to.toLowerCase() + ':' + (r.id !== undefined ? r.id.toString() : '') + ':' + (r.amount !== undefined ? r.amount.toString() : '');
@@ -1719,7 +1723,7 @@
     let ready = !!(provider && ethers.isAddress($('token').value.trim()) && tokenFresh && n > 0 && !sending && (path === 'wallet' || path === 'bulk') && (!badLines || badLinesOk));
     const how = path === 'notlive' ? 'nothing yet: this tool is not live on ' + c.name
               : path === 'wallet' ? 'your wallet, as itself (no approval)'
-              : path === 'bulk' ? 'BulkSend ' + (bulkReady() ? c.bulk.slice(0, 8) + '…' : '')
+              : path === 'bulk' ? 'BulkSend ' + (bulkReady() ? shortAddr(c.bulk) : '')
               : path === 'blocked' ? 'this collection needs a wallet that batches' : 'not deployed on this network yet';
     setStat($('plan'), [
       ['network', c.name],
@@ -2463,7 +2467,7 @@
       const bs = batchSize(), batches = Math.ceil(finalList.length / bs);
       const sigs = path === 'wallet' ? batches : batches;
       const name = ($('tokenInfo').textContent || '').split('(')[0].trim().slice(0, 40) || 'this collection';
-      const show = (r) => r ? (r.to.slice(0, 8) + '…' + (r.id !== undefined ? ' id ' + r.id : '') + (r.amount !== undefined && std() !== '721' ? ' x' + r.amount : '')) : '';
+      const show = (r) => r ? (shortAddr(r.to) + (r.id !== undefined ? ' id ' + r.id : '') + (r.amount !== undefined && std() !== '721' ? ' x' + r.amount : '')) : '';
       // Settled: which rows, in what order, in which transaction. Write it down, show it, and hand the
       // same thing to the confirmation, so what is agreed to is what goes out.
       const head = std() === '1155' ? 'transaction,position,address,tokenId,amount' : std() === '721' ? 'transaction,position,address,tokenId' : 'transaction,position,address,amount';

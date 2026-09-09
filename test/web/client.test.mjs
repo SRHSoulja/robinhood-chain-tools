@@ -1750,6 +1750,35 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.close();
 }
 
+// ---- an address in a confirmation must show both ends -------------------------------
+// From a screenshot of the real confirmation dialog: "transaction 1: 4 recipients, 0x000000... id 103
+// through 0x000000... id 106". The two ends of the range rendered identically, because the shortener kept
+// only the head, and every address in a list of test wallets shares its head. A confirmation whose whole job
+// is telling someone who they are paying was showing four transfers to what looked like one destination.
+{
+  const page = await open(browser, { approved: true, ownedIds: [103, 104, 105, 106] });
+  const dialogs = [];
+  page.removeAllListeners('dialog');
+  page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss(); });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  // addresses that differ only at the end, which is exactly the shape that broke it
+  const a1 = '0x00000000000000000000000000000000000000A1';
+  const a2 = '0x00000000000000000000000000000000000000A2';
+  await setList(page, a1 + ',103,104,105\n' + a2 + ',106\n');
+  for (let i = 0; i < 40; i++) { if (!(await page.evaluate(() => document.querySelector('#send').disabled))) break; await page.waitForTimeout(300); }
+  await page.click('#send'); await page.waitForTimeout(4000);
+  const d = dialogs.join(' ');
+  check('the confirmation shows the first and last recipient distinguishably',
+    !/0x000000\u2026 id 103/.test(d) && /\u2026/.test(d), d.slice(0, 300));
+  check('and the two ends of the range are not the same string',
+    !(d.includes('id 103') && d.includes('id 106') && /0x000000\u2026 id 103 through 0x000000\u2026 id 106/.test(d)),
+    d.slice(0, 300));
+  check('an address is shown with its tail, which is the half that identifies it',
+    /A1|a1/.test(d) || /\u2026[0-9a-fA-F]{4,6}/.test(d), d.slice(0, 300));
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
