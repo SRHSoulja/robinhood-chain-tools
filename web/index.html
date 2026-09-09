@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-smr5qR2LTX//2vgSyMQLHP1U232vcBAgJHsItnfIKno='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-wDFlrZGqZaudF6vZrCdoze8uHlUrsMCixKXL57MVPBs='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -652,7 +652,7 @@
   function addressProblem(raw) {
     const a = String(raw == null ? '' : raw).trim();
     if (!a) return 'this line has no wallet address on it';
-    if (/\.eth$|\.[a-z]{2,}$/i.test(a)) return 'names like vitalik.eth are not supported here; paste the 0x address';
+    if (/\.eth$|\.[a-z]{2,}$/i.test(a)) return 'names like vitalik.eth are not supported here \u2014 paste the 0x address for this wallet';
     if (/^0x[0-9a-fA-F]{40}$/.test(a)) return 'that address is the right length, but its capitals do not match '
       + 'its own checksum ("' + a.slice(0, 8) + '\u2026' + a.slice(-6) + '"). The pattern of capitals in an '
       + 'address is a checksum over the address itself, so this says one of two things: a character in it is '
@@ -918,11 +918,16 @@
         // On the first line the honest answer is that it could be either thing, so say both. Choosing
         // "heading" silently is how a recipient disappears; choosing "recipient" alone is how someone with a
         // heading this page cannot read is told their file is broken with no way forward.
-        const extra = (isFirst && !/^0x/i.test(String(addr)))
+        // The heading hint belongs only where the page genuinely cannot tell. Something starting 0x, or
+        // written like a name, is positively an attempted recipient: offering "maybe it is a heading" there
+        // is noise attached to an answer that was already complete.
+        const t2 = String(addr || '');
+        const clearlyMeantAsAddress = /^0x/i.test(t2) || /\.[a-z]{2,}$/i.test(t2);
+        const extra = (isFirst && !clearlyMeantAsAddress)
           ? '  If this line is meant to be a heading rather than a recipient, name its columns so it can be'
             + ' read as one \u2014 "address" and "tokenId" \u2014 or delete it. Nothing has been assumed either way.'
           : '';
-        problems.push('line ' + (i + 1) + ': ' + addressProblem(addr) + extra);
+        problems.push('line ' + (i + 1) + ': ' + addressProblem(addr) + (extra ? '.' + extra : ''));
         return;
       }
       // An NFT is unique, so listing its ids already says how many: three ids are three NFTs and there is no

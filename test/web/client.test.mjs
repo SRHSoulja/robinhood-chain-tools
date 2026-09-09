@@ -1450,8 +1450,11 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
       /line 1:/.test(prob) && /1 problem lines skipped/.test(stat), stat.slice(0, 90) + ' | ' + prob.slice(0, 120));
     check('and sending is gated behind acknowledging it (' + what + ')',
       (await page.evaluate(() => document.querySelector('#ackRow').style.display)) === 'flex');
-    check('and both readings are offered, so nobody is stuck (' + what + ')',
-      /meant to be a heading/.test(prob), prob.slice(0, 240));
+    // The hint belongs to the ambiguous case only. `alice.eth` is positively an attempted recipient, so
+    // offering "maybe it is a heading" there attaches a doubt to an answer that was already complete.
+    check('both readings are offered where it genuinely could be either (' + what + ')',
+      what === 'an ENS name' ? !/meant to be a heading/.test(prob) : /meant to be a heading/.test(prob),
+      prob.slice(0, 240));
   }
   await setList(page, 'alice.eth,1\n' + A(0x02) + ',2\n');
   check('an ENS name still gets the words this page already had for it',
@@ -1776,6 +1779,38 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
     d.slice(0, 300));
   check('an address is shown with its tail, which is the half that identifies it',
     /A1|a1/.test(d) || /\u2026[0-9a-fA-F]{4,6}/.test(d), d.slice(0, 300));
+  await page.close();
+}
+
+// ---- the four ways a line goes wrong, read by a person -----------------------------
+// The operator's own broken-list test, screenshotted from a phone. The messages were right and the prose was
+// not: a missing full stop ran two sentences together, and a name like alice.eth was offered the "maybe this
+// is a heading" hint even though a name is positively an attempted recipient and there is nothing ambiguous
+// about it. A hint attached to an answer that was already complete is noise.
+{
+  const page = await open(browser, { approved: true, ownedIds: [107, 109, 110] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const A2 = '0x00000000000000000000000000000000000000A2';
+  const A3 = '0x00000000000000000000000000000000000000A3';
+  await setList(page, 'alice.eth,107\n' + A2 + ',109\nnotanaddress,110\n' + A3 + ',110\n');
+  const prob = await text(page, '#problems');
+  check('a name is told to paste the address instead', /names like vitalik\.eth are not supported/.test(prob), prob.slice(0, 200));
+  check('and is not also asked whether it might be a heading',
+    !/meant to be a heading/.test(prob.split('line 3')[0]), prob.slice(0, 300));
+  check('junk text on a later line is named as not an address',
+    /line 3: that is not a wallet address \("notanaddress"\)/.test(prob), prob.slice(0, 300));
+  check('and two sentences never run together without a stop',
+    !/address  [A-Z]/.test(prob) && !/wallet  [A-Z]/.test(prob), prob.slice(0, 300));
+  check('the readable lines are still counted and sendable behind the tick',
+    /2 recipients/.test(await text(page, '#parseOut'))
+    && (await page.evaluate(() => document.querySelector('#ackRow').style.display)) === 'flex',
+    await text(page, '#parseOut'));
+
+  // the duplicate the operator's list did not actually reach: its first 110 was on a rejected line
+  await setList(page, A2 + ',109\n' + A3 + ',109\n');
+  check('the same token id twice is caught and named',
+    /token id 109 is listed twice/.test(await text(page, '#problems')), await text(page, '#problems'));
   await page.close();
 }
 
