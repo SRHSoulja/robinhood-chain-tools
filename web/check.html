@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-rtuh6e4+wbmAsk+TGnxdfgPJTH5cLy0GxYDTUMDGnr0='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-g8TyZcBGtLz+hCPVCMUPjctsCiYYn0jz2gr7Cdzs8VA='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <title>Robinhood Chain Check · read it before you sign</title>
 <meta name="description" content="Paste a transaction, a contract, or the calldata your wallet is about to sign, and read what it actually does on Robinhood Chain: what moves, what the contract can do to you, and why something failed.">
 <style>
@@ -991,6 +991,7 @@
   // call, `input` where `data` belongs) came to be simulated as though they would run.
   const HEX = /^0x([0-9a-fA-F]{2})*$/;
   const CALL_FIELDS = new Set(['to', 'data', 'value', 'capabilities']);
+  const HEX_QTY = /^0x(0|[1-9a-fA-F][0-9a-fA-F]*)$/;
   const TX_FIELDS = new Set(['from', 'to', 'data', 'input', 'value', 'gas', 'gasPrice', 'maxFeePerGas',
     'maxPriorityFeePerGas', 'nonce', 'chainId', 'type', 'accessList']);
 
@@ -1007,6 +1008,12 @@
     const calls = [];
     let conflicting = 0, invalid = 0;
     if (!loose) {
+      // Every field the specification makes normative, not a subset. A field left unchecked is a field this
+      // page has not read, and a request with unread fields must not be summed up as though it had been.
+      if (o.version === undefined) schema.push('It names no version. The specification requires one, so a wallet may refuse this request as it stands.');
+      if (o.id !== undefined && typeof o.id !== 'string') schema.push('Its id is ' + typeName(o.id) + ' rather than a string.');
+      if (o.capabilities !== undefined && (typeof o.capabilities !== 'object' || o.capabilities === null || Array.isArray(o.capabilities)))
+        schema.push('Its capabilities is ' + typeName(o.capabilities) + ' rather than an object, so what it asks a wallet to do differently cannot be read.');
       if (o.chainId === undefined) schema.push('It names no chainId. A wallet_sendCalls request has to say which chain it is for.');
       else if (!isHexQuantity(o.chainId)) schema.push('Its chainId is ' + typeName(o.chainId) + '. This field has to be a hex string such as "0xb626", so a wallet may refuse the request outright.');
       if (o.atomicRequired === undefined) schema.push('It does not say whether it must be atomic. That field is required, and its absence is not the same as saying no.');
@@ -1038,9 +1045,17 @@
       let bad = null;
       if (c.data !== undefined && !HEX.test(String(c.data))) bad = 'Entry ' + (i + 1) + ' has calldata that is not whole bytes of hex, so what it would run cannot be read.';
       if (c.to !== undefined && !(typeof c.to === 'string' && /^0x[0-9a-fA-F]{40}$/.test(c.to))) bad = 'Entry ' + (i + 1) + ' has a destination that is not an address: ' + typeName(c.to) + '.';
+      // "1" is not one wei here. This field is a hex quantity, and a decimal that looks like a small number
+      // is exactly the shape something else would read as a very different amount.
+      if (c.value !== undefined && !HEX_QTY.test(String(c.value)))
+        schema.push('Call ' + (i + 1) + ' has a value of ' + typeName(c.value) + '. This field is a hex quantity such as "0x1", so what it would send has not been read.');
+      if (c.capabilities !== undefined && (typeof c.capabilities !== 'object' || c.capabilities === null || Array.isArray(c.capabilities)))
+        schema.push('Call ' + (i + 1) + ' has capabilities that are ' + typeName(c.capabilities) + ' rather than an object.');
       if (bad) invalid++;
       calls.push({ to: (typeof c.to === 'string' && /^0x[0-9a-fA-F]{40}$/.test(c.to)) ? c.to : null,
-                   data: HEX.test(data) ? data : '0x', from: null, value: c.value, invalid: bad });
+                   data: HEX.test(data) ? data : '0x', from: null,
+                   value: (c.value !== undefined && HEX_QTY.test(String(c.value))) ? c.value : undefined,
+                   capabilities: c.capabilities, invalid: bad });
     }
     return {
       envelope: {
@@ -1056,6 +1071,9 @@
       calls, notes: note, kindName: 'wallet_sendCalls',
       conflictingSenders: (o.from && conflicting) ? conflicting : 0,
       schemaProblems: schema, invalidMembers: invalid,
+      // Kept, not dropped. Capabilities are how a wallet is permitted to change what a request means, so one
+      // this page does not understand is exactly a reason to stop short of a verdict about the whole thing.
+      capabilities: o.capabilities, requestId: o.id,
     };
   }
 
@@ -1184,6 +1202,19 @@
           const schemaProblems = reqs[ri].schemaProblems || [];
           if (schemaProblems.length) cards.push(note('bad', label + 'this is not a valid wallet_sendCalls request',
             schemaProblems.join('  ') + '  A wallet is entitled to refuse it rather than run it, so treat everything below as a reading of what was pasted, not as what will happen.'));
+          // A capability is how a wallet is allowed to do something other than the default. This page does not
+          // implement any of them, so naming them and standing back is the only honest thing available: a
+          // verdict about the whole request would be a claim about behaviour nobody here has read.
+          const caps = [];
+          const capNames = (v) => (v && typeof v === 'object' && !Array.isArray(v)) ? Object.keys(v) : [];
+          for (const n of capNames(reqs[ri].capabilities)) caps.push(n);
+          reqs[ri].calls.forEach((c, i) => { for (const n of capNames(c.capabilities)) caps.push('call ' + (i + 1) + ': ' + n); });
+          if (caps.length) cards.push(note('bad', label + 'this request asks for capabilities this page does not read',
+            caps.map((c) => '\u201c' + String(c).slice(0, 40) + '\u201d').join(', ')
+            + '.  A capability is how a wallet is permitted to do something other than the ordinary thing \u2014 pay the '
+            + 'gas differently, run the calls differently, add conditions. What is described below is the ordinary '
+            + 'reading, and no verdict is given for the request as a whole, because these could change it.'));
+          reqs[ri].unread = caps.length > 0 || schemaProblems.length > 0;
           if (reqs[ri].invalidMembers) cards.push(note('bad', label + reqs[ri].invalidMembers + ' of its ' + reqs[ri].calls.length + ' entries could not be read as calls',
             'They are kept in place below rather than dropped, because a list with a member missing is not the list that was pasted. No verdict is given for the sequence as a whole.'));
           if (!chosenSender) {
@@ -1256,6 +1287,9 @@
                   + 'leaving those done; it may run the whole thing atomically anyway and leave none done; or it may '
                   + 'refuse the request outright once it sees this. Not being required to be atomic is not a promise '
                   + 'that the earlier ones survive.')));
+            else if (reqs[ri].unread) cards.push(note('warn', label + 'run in order, every call succeeds \u2014 as read here',
+              'Simulated as one sequence, as ' + short(calls[0].from || ethers.ZeroAddress) + ', against the chain as it is now. '
+              + 'This is not a verdict on the request: parts of it were not read, and what is above says which.'));
             else cards.push(note('ok', label + 'run in order, every call succeeds',
               'Simulated as one sequence, as ' + short(calls[0].from || ethers.ZeroAddress) + ', against the chain as it is now.'));
           } else {

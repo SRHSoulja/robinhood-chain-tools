@@ -680,6 +680,51 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   await page.close();
 }
 
+// ---- B-03 (round ten): a request is not read until every normative field is read ---------------
+// The round-nine schema check was partial, which is worse than absent: it made the page look like it had read
+// a request it had only skimmed. This is the auditor's exact input.
+{
+  const page = await open(browser, {});
+  const r = await page.evaluate(() => {
+    const j = { method: 'wallet_sendCalls', params: [{ chainId: '0xb626', atomicRequired: true, id: 7,
+      capabilities: 'not-an-object', calls: [{ to: '0x1111111111111111111111111111111111111111',
+      data: '0x', value: '1', capabilities: 'not-an-object' }] }] };
+    const o = window.__check.readInput(JSON.stringify(j));
+    const q = (o.requests || [])[0] || {};
+    return { problems: q.schemaProblems || [], caps: q.capabilities, id: q.requestId,
+             value: (q.calls || [{}])[0].value, callCaps: (q.calls || [{}])[0].capabilities };
+  });
+  const all = r.problems.join(' | ');
+  check('B-03 a missing version is a missing required field', /names no version/.test(all), all.slice(0, 200));
+  check('B-03 an id that is not a string is reported', /id is 7 rather than a string/.test(all), all.slice(0, 200));
+  check('B-03 request capabilities that are not an object are reported',
+    /capabilities is the text "not-an-object"/.test(all), all.slice(0, 240));
+  check('B-03 a decimal value is not read as a hex quantity',
+    /value of the text "1"/.test(all) && r.value === undefined, all.slice(0, 240) + ' value=' + r.value);
+  check('B-03 call capabilities that are not an object are reported',
+    /Call 1 has capabilities/.test(all), all.slice(0, 240));
+  check('B-03 capabilities are kept for display, not silently dropped',
+    r.caps === 'not-an-object' && r.callCaps === 'not-an-object', JSON.stringify([r.caps, r.callCaps]));
+  check('B-03 and the id is kept too', r.id === 7, JSON.stringify(r.id));
+  await page.close();
+}
+// ---- and a request carrying capabilities gets no whole-request verdict ------------------------
+{
+  const page = await open(browser, {});
+  const t = await ask(page, JSON.stringify({ method: 'wallet_sendCalls', params: [{ version: '2.0.0',
+    chainId: '0xb626', from: ME, atomicRequired: true, capabilities: { paymasterService: { url: 'https://x' } },
+    calls: [{ to: NFT, data: '0x06fdde03' }, { to: TOK, data: '0x06fdde03' }] }] }), ME, 8000);
+  check('a capability this page cannot read is named rather than ignored',
+    /capabilities this page does not read/.test(t) && /paymasterService/.test(t), t.slice(0, 400));
+  check('and it says what a capability can change',
+    /permitted to do something other than the ordinary thing/.test(t), t.slice(0, 500));
+  check('the all-calls verdict is withheld while part of the request is unread',
+    !/^.*run in order, every call succeeds(?!.*as read here)/.test(t) || /as read here/.test(t), t.slice(0, 500));
+  check('and it says plainly that this is not a verdict on the request',
+    !/every call succeeds/.test(t) || /not a verdict on the request/.test(t), t.slice(0, 600));
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

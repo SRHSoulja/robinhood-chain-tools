@@ -1023,8 +1023,11 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
+  // Only headings whose columns can actually be *read* as columns. "my list,the id" used to be in here, and
+  // having it pass is what made the over-broad heuristic look correct: it is not recognisable as an address
+  // column, so it is ambiguous, and B-02 below is the test that it is reported rather than thrown away.
   const HEADINGS = ['Recipient Address,NFT ID', 'user,tokenId', 'destination,tokenId', 'wallets,ids',
-                    'Holder Wallet,Serial', 'my list,the id', 'address,tokenId'];
+                    'Holder Wallet,Serial', 'recipient wallet,token number', 'address,tokenId'];
   const bad = [];
   for (const h of HEADINGS) {
     await setList(page, h + '\n' + A(0x51) + ',1\n' + A(0x52) + ',2\n');
@@ -1413,6 +1416,63 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   m = await share();
   check('and a cap stops the largest holder taking the whole drop',
     m.get(big.toLowerCase()) === 2 && m.get(one.toLowerCase()) === 1, JSON.stringify([...m]));
+  await page.close();
+}
+
+// ---- B-02 (round ten): a first row that is not a readable heading is a row, not rubbish -------
+// I fixed one silent-drop bug by writing another. "Any first line with no 0x in it is a heading" throws away
+// `alice.eth,1` -- a recipient this page cannot resolve and already has the right words for -- past the
+// problems panel, past the acknowledgement gate, in silence. And the test I wrote to prove the fix used only
+// obvious prose as its heading, which is the one shape that works. That is the test certifying its own
+// blind spot, so these cases come from the auditor rather than from me.
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  for (const [what, first] of [['an ENS name', 'alice.eth,1'], ['arbitrary text', 'alice-wallet,1']]) {
+    await setList(page, first + '\n' + A(0x02) + ',2\n');
+    const stat = await text(page, '#parseOut'), prob = await text(page, '#problems');
+    check('a first row that is ' + what + ' is reported, not silently discarded',
+      /line 1:/.test(prob) && /1 problem lines skipped/.test(stat), stat.slice(0, 90) + ' | ' + prob.slice(0, 120));
+    check('and sending is gated behind acknowledging it (' + what + ')',
+      (await page.evaluate(() => document.querySelector('#ackRow').style.display)) === 'flex');
+    check('and both readings are offered, so nobody is stuck (' + what + ')',
+      /meant to be a heading/.test(prob), prob.slice(0, 240));
+  }
+  await setList(page, 'alice.eth,1\n' + A(0x02) + ',2\n');
+  check('an ENS name still gets the words this page already had for it',
+    /names like vitalik\.eth are not supported/.test(await text(page, '#problems')), await text(page, '#problems'));
+  // and a heading whose columns can be read is still skipped in silence
+  await setList(page, 'Recipient Address,NFT ID\n' + A(0x02) + ',2\n');
+  check('a heading that names its columns is still skipped without complaint',
+    !/problem lines/.test(await text(page, '#parseOut'))
+    && (await page.evaluate(() => document.querySelector('#ackRow').style.display)) === 'none',
+    await text(page, '#parseOut'));
+  await page.close();
+}
+
+// ---- B-01 (round ten): a selection belongs to the collection it was made in -------------------
+// Token ids are scoped to a contract, so id 41 of one and id 41 of another are unrelated NFTs. The picker
+// checked the token when it loaded and never again, so choosing in collection A, switching to B and pressing
+// "Use these" prepared B's id 41 while the art on screen was A's. That can send the wrong valuable asset.
+{
+  const NFT2 = '0x4444444444444444444444444444444444444444';
+  const page = await open(browser, { approved: true, artOnchain: true, ownedIds: [41, 42] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#list', A(0x941)); await page.waitForTimeout(300);
+  await page.click('#pick'); await page.waitForTimeout(5000);
+  await page.evaluate(() => document.querySelectorAll('#pickGrid .tile')[0].click());
+  const before = await page.evaluate(() => document.querySelector('#list').value);
+  await useToken(page, NFT2, '721');                       // a different collection entirely
+  await page.evaluate(() => { const b = document.querySelector('#pickUse'); if (b) b.click(); });
+  await page.waitForTimeout(1200);
+  const after = await page.evaluate(() => document.querySelector('#list').value);
+  check('a selection made in one collection is never written into a list for another',
+    before === after, before + '  ->  ' + after);
+  check('and it says why, rather than failing silently',
+    /only means something inside one collection/.test(await text(page, '#pickMsg')),
+    (await text(page, '#pickMsg')).slice(0, 200));
   await page.close();
 }
 

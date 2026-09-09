@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-OfjhBfJPme4ovW9wj/buZQ/Ihhj97Vf4hGHkKxXn9eY='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-2bp3nKaFiFwCnFAd7s0PUwLSfF8ZpfeMtouD5yLEhv8='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -406,6 +406,7 @@
           log('Your wallet disconnected this page.', 'warn'); plan(); return;
         }
         try { signer = await provider.getSigner(); me = await signer.getAddress();
+          if (pick.context) closePicker('The wallet changed, so those may not be yours to send.');
           renderWalletChoice();
           log('Switched to ' + me.slice(0, 6) + '…' + me.slice(-4) + '.'); await detectWalletBatch(); refreshRevoke(); plan();
         } catch (e) { log('Could not read the new account: ' + String(e.shortMessage || e.message).slice(0, 90), 'bad'); }
@@ -469,17 +470,20 @@
     // the address sitting in the box. Same address, same chain, already loaded: there is nothing to redo.
     const addr = $('token').value.trim().toLowerCase();
     if (addr && addr === tokenLoadedFor && tokenLoadedChain === chainId()) return;
+    if (pick.context && pick.context !== pickContext()) closePicker('The collection changed, so those are no longer the NFTs in front of you.');
     rows = []; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); tokenInfo();
   });
   $('std').addEventListener('change', () => {
     $('fmt').textContent = std() === '721' ? 'address, tokenId' : std() === '1155' ? 'address, tokenId, amount' : 'address, amount';
     $('safeRow').style.display = std() === '721' ? 'flex' : 'none';
+    if (pick.context) closePicker('The token type changed.');
     rows = []; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); plan(); if ($('token').value.trim()) tokenInfo();
   });
   $('net').addEventListener('change', async () => {
     forgetSnapshot('the network changed');
     // The same address is a different contract on a different chain, and decimals differ. Keeping a parsed
     // list across that boundary would send amounts computed for one token using another one's units.
+    if (pick.context) closePicker('The network changed, and the same address is a different contract on a different chain.');
     rows = []; decimals = null; tokenLoadedFor = null; tokenLoadedChain = null; gatedBy = null; tokenPaused = false;
     badLines = 0; badLinesOk = false; skippedRows = []; gasPriceFor = null;
     setStat($('parseOut'), []); setStat($('tokenInfo'), []); say('msgList', ''); $('problems').style.display = 'none'; $('ackRow').style.display = 'none';
@@ -625,23 +629,30 @@
       + 'column formatted as text';
     return '"' + t.slice(0, 24) + '" is not a whole ' + what;
   }
-  // A first line that names its columns is a heading whatever it calls them. Recognising only a handful of
-  // opening words meant a file headed "Recipient Address,NFT ID" had its heading read as a recipient, reported
-  // as "that is not a wallet address", and the send left disabled behind the acknowledge-bad-lines gate --
-  // for a file that was completely correct. Nothing is lost by skipping it: a line with no address in it
-  // could never have been a recipient row. A cell that *tries* to be an address (starts with 0x) is still a
-  // broken row and still reported, so a typo is never silently dropped.
-  function looksLikeHeading(line) {
-    const cells = splitRow(String(line).trim());
-    if (!cells.length) return false;
-    return !cells.some(c => /^0x/i.test(c.trim()));
-  }
+  // "Any first line with no 0x in it is a heading" was wrong, and wrong in the worst direction. `alice.eth,1`
+  // has no 0x in it and is not a heading: it is a recipient this page cannot resolve, and it was being thrown
+  // away in silence -- past the problems panel, past the acknowledgement gate, past the message this page
+  // already has for exactly that input. A row is only skipped when its columns can be *read* as a heading.
+  // Anything else ambiguous is reported, with both readings named, so nobody is left guessing and nobody is
+  // dropped.
+  function looksLikeHeading(line) { return !!readHeader(String(line).trim()); }
   function readHeader(line) {
     const cells = splitRow(line).map(c => c.toLowerCase().replace(/[\s_-]/g, ''));
     if (!cells.length || cells.some(c => ethers.isAddress(c))) return null;   // a row of data, not a header
+    // A heading is words. Anything with digits or 0x in it is data, and must not be read as a column name.
+    if (cells.some((c) => !c || /[0-9]/.test(c))) {
+      if (!cells.every((c) => c && !/^0x/i.test(c) && !/[0-9]/.test(c))) return null;
+    }
     const map = {};
     cells.forEach((c, i) => {
-      for (const key of Object.keys(COLS)) if (COLS[key].some(n => n.replace(/[\s_-]/g, '') === c)) { if (map[key] === undefined) map[key] = i; }
+      for (const key of Object.keys(COLS)) {
+        // "holder wallet" and "recipient address" name a column even though neither string is in the list.
+        // Matching a known word inside the cell is a positive identification; it is not a guess about data,
+        // because a cell containing a digit or an 0x has already been ruled out above.
+        if (COLS[key].some((n) => { const w = n.replace(/[\s_-]/g, ''); return w === c || (c.length > w.length && c.includes(w)); })) {
+          if (map[key] === undefined) map[key] = i;
+        }
+      }
     });
     return map.to !== undefined ? map : null;
   }
@@ -792,10 +803,21 @@
     }
     lines.forEach((line, i) => {
       const t = line.trim(); if (!t) return;
-      if (i === lines.findIndex(x => x.trim()) && looksLikeHeading(t)) { headers++; return; }
+      const isFirst = i === lines.findIndex((x) => x.trim());
+      if (isFirst && looksLikeHeading(t)) { headers++; return; }
       const parts = t.split(/[,\t;]+|\s+/).filter(Boolean);
       const addr = parts[0];
-      if (!ethers.isAddress(addr)) { problems.push('line ' + (i + 1) + ': ' + addressProblem(addr)); return; }
+      if (!ethers.isAddress(addr)) {
+        // On the first line the honest answer is that it could be either thing, so say both. Choosing
+        // "heading" silently is how a recipient disappears; choosing "recipient" alone is how someone with a
+        // heading this page cannot read is told their file is broken with no way forward.
+        const extra = (isFirst && !/^0x/i.test(String(addr)))
+          ? '  If this line is meant to be a heading rather than a recipient, name its columns so it can be'
+            + ' read as one \u2014 "address" and "tokenId" \u2014 or delete it. Nothing has been assumed either way.'
+          : '';
+        problems.push('line ' + (i + 1) + ': ' + addressProblem(addr) + extra);
+        return;
+      }
       if (parts.length > want) {
         const looksLikeThousands = parts.length === want + 1 && /^\d{1,3}$/.test(parts[1] || '') && /^\d{3}(\.\d+)?$/.test(parts[2] || '');
         problems.push('line ' + (i + 1) + ': ' + parts.length + ' values, expected ' + want + (looksLikeThousands ? '. A thousands separator splits the line, so write 1234.5 rather than 1,234.5' : '')); return; }
@@ -917,7 +939,21 @@
   // Enough to choose between by eye, and no more: past this many, picking one at a time is not what anyone
   // wants and "Assign my token ids" is the tool for the job. The number is stated on screen, never silent.
   const PICK_CAP = 250;
-  const pick = { ids: [], meta: new Map(), chosen: new Set(), token: null, held: 0 };
+  // What a selection is *about*: the chain, the account, the standard and the collection. Token ids belong to
+  // a collection, so id 41 of one contract and id 41 of another are unrelated NFTs, and a selection made
+  // against one must never be written into a list meant for the other. Remembering only the token was not
+  // enough: nothing re-checked it at the moment the list was rewritten, so choosing from collection A,
+  // changing the address to B and pressing "Use these" prepared B's id 41 while the art on screen was A's.
+  const pickContext = () => chainId() + '|' + String(me || '').toLowerCase() + '|' + std() + '|' + $('token').value.trim().toLowerCase();
+  let pickGen = 0;   // an obsolete load must not repaint a newer one
+  const pick = { ids: [], meta: new Map(), chosen: new Set(), context: null, held: 0, gen: 0 };
+  function closePicker(why) {
+    pick.ids = []; pick.meta.clear(); pick.chosen.clear(); pick.context = null; pick.held = 0;
+    pickGen++;
+    $('pickGrid').textContent = '';
+    $('pickBox').style.display = 'none';
+    if (why) say('pickMsg', why, 'warn');
+  }
   const dataImage = (v) => (typeof v === 'string' && /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);/i.test(v)) ? v : null;
 
   function readTokenMetadata(uri) {
@@ -935,16 +971,20 @@
   async function loadPickable() {
     const token = $('token').value.trim();
     const grid = $('pickGrid');
-    pick.token = token.toLowerCase();
+    const mine = ++pickGen;
+    pick.gen = mine;
+    pick.context = pickContext();
     say('pickMsg', 'Reading the ones you hold…', '');
     grid.textContent = '';
     const ids = await myTokenIds(token, PICK_CAP + 40).catch(() => []);
+    if (pick.gen !== mine) return;
     pick.held = ids.length;
     pick.ids = ids.slice(0, PICK_CAP);
     if (!pick.ids.length) {
       say('pickMsg', 'Your wallet does not appear to hold anything in this collection, or the explorer would not say.', 'bad');
       return;
     }
+    if (pick.gen !== mine) return;
     // The ids are known now, so the grid is drawn now. Waiting for every picture first meant seven seconds of
     // nothing on sixty tiles, and a list long enough for a real drop would have been half a minute.
     renderPick();
@@ -969,8 +1009,8 @@
         pick.meta.set(String(id), m || { name: null, img: null, why });
         if (m && !m.why) pick.meta.get(String(id)).why = why;
       }));
+      if (pick.gen !== mine) return;   // a newer load owns the grid now; this answer is stale
       paintTiles();
-      if (pick.token !== token.toLowerCase()) return;   // the token changed under us; this answer is stale
     }
     const shown = pick.ids.filter((id) => (pick.meta.get(String(id)) || {}).img).length;
     say('pickMsg', shown + ' of ' + pick.ids.length + ' have their picture on the chain.'
@@ -1043,7 +1083,7 @@
     }
     $('pickBox').style.display = 'block';
     $('pick').disabled = true;
-    try { if (pick.token !== token.toLowerCase()) { pick.chosen.clear(); pick.meta.clear(); await loadPickable(); } else { renderPick(); } }
+    try { if (pick.context !== pickContext()) { pick.chosen.clear(); pick.meta.clear(); await loadPickable(); } else { renderPick(); } }
     finally { $('pick').disabled = false; }
   });
   $('pickClose').addEventListener('click', () => { $('pickBox').style.display = 'none'; });
@@ -1054,6 +1094,15 @@
     renderPick();
   });
   $('pickUse').addEventListener('click', () => {
+    // Checked here, not only when it was opened. Everything between those two moments -- a new collection, a
+    // different account, a switched network, a change of standard -- makes these ids mean something else.
+    if (!pick.context || pick.context !== pickContext()) {
+      closePicker('The network, account, token type or collection changed after these were chosen, and a token '
+        + 'id only means something inside one collection. Nothing has been written to the list. Open "Choose '
+        + 'which ones" again to pick from what is there now.');
+      $('pickBox').style.display = 'block';
+      return;
+    }
     const wallets = walletsInBox();
     if (!wallets.length) { say('pickMsg', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
     const chosen = pick.ids.map(String).filter((id) => pick.chosen.has(id));
