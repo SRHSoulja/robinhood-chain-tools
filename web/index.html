@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-igstxlbfXJyMUtNVA/SeYsd2A8ibUdcHx2zeydisdjE='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-1s856FD7+D9hXj07oR+yoZg8UatiI6FSdsXjeAsELng='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -167,7 +167,8 @@
 (() => {
   // ---- chain config; BulkSend addresses are filled in after each deploy ----
   const CHAINS = {
-    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com', bulk: '0x91949d7328387a3613b29e56f6979ae893ccd23c' },
+    46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com',
+             addChain: 'https://faucet.testnet.chain.robinhood.com/add-chain', bulk: '0x91949d7328387a3613b29e56f6979ae893ccd23c' },
     4663:  { name: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com', bulk: '{{BULKSEND_MAINNET}}' },
   };
   const BULK_ABI = [
@@ -456,40 +457,64 @@
     };
     const head = document.createElement('div');
     head.textContent = (onChain ? 'Your wallet is on chain ' + onChain + ', and it ' : 'Your wallet ')
-      + 'would not add ' + c.name + ' when asked. Add it by hand \u2014 in MetaMask that is Settings, '
-      + 'Networks, Add network, Add manually \u2014 then come back and reconnect.';
+      + 'did not add ' + c.name + ' when asked. Most phone wallets will not add a network over a '
+      + 'WalletConnect scan at all. The quickest way round it:';
+    const ways = document.createElement('div');
+    ways.style.margin = '6px 0';
+    // The chain's own operator publishes a page that does this in one tap, which beats five fields typed by
+    // hand on a phone. Found by someone testing, who went and did it rather than typing any of the below.
+    if (c.addChain) {
+      const w0 = document.createElement('div');
+      w0.style.margin = '4px 0';
+      w0.appendChild(document.createTextNode('1. Open '));
+      const link = document.createElement('a');
+      link.href = c.addChain; link.target = '_blank'; link.rel = 'noopener noreferrer';
+      link.textContent = c.addChain;
+      w0.appendChild(link);
+      w0.appendChild(document.createTextNode(' \u2014 the chain\u2019s own page, which adds it in one tap. Then come back and reconnect.'));
+      ways.appendChild(w0);
+    }
+    const w1 = document.createElement('div');
+    w1.style.margin = '4px 0';
+    w1.textContent = (c.addChain ? '2. ' : '1. ') + 'Or open this page inside your wallet\u2019s own browser '
+      + '\u2014 in MetaMask, the compass icon \u2014 and connect there. A wallet will add a network for a page it is hosting.';
+    const w2 = document.createElement('div');
+    w2.style.margin = '4px 0';
+    w2.textContent = (c.addChain ? '3. ' : '2. ') + 'Or add it by hand with the details below. In MetaMask: '
+      + 'Settings, Networks, Add network, Add manually.';
+    ways.appendChild(w1); ways.appendChild(w2);
     head.style.marginBottom = '6px';
     box.appendChild(head);
+    box.appendChild(ways);
     box.appendChild(line('Network name', c.name));
     box.appendChild(line('RPC URL', c.rpc));
     box.appendChild(line('Chain ID', String(chainId())));
     box.appendChild(line('Currency symbol', 'ETH'));
     box.appendChild(line('Block explorer', c.explorer));
   }
+  // A wallet is asked, and then the chain is read back to see whether anything happened. Three things go
+  // wrong otherwise, and all three did:
+  //   - over WalletConnect an unsupported method can simply never answer, so an await sits there forever and
+  //     no catch ever runs: the page does nothing at all and says nothing at all;
+  //   - a wallet may answer without acting, so a resolved promise is not a switched network;
+  //   - trusting that answer is the same mistake as trusting a receipt instead of reading the chain, which
+  //     this page refuses to make about a transfer and was quietly making about the network.
+  const askWallet = (method, params) => Promise.race([
+    eth.request({ method, params }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('the wallet did not answer')), 12000)),
+  ]);
+  const walletChainId = async () => {
+    try { return Number((await new ethers.BrowserProvider(eth).getNetwork()).chainId); } catch (e) { return null; }
+  };
   async function switchChain() {
-    const id = chainId(), c = cfg(), hex = '0x' + id.toString(16);
-    if (eth === wcProvider) {
-      // "Phone wallets generally will not add a network on request" was true and useless: a wallet that does
-      // not have this network cannot be switched to it, so telling someone to switch is telling them to do
-      // the impossible. Ask anyway -- some wallets honour it -- and when that fails put the five fields they
-      // need on the screen rather than sending them off to find a chain id somewhere.
-      let net = null;
-      try { net = await new ethers.BrowserProvider(eth).getNetwork(); } catch (e) {}
-      if (net && Number(net.chainId) === id) return;
-      try { await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }); return; }
-      catch (e) {
-        try { await eth.request({ method: 'wallet_addEthereumChain', params: [addChainParams()] }); return; }
-        catch (e2) { showManualNetwork(net ? Number(net.chainId) : null); }
-      }
-      return;
+    const id = chainId(), hex = '0x' + id.toString(16);
+    if (await walletChainId() === id) { provider = new ethers.BrowserProvider(eth); signer = await provider.getSigner(); return; }
+    for (const [method, params] of [['wallet_switchEthereumChain', [{ chainId: hex }]],
+                                    ['wallet_addEthereumChain', [addChainParams()]]]) {
+      try { await askWallet(method, params); } catch (e) {}
+      if (await walletChainId() === id) { provider = new ethers.BrowserProvider(eth); signer = await provider.getSigner(); return; }
     }
-    try { await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }); }
-    catch (e) {
-      if (e.code === 4902 || /unrecognized|not added/i.test(e.message || '')) {
-        try { await eth.request({ method: 'wallet_addEthereumChain', params: [addChainParams()] }); }
-        catch (e2) { log(walletError(e2), 'bad'); showManualNetwork(null); }
-      } else { log('Could not switch network: ' + walletError(e), 'bad'); }
-    }
+    showManualNetwork(await walletChainId());
     provider = new ethers.BrowserProvider(eth); signer = await provider.getSigner();
   }
   async function onSelectedChain() {
@@ -2322,6 +2347,24 @@
     }
     if (verbose) {
       log('Test run finished: ' + willDeliver + ' of ' + ordered.length + ' would be delivered' + (willSkip ? ', ' + willSkip + ' skipped' : '') + '.', willSkip ? 'warn' : 'ok');
+      // "The token refuses them" is true of every skip and useless for the commonest one. Nothing has been
+      // approved yet is not the token refusing anybody: it is a step not taken, and it explains every row at
+      // once. Saying "retry in strict mode" to someone who simply has not pressed Approve sends them the
+      // wrong way entirely.
+      if (willSkip && willDeliver === 0 && std() !== '20') {
+        let unapproved = false;
+        try {
+          const rp0 = new ethers.JsonRpcProvider(cfg().rpc);
+          unapproved = !(await new ethers.Contract($('token').value.trim(),
+            ['function isApprovedForAll(address,address) view returns (bool)'], rp0).isApprovedForAll(me, cfg().bulk));
+        } catch (e) {}
+        if (unapproved) {
+          log('None of them would be delivered because BulkSend is not approved to move this collection yet. '
+            + 'That is not the token refusing these wallets, it is a step not taken: press "Approve BulkSend '
+            + 'for this collection", then run the test again. Nothing has been sent.', 'bad');
+          return { ok: true, willDeliver, willSkip };
+        }
+      }
       if (willSkip) log('A skipped wallet is one the token itself refuses. Send, then download the skipped list and retry those in strict mode, where each transfer gets the whole transaction\'s gas.', 'warn');
     }
     return { ok: true, willDeliver, willSkip, list: ordered };

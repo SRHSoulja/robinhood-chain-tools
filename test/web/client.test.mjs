@@ -69,7 +69,10 @@ function chainAnswer(O) {
       case 'eth_chainId': return O.walletChain || '0xb626';
       case 'wallet_switchEthereumChain': { if (!O.walletChain) return null;
         const e = new Error('Unrecognized chain ID'); e.code = 4902; throw e; }
-      case 'wallet_addEthereumChain': { if (!O.refuseAddChain) return null;
+      case 'wallet_addEthereumChain': {
+        if (O.hangOnAddChain) return new Promise(() => {});          // never answers, the way WC can
+        if (O.silentAddChain) return null;                            // says yes, changes nothing
+        if (!O.refuseAddChain) return null;
         const e = new Error('User rejected'); e.code = 4001; throw e; }
       case 'net_version': return '46630';
       case 'eth_accounts': case 'eth_requestAccounts': return [me];
@@ -189,7 +192,7 @@ function chainAnswer(O) {
         if (sel === '0x56c3e5e9' || sel === '0xdf1c9e47') return enc(400000);
         if (sel === '0x20d2c951') return enc(100000);
         if (sel === '0x5f2a9f41') return enc(5000000);
-        if (BULK_SELECTORS.includes(sel)) return enc(O.willDeliver ?? 1) + enc(0).slice(2);
+        if (BULK_SELECTORS.includes(sel)) return enc(O.willDeliver ?? 1) + enc(O.willSkip ?? 0).slice(2);
         if (O.callFails) { const e = new Error('execution reverted'); e.revertData = '0x7e273289'; throw e; }
         return enc(1);
       }
@@ -1684,6 +1687,10 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   const page = await open(browser, { walletChain: '0x1', refuseAddChain: true });
   await page.click('#connect'); await page.waitForTimeout(3000);
   const msg = (await text(page, '#msgTop')).replace(/\s+/g, ' ');
+  check('the chain\u2019s own one-tap add page is offered first',
+    /faucet\.testnet\.chain\.robinhood\.com\/add-chain/.test(msg), msg.slice(0, 200));
+  check('and opening the page inside the wallet\u2019s own browser is named as the other way',
+    /wallet\u2019s own browser/.test(msg) || /wallet's own browser/.test(msg), msg.slice(0, 300));
   check('a wallet on the wrong network is asked to add this one',
     (await page.evaluate(() => window.__asked || [])).includes('wallet_addEthereumChain'),
     JSON.stringify(await page.evaluate(() => window.__asked || [])));
@@ -1691,7 +1698,55 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
     msg.includes('46630') && msg.includes('rpc.testnet.chain.robinhood.com')
     && msg.includes('Robinhood Chain Testnet') && msg.includes('explorer.testnet'), msg.slice(0, 260));
   check('with what to do, not just what went wrong',
-    /Add it by hand/.test(msg) && /Settings/.test(msg), msg.slice(0, 200));
+    /add-chain/.test(msg) && /Settings/.test(msg), msg.slice(0, 200));
+  await page.close();
+}
+
+// ---- a wallet that answers nothing at all must not leave the page silent ------------
+// Reported twice from a phone, the second time after my first fix: "it still didn't add the testnet". Over
+// WalletConnect an unsupported method can simply never answer, so the await sat there forever, no catch ran,
+// and the page said nothing. A wallet can also answer yes and do nothing. Both are now caught the only way
+// that works: ask, wait with a limit, then read the chain back and believe that instead of the answer.
+{
+  for (const [what, opts] of [
+    ['never answers', { walletChain: '0x1', hangOnAddChain: true }],
+    ['answers yes and does nothing', { walletChain: '0x1', silentAddChain: true }],
+  ]) {
+    const page = await open(browser, opts);
+    await page.click('#connect');
+    for (let i = 0; i < 80; i++) {
+      if (/did not add/.test(await text(page, '#msgTop'))) break;
+      await page.waitForTimeout(500);
+    }
+    const msg = (await text(page, '#msgTop')).replace(/\s+/g, ' ');
+    check('a wallet that ' + what + ' still gets the user somewhere',
+      /did not add/.test(msg) && /add-chain/.test(msg), what + ' -> ' + msg.slice(0, 160));
+    check('and the network details are there as a fallback (' + what + ')',
+      msg.includes('46630') && msg.includes('rpc.testnet.chain.robinhood.com'), msg.slice(-160));
+    await page.close();
+  }
+}
+
+// ---- a test run that skips everything for want of an approval must say so -----------
+// Found by the operator on a phone: "Test run finished: 0 of 3 would be delivered, 3 skipped", followed by
+// "a skipped wallet is one the token itself refuses... retry those in strict mode". Every word true of a
+// normal skip and completely wrong here: BulkSend simply had not been approved yet. Confirmed on chain --
+// isApprovedForAll false, and the airdrop call really did return (0 sent, 3 skipped).
+{
+  const page = await open(browser, { approved: false, ownedIds: [1, 2, 3], willDeliver: 0, willSkip: 3 });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x71) + ',1\n' + A(0x72) + ',2\n' + A(0x73) + ',3\n');
+  await page.evaluate(() => { const m = document.querySelector('#mode'); m.value = 'lenient'; m.dispatchEvent(new Event('change')); });
+  await page.waitForTimeout(300);
+  await page.click('#preflight'); await page.waitForTimeout(9000);
+  const l = await text(page, '#log');
+  check('nothing delivered for want of an approval names the approval',
+    /not approved to move this collection yet/.test(l), l.slice(-300));
+  check('and says it is a step not taken, not the token refusing anyone',
+    /a step not taken/.test(l), l.slice(-300));
+  check('and does not send them off to retry in strict mode',
+    !/retry those in strict mode/.test(l), l.slice(-300));
   await page.close();
 }
 
