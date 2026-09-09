@@ -68,7 +68,9 @@ function chainAnswer(O) {
     switch (method) {
       case 'eth_chainId': return O.walletChain || '0xb626';
       case 'wallet_switchEthereumChain': { if (!O.walletChain) return null;
-        const e = new Error('Unrecognized chain ID'); e.code = 4902; throw e; }
+        // 4902 means the wallet does not have this chain. Any other failure means it has it and would not go.
+        const e = new Error(O.switchUnknownChain ? 'Unrecognized chain ID' : 'User rejected the request');
+        e.code = O.switchUnknownChain ? 4902 : 4001; throw e; }
       case 'wallet_addEthereumChain': {
         if (O.hangOnAddChain) return new Promise(() => {});          // never answers, the way WC can
         if (O.silentAddChain) return null;                            // says yes, changes nothing
@@ -1718,12 +1720,12 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
     const page = await open(browser, opts);
     await page.click('#connect');
     for (let i = 0; i < 80; i++) {
-      if (/did not add/.test(await text(page, '#msgTop'))) break;
+      if (/does not have|would not switch/.test(await text(page, '#msgTop'))) break;
       await page.waitForTimeout(500);
     }
     const msg = (await text(page, '#msgTop')).replace(/\s+/g, ' ');
     check('a wallet that ' + what + ' still gets the user somewhere',
-      /did not add/.test(msg) && /add-chain/.test(msg), what + ' -> ' + msg.slice(0, 160));
+      /does not have|would not switch/.test(msg) && /add-chain/.test(msg), what + ' -> ' + msg.slice(0, 160));
     check('and the network details are there as a fallback (' + what + ')',
       msg.includes('46630') && msg.includes('rpc.testnet.chain.robinhood.com'), msg.slice(-160));
     await page.close();
@@ -1811,6 +1813,58 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await setList(page, A2 + ',109\n' + A3 + ',109\n');
   check('the same token id twice is caught and named',
     /token id 109 is listed twice/.test(await text(page, '#problems')), await text(page, '#problems'));
+  await page.close();
+}
+
+// ---- "already added it" and "does not have it" need opposite advice -----------------
+// Reported on the second day of testing: "happening a lot where the wallet is stuck and doesn't change to
+// testnet". By then the network was already added -- seven transactions had gone out on it -- so the page
+// telling them how to *add* it was the wrong half of the answer. A WalletConnect scan cannot change which
+// network a wallet is on; that is a limit of the session, not something the user did wrong.
+{
+  for (const [what, opts, want] of [
+    ['does not have the network', { walletChain: '0x1', switchUnknownChain: true, refuseAddChain: true }, /does not have/],
+    ['has it but will not switch', { walletChain: '0x1', refuseAddChain: true }, /would not switch to/],
+  ]) {
+    const page = await open(browser, opts);
+    await page.click('#connect');
+    for (let i = 0; i < 80; i++) {
+      if (/does not have|would not switch/.test(await text(page, '#msgTop'))) break;
+      await page.waitForTimeout(500);
+    }
+    const msg = (await text(page, '#msgTop')).replace(/\s+/g, ' ');
+    check('a wallet that ' + what + ' is told the right half of the answer', want.test(msg), msg.slice(0, 200));
+    check('and the add-chain link is there either way (' + what + ')', /add-chain/.test(msg), msg.slice(0, 200));
+    await page.close();
+  }
+  // and the one that must never appear: telling someone to add a network they already have
+  const page = await open(browser, { walletChain: '0x1', refuseAddChain: true });
+  await page.click('#connect');
+  for (let i = 0; i < 80; i++) { if (/would not switch/.test(await text(page, '#msgTop'))) break; await page.waitForTimeout(500); }
+  const msg = (await text(page, '#msgTop')).replace(/\s+/g, ' ');
+  check('a wallet that already has the network is never told it does not',
+    !/does not have/.test(msg) && /Switch to it inside the wallet app/.test(msg), msg.slice(0, 240));
+  await page.close();
+}
+
+// ---- anything that signs must refuse a second press ---------------------------------
+// From the chain, during live testing: three setApprovalForAll transactions to one contract inside eight
+// seconds, and two more to another. `send` was made non-re-entrant in an early audit; approve and revoke
+// were not, and checking isApprovedForAll first cannot help -- at the second press the first transaction is
+// not mined, so the check passes and another approval goes out. The operator was gracious about whose fault
+// it might be. It was ours.
+{
+  const page = await open(browser, { approved: false, ownedIds: [1, 2],
+    slowMethod: { method: 'eth_getTransactionReceipt', ms: 3000 } });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x71) + ',1\n');
+  const before = await page.evaluate(() => window.__sent.length);
+  // three taps in quick succession, the way a phone produces them
+  await page.evaluate(() => { const b = document.querySelector('#approve'); b.click(); b.click(); b.click(); });
+  await page.waitForTimeout(9000);
+  const sent = (await page.evaluate(() => window.__sent.length)) - before;
+  check('three taps on Approve sign one transaction, not three', sent <= 1, sent + ' transactions signed');
   await page.close();
 }
 

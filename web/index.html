@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-wDFlrZGqZaudF6vZrCdoze8uHlUrsMCixKXL57MVPBs='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-aPhyjK/mRC3REc3CVSpqXPOCcm/KZJkZtt0802R5/vU='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -204,6 +204,30 @@
   let eth = null;   // the wallet the user chose, discovered through EIP-6963 rather than assumed
   let provider, signer, me, rows = [], stopFlag = false, decimals = null, tokenLoadedFor = null, skippedRows = [], sending = false;
   let sendRunKey = null;   // set only while a send holds its run lock; see runKey() and ledgerKey()
+  // Anything that signs has to refuse a second press while the first is unfinished. `send` was given that in
+  // an early audit; approve and revoke were not, and the chain shows what that costs: three setApprovalForAll
+  // transactions to one contract in eight seconds, and two to another. Checking isApprovedForAll first does
+  // not help -- at the moment of the second press the first transaction has not been mined, so the check
+  // passes and another approval goes out. A guard on one code path is not a guard.
+  let signing = false;
+  const onlyOnce = (id, fn) => async () => {
+    if (signing || sending) return;
+    signing = true;
+    const el = $(id), was = el.disabled;
+    el.disabled = true;
+    // The lock has to end even when the thing it is holding does not. A wallet that never answers is not
+    // hypothetical here -- it is the bug this page was just fixed for -- and a guard that waits forever on
+    // one would trade a double approval for a button that can never be pressed again without a reload.
+    // Long enough that no real signature is cut short, short enough that a wedged one is recoverable.
+    let release = null;
+    const giveUp = new Promise((r) => { release = setTimeout(() => {
+      log('That is taking longer than any signature should. If your wallet never showed a prompt, check it, '
+        + 'then press again \u2014 nothing has been sent from here.', 'warn');
+      r();
+    }, 180000); });
+    try { await Promise.race([fn(), giveUp]); }
+    finally { clearTimeout(release); signing = false; el.disabled = was; plan(); }
+  };
   let badLines = 0, badLinesOk = false;
   let walletBatch = null;   // does the wallet run several calls as itself, in one transaction (EIP-5792)
   let walletBatchReady = false;   // 'ready' means it will prompt to upgrade the account before the first batch
@@ -360,7 +384,9 @@
           icons: [location.origin + '/favicon.ico'],
         },
       });
-      say('msgTop', 'Scan the code with your wallet app, or pick your wallet from the list.');
+      say('msgTop', 'Scan the code with your wallet app, or pick your wallet from the list. On a phone, '
+        + 'opening this page inside your wallet\u2019s own browser instead \u2014 in MetaMask, the compass '
+        + 'icon \u2014 is more reliable: a scan cannot change which network your wallet is on.');
       await wcProvider.connect();
       wcProvider.on('disconnect', () => {
         // Mid-send this must not clear `me`. A batch already signed is still being watched for arrival, and
@@ -445,7 +471,7 @@
   });
   // A wallet that will not add a network on request leaves exactly one way forward: adding it by hand. So put
   // what that takes on the screen, selectable, instead of naming the network and wishing them luck.
-  function showManualNetwork(onChain) {
+  function showManualNetwork(onChain, missing, overWalletConnect) {
     const box = $('msgTop');
     box.textContent = ''; box.className = 'msg bad';
     const c = cfg();
@@ -456,33 +482,45 @@
       row.appendChild(k); row.appendChild(v); return row;
     };
     const head = document.createElement('div');
-    head.textContent = (onChain ? 'Your wallet is on chain ' + onChain + ', and it ' : 'Your wallet ')
-      + 'did not add ' + c.name + ' when asked. Most phone wallets will not add a network over a '
-      + 'WalletConnect scan at all. The quickest way round it:';
+    head.textContent = missing
+      ? ((onChain ? 'Your wallet is on chain ' + onChain + ', and it ' : 'Your wallet ')
+         + 'does not have ' + c.name + ' and would not add it when asked. Most phone wallets will not add a '
+         + 'network over a WalletConnect scan at all. The quickest way round it:')
+      : ((onChain ? 'Your wallet is on chain ' + onChain + ' and would not switch to ' : 'Your wallet would not switch to ')
+         + c.name + '. If you have already added it, that is the usual thing: a WalletConnect scan cannot '
+         + 'change which network your wallet is on. Switch to it inside the wallet app yourself and press '
+         + 'Connect again \u2014 or use one of these, which do not have that limit:');
     const ways = document.createElement('div');
     ways.style.margin = '6px 0';
     // The chain's own operator publishes a page that does this in one tap, which beats five fields typed by
     // hand on a phone. Found by someone testing, who went and did it rather than typing any of the below.
-    if (c.addChain) {
-      const w0 = document.createElement('div');
-      w0.style.margin = '4px 0';
-      w0.appendChild(document.createTextNode('1. Open '));
-      const link = document.createElement('a');
-      link.href = c.addChain; link.target = '_blank'; link.rel = 'noopener noreferrer';
-      link.textContent = c.addChain;
-      w0.appendChild(link);
-      w0.appendChild(document.createTextNode(' \u2014 the chain\u2019s own page, which adds it in one tap. Then come back and reconnect.'));
-      ways.appendChild(w0);
-    }
-    const w1 = document.createElement('div');
-    w1.style.margin = '4px 0';
-    w1.textContent = (c.addChain ? '2. ' : '1. ') + 'Or open this page inside your wallet\u2019s own browser '
-      + '\u2014 in MetaMask, the compass icon \u2014 and connect there. A wallet will add a network for a page it is hosting.';
-    const w2 = document.createElement('div');
-    w2.style.margin = '4px 0';
-    w2.textContent = (c.addChain ? '3. ' : '2. ') + 'Or add it by hand with the details below. In MetaMask: '
-      + 'Settings, Networks, Add network, Add manually.';
-    ways.appendChild(w1); ways.appendChild(w2);
+    // Order first, number second. Numbering each option as it is built and appending them conditionally
+    // produced a list that read "2." then "1.", which is worse than no numbers at all.
+    // Over a WalletConnect scan the wallet's own browser goes first: the session fixes which networks exist
+    // for it and a page cannot reach past that, whereas inside the wallet's browser there is no such limit.
+    const options = [];
+    const inAppText = 'Open this page inside your wallet\u2019s own browser \u2014 in MetaMask, the compass '
+      + 'icon at the bottom, then type rhairdrop.gmgnrepeat.com \u2014 and connect there. A scan hands the '
+      + 'wallet a fixed set of networks and cannot change it afterwards; inside the wallet\u2019s browser '
+      + 'there is no such limit, and the signing prompts arrive properly too.';
+    const byHandText = 'Or add it by hand with the details below, then switch to it in the wallet. In '
+      + 'MetaMask: Settings, Networks, Add network, Add manually.';
+    if (overWalletConnect) options.push({ text: inAppText });
+    if (c.addChain) options.push({ text: 'Open ', link: c.addChain, tail: ' \u2014 the chain\u2019s own page, which adds it in one tap.' });
+    if (!overWalletConnect) options.push({ text: inAppText });
+    options.push({ text: byHandText });
+    options.forEach((o, idx) => {
+      const row = document.createElement('div');
+      row.style.margin = '4px 0';
+      row.appendChild(document.createTextNode((idx + 1) + '. ' + o.text));
+      if (o.link) {
+        const a = document.createElement('a');
+        a.href = o.link; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = o.link;
+        row.appendChild(a);
+        row.appendChild(document.createTextNode(o.tail || ''));
+      }
+      ways.appendChild(row);
+    });
     head.style.marginBottom = '6px';
     box.appendChild(head);
     box.appendChild(ways);
@@ -509,12 +547,21 @@
   async function switchChain() {
     const id = chainId(), hex = '0x' + id.toString(16);
     if (await walletChainId() === id) { provider = new ethers.BrowserProvider(eth); signer = await provider.getSigner(); return; }
+    // Whether the wallet HAS this network decides which advice is useful, and the two are opposite. A wallet
+    // that answers 4902 does not have it and needs adding. A wallet that fails any other way has it and will
+    // not be driven to it over a WalletConnect session -- telling that person how to add a network they
+    // already added is the same wrong-turn as every other message this page has had to fix.
+    let missing = false;
     for (const [method, params] of [['wallet_switchEthereumChain', [{ chainId: hex }]],
                                     ['wallet_addEthereumChain', [addChainParams()]]]) {
-      try { await askWallet(method, params); } catch (e) {}
+      try { await askWallet(method, params); }
+      catch (e) {
+        const code = e && (e.code ?? (e.info && e.info.error && e.info.error.code));
+        if (method === 'wallet_switchEthereumChain' && (code === 4902 || /unrecognized|not added|unsupported chain/i.test(String(e.message || '')))) missing = true;
+      }
       if (await walletChainId() === id) { provider = new ethers.BrowserProvider(eth); signer = await provider.getSigner(); return; }
     }
-    showManualNetwork(await walletChainId());
+    showManualNetwork(await walletChainId(), missing, eth === wcProvider);
     provider = new ethers.BrowserProvider(eth); signer = await provider.getSigner();
   }
   async function onSelectedChain() {
@@ -1701,7 +1748,7 @@
   });
 
   // ---- revoke the operator approval once an airdrop is done ----
-  $('revoke').addEventListener('click', async () => {
+  $('revoke').addEventListener('click', onlyOnce('revoke', async () => {
     try {
       if (!(await onSelectedChain())) return;
       const token = $('token').value.trim();
@@ -1709,7 +1756,7 @@
       else { const t = new ethers.Contract(token, ERC721_ABI, signer); const tx = await t.setApprovalForAll(cfg().bulk, false); log('Revoking BulkSend as operator …', '', tx.hash); await tx.wait(); }
       log('Revoked. BulkSend can no longer move anything of yours.', 'ok'); refreshRevoke();
     } catch (e) { log('Could not revoke: ' + explainCallError(e), 'bad'); }
-  });
+  }));
   async function refreshRevoke() {
     const token = $('token').value.trim();
     if (!me || !ethers.isAddress(token) || !bulkReady()) { $('revoke').disabled = true; return; }
@@ -2380,7 +2427,7 @@
   }
 
   // ---- approve ----
-  $('approve').addEventListener('click', async () => {
+  $('approve').addEventListener('click', onlyOnce('approve', async () => {
     try {
       if (!(await onSelectedChain())) return;
       const token = $('token').value.trim(), bulk = cfg().bulk;
@@ -2399,7 +2446,7 @@
         log('Approved. Revoke it from your wallet or the explorer when the airdrop is done.', 'ok');
       }
     } catch (e) { log('Approval failed: ' + explainCallError(e), 'bad'); }
-  });
+  }));
 
   $('stop').addEventListener('click', () => { stopFlag = true; log('Will stop after the current batch.', 'warn'); });
 
