@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-aPhyjK/mRC3REc3CVSpqXPOCcm/KZJkZtt0802R5/vU='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-Sh76+dQg/+TVrvu5cKUl30ODxSWBy9UPZIpexv/KAM0='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -50,7 +50,7 @@
 <body>
 <header>
   <h1>BulkSend <small>send an NFT or token to hundreds of wallets at once</small></h1>
-  <div id="walletBox"><button id="connect">Connect wallet</button><button class="secondary" id="connectWc" style="margin-left:6px">Phone wallet</button></div>
+  <div id="walletBox"><button id="connect">Connect wallet</button><button class="secondary" id="connectWc" style="margin-left:6px">Phone wallet · WalletConnect</button></div>
 </header>
 <main>
   <div class="card" style="border-color:var(--warn)">
@@ -204,6 +204,7 @@
   let eth = null;   // the wallet the user chose, discovered through EIP-6963 rather than assumed
   let provider, signer, me, rows = [], stopFlag = false, decimals = null, tokenLoadedFor = null, skippedRows = [], sending = false;
   let sendRunKey = null;   // set only while a send holds its run lock; see runKey() and ledgerKey()
+  let forcePicker = false; // a deliberate disconnect means the next connect should ask which account
   // Anything that signs has to refuse a second press while the first is unfinished. `send` was given that in
   // an early audit; approve and revoke were not, and the chain shows what that costs: three setApprovalForAll
   // transactions to one contract in eight seconds, and two to another. Checking isApprovedForAll first does
@@ -324,18 +325,33 @@
       b.addEventListener('click', () => connect()); box.appendChild(b);
     }
     // however many extensions announce themselves, a phone wallet must still be reachable
-    box.appendChild(walletButton('Phone wallet', connectPhoneWallet, 'connectWc'));
+    // "Phone wallet" is what it is for and "WalletConnect" is what people look for. Both, or the button is
+    // invisible to anyone hunting for the second.
+    box.appendChild(walletButton('Phone wallet \u00b7 WalletConnect', connectPhoneWallet, 'connectWc'));
   }
   // Forget this connection here. The wallet extension keeps its own idea of what it has approved, which only
   // it can revoke, so say that rather than pretending the page can do it.
   async function disconnectWallet() {
     if (sending) { log('Not while an airdrop is going out.', 'warn'); return; }
     if (wcProvider) { try { await wcProvider.disconnect(); } catch (e) {} wcProvider = null; }
+    // Clearing our own variables is not disconnecting. The extension still has this site permitted, so the
+    // next eth_requestAccounts returns the same account without ever prompting -- which is why "Change
+    // wallet" appeared to do nothing and left you on the account you first connected. Ask the wallet to drop
+    // the permission, and if it will not, force the picker on the way back in.
+    let revoked = false;
+    if (eth) {
+      try { await eth.request({ method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] }); revoked = true; }
+      catch (e) { revoked = false; }
+    }
+    forcePicker = true;
     me = null; provider = null; signer = null; eth = null; connectedVia = null;
     walletBatch = null; walletBatchReady = false;
     try { localStorage.removeItem('bulksend:wallet'); } catch (e) {}
     renderWalletChoice();
-    say('msgTop', 'Disconnected here. Your wallet may still list this site as connected; disconnect it there too if you want that gone.', 'ok');
+    say('msgTop', revoked
+      ? 'Disconnected. Press Connect to choose a different account or wallet.'
+      : 'Disconnected here. Your wallet keeps its own idea of what it has approved, which only it can undo \u2014 '
+        + 'but pressing Connect will now ask you which account to use.', 'ok');
     plan();
   }
   function walletChoice(explicit) {
@@ -418,7 +434,14 @@
     if (rdns) { try { localStorage.setItem('bulksend:wallet', rdns); } catch (e) {} }
     try {
     say('msgTop', 'Check your wallet for a connection request…');
-    provider = new ethers.BrowserProvider(eth); await provider.send('eth_requestAccounts', []); signer = await provider.getSigner(); me = await signer.getAddress();
+    provider = new ethers.BrowserProvider(eth);
+    // After a deliberate disconnect, ask which account rather than silently taking the one already permitted.
+    // Wallets that do not implement this simply carry on to eth_requestAccounts as before.
+    if (forcePicker) {
+      try { await eth.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] }); } catch (e) {}
+      forcePicker = false;
+    }
+    await provider.send('eth_requestAccounts', []); signer = await provider.getSigner(); me = await signer.getAddress();
     say('msgTop', '');
     connectedVia = rdns === 'walletconnect' ? 'phone wallet'
       : (() => { for (const d of wallets.values()) if (d.provider === chosen) return String(d.info.name).slice(0, 24); return null; })();
@@ -1647,9 +1670,11 @@
       const ids = await myTokenIds(token, totalWanted);
       if (!ids.length) { say('msgList', 'Your wallet does not appear to hold anything in this collection, or the explorer would not say. Nothing has been changed.', 'bad'); $('assign').disabled = false; return; }
       const random = $('rand').checked;
+      let chosenEdition = null;
       if (std() === '1155') {
         // an edition is divisible, so "how many each" is just the amount on the line
         const id = (random ? shuffled(ids) : ids)[0];
+        chosenEdition = id;
         $('list').value = wants.map(w => w.to + ',' + id + ',' + w.n).join('\n');
         say('msgList', 'Using id ' + id + '. Change the id or the amount on any line.', 'ok');
       } else {
@@ -1675,7 +1700,13 @@
         $('list').value = lines.join('\n');
       }
       const n = $('list').value.split('\n').filter(Boolean).length;
-      log('Assigned ' + n + ' line' + (n === 1 ? '' : 's') + (random ? ', paired at random. They still go out lowest id first, which is the cheapest order.' : ', lowest id first.'), 'ok');
+      // An edition is not paired with anything and has no id order: every line carries the same id, and the
+      // only random thing was which edition was picked. Describing that as "paired at random, lowest id
+      // first" explains a property this list does not have.
+      const tail = chosenEdition !== null
+        ? ', every one of edition ' + chosenEdition + (random ? ', which was chosen at random from the editions you hold.' : '.')
+        : (random ? ', paired at random. They still go out lowest id first, which is the cheapest order.' : ', lowest id first.');
+      log('Assigned ' + n + ' line' + (n === 1 ? '' : 's') + tail, 'ok');
       parseList();
     } catch (e) { log('Could not read your token ids: ' + String(e.message || e).slice(0, 120), 'bad'); }
     $('assign').disabled = false;

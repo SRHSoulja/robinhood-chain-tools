@@ -64,8 +64,13 @@ function chainAnswer(O) {
   };
   let blockTick = 0;
   let sentYet = false;
+  let swapped = false;
   return function answer(method, params = []) {
     switch (method) {
+      case 'wallet_revokePermissions': { if (!O.swapAccounts) return null;
+        if (!O.revokeWorks) { const e = new Error('Method not found'); e.code = -32601; throw e; }
+        swapped = true; return null; }
+      case 'wallet_requestPermissions': { swapped = true; return []; }
       case 'eth_chainId': return O.walletChain || '0xb626';
       case 'wallet_switchEthereumChain': { if (!O.walletChain) return null;
         // 4902 means the wallet does not have this chain. Any other failure means it has it and would not go.
@@ -77,7 +82,8 @@ function chainAnswer(O) {
         if (!O.refuseAddChain) return null;
         const e = new Error('User rejected'); e.code = 4001; throw e; }
       case 'net_version': return '46630';
-      case 'eth_accounts': case 'eth_requestAccounts': return [me];
+      case 'eth_accounts': case 'eth_requestAccounts':
+        return [O.swapAccounts && swapped ? '0x00000000000000000000000000000000000000A2' : me];
       case 'eth_gasPrice': return '0x989680';
       case 'eth_blockNumber': return '0x' + (0x1000 + (O.blockMoves ? ++blockTick : 0)).toString(16);
       case 'eth_getBlockByNumber': return { number: '0x1000', hash: '0x' + '11'.repeat(32), parentHash: '0x' + '22'.repeat(32), timestamp: '0x1', gasLimit: '0x1', gasUsed: '0x0', miner: A(0), baseFeePerGas: '0x989680', transactions: [] };
@@ -395,7 +401,8 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   });
   await page.waitForTimeout(400);
   const names = await page.evaluate(() => [...document.querySelectorAll('#walletBox button')].map((b) => b.textContent.trim()));
-  check('L-01 two extensions do not remove the phone wallet option', names.includes('Phone wallet'), names.join(','));
+  check('L-01 two extensions do not remove the phone wallet option',
+    names.some((n) => /Phone wallet/.test(n)), names.join(','));
   await page.close();
 }
 
@@ -487,7 +494,8 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   check('L-01 a connected page offers a way to change wallet', before.includes('Change wallet'), before.join(','));
   await page.click('text=Change wallet'); await page.waitForTimeout(500);
   const after = await page.evaluate(() => [...document.querySelectorAll('#walletBox button')].map((b) => b.textContent.trim()));
-  check('L-01 and leaving it puts the connect buttons back', after.includes('Connect wallet') && after.includes('Phone wallet'), after.join(','));
+  check('L-01 and leaving it puts the connect buttons back',
+    after.includes('Connect wallet') && after.some((n) => /Phone wallet/.test(n)), after.join(','));
   await page.close();
 }
 
@@ -1865,6 +1873,60 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.waitForTimeout(9000);
   const sent = (await page.evaluate(() => window.__sent.length)) - before;
   check('three taps on Approve sign one transaction, not three', sent <= 1, sent + ' transactions signed');
+  await page.close();
+}
+
+// ---- "Change wallet" has to reach the wallet ----------------------------------------
+// Reported during live testing: "when i click on metamask it won't let me disconnect and swap to a different
+// metamask and seems to stay on the first account i connected". Clearing our own variables is not
+// disconnecting -- the extension still has the site permitted, so the next eth_requestAccounts returns the
+// same account without prompting. A workaround existing inside MetaMask does not make our button honest.
+{
+  for (const [what, revokeWorks] of [['a wallet that can revoke', true], ['a wallet that cannot', false]]) {
+    const page = await open(browser, { swapAccounts: true, revokeWorks });
+    await page.click('#connect'); await page.waitForTimeout(1500);
+    const first = (await text(page, '#walletBox')).replace(/Change.*/, '').trim();
+    await page.evaluate(() => {
+      const b = [...document.querySelectorAll('#walletBox button')].find((x) => /Change wallet/.test(x.textContent));
+      if (b) b.click();
+    });
+    await page.waitForTimeout(1500);
+    await page.click('#connect'); await page.waitForTimeout(1500);
+    const second = (await text(page, '#walletBox')).replace(/Change.*/, '').trim();
+    check('changing wallet really reaches a different account (' + what + ')',
+      first !== second && /\S/.test(second), first + ' -> ' + second);
+    const asked = await page.evaluate(() => window.__asked || []);
+    check('and the wallet was asked, not just our own state cleared (' + what + ')',
+      asked.includes('wallet_revokePermissions') || asked.includes('wallet_requestPermissions'),
+      JSON.stringify(asked.filter((m) => m.startsWith('wallet_'))));
+    await page.close();
+  }
+}
+// ---- the WalletConnect button has to be findable by that name -----------------------
+{
+  const page = await open(browser, {});
+  const labels = await page.evaluate(() => [...document.querySelectorAll('#walletBox button')].map((b) => b.textContent));
+  check('the WalletConnect option says so, not only "Phone wallet"',
+    labels.some((l) => /WalletConnect/.test(l)), JSON.stringify(labels));
+  await page.close();
+}
+
+// ---- an edition is not paired with anything ------------------------------------------
+// Spotted by the operator running a snapshot-and-assign on an ERC-1155 from a desktop: the closing line said
+// "paired at random. They still go out lowest id first", which is the ERC-721 explanation. An edition has no
+// pairing (every line carries the same id) and no id order (there is only one id), so that sentence
+// describes a property the list does not have.
+{
+  const page = await open(browser, { approved: true, ownedIds: [7, 8, 9] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, ED, '1155');
+  await setList(page, A(0x81) + '\n' + A(0x82) + '\n');
+  await page.click('#assign'); await page.waitForTimeout(4000);
+  const l = await text(page, '#log');
+  check('an ERC-1155 assign names the edition rather than claiming a pairing',
+    /every one of edition/.test(l), l.slice(-220));
+  check('and never claims an id order that does not exist',
+    !/lowest id first/.test(l.split('Assigned').pop() || ''), l.slice(-220));
   await page.close();
 }
 
