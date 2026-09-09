@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-7kldfqWMAyaEV5uwruArgKcTHNRBuN6ykRPmO0vErsY='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-Qr/00JnZdJ6KNSIR+pJDTFc0XWdGnvt+Qxjr9ZzOO/o='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -93,7 +93,7 @@
         <span style="font-size:12px;color:var(--mut);margin-left:8px">Pick the exact NFTs to send, instead of leaving it to chance.</span></div>
       <div class="check" style="margin:6px 0 0"><input type="checkbox" id="rand" checked><label for="rand" style="margin:0;font-size:12px">Random, so nobody can pick which NFT they get. Costs nothing: they still go out cheapest-first.</label></div></div>
     </div>
-    <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV. A file whose first line names its columns works too, and then the order does not matter: <span class="mono">address</span>, <span class="mono">tokenId</span> (<em>which</em> one), <span class="mono">quantity</span> (<em>how many</em>). A file of nothing but addresses works as well: press &ldquo;Assign my token ids&rdquo;.</label>
+    <label>One per line: <span class="mono" id="fmt">address, tokenId</span> · separate with a comma or a tab · paste from a sheet or upload a CSV. A file whose first line names its columns works too, and then the order does not matter at all: <span class="mono">address</span>, <span class="mono">tokenId</span> (<em>which</em> one), <span class="mono">quantity</span> (<em>how many</em>) &mdash; put them in whatever order suits you. A file of nothing but addresses works as well: press &ldquo;Assign my token ids&rdquo;.</label>
     <textarea id="list" aria-label="Recipient list" placeholder="0xabc…, 12&#10;0xdef…, 13"></textarea>
     <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
       <input type="file" id="csv" aria-label="Upload a CSV of recipients" accept=".csv,.txt,text/csv">
@@ -654,21 +654,29 @@
   // dropped.
   function looksLikeHeading(line) { return !!readHeader(String(line).trim()); }
   function readHeader(line) {
-    const cells = splitRow(line).map(c => c.toLowerCase().replace(/[\s_-]/g, ''));
+    const raw = splitRow(line);
+    const cells = raw.map(c => c.toLowerCase().replace(/[\s_-]/g, ''));
     if (!cells.length || cells.some(c => ethers.isAddress(c))) return null;   // a row of data, not a header
     // A heading is words. Anything with digits or 0x in it is data, and must not be read as a column name.
     if (cells.some((c) => !c || /[0-9]/.test(c))) {
       if (!cells.every((c) => c && !/^0x/i.test(c) && !/[0-9]/.test(c))) return null;
     }
+    // Two passes, and the order is the whole point. A raw substring test claims "tokenId" as the address
+    // column, because "to" is inside "tokenid" -- so a file headed `tokenId,amount,address` had its ids read
+    // as recipients and every row rejected. Whole names first, then whole words; never a fragment.
     const map = {};
+    const words = cells.map((c, i) => String(raw[i] || '').toLowerCase().split(/[^a-z]+/).filter(Boolean));
     cells.forEach((c, i) => {
       for (const key of Object.keys(COLS)) {
-        // "holder wallet" and "recipient address" name a column even though neither string is in the list.
-        // Matching a known word inside the cell is a positive identification; it is not a guess about data,
-        // because a cell containing a digit or an 0x has already been ruled out above.
-        if (COLS[key].some((n) => { const w = n.replace(/[\s_-]/g, ''); return w === c || (c.length > w.length && c.includes(w)); })) {
-          if (map[key] === undefined) map[key] = i;
-        }
+        if (map[key] !== undefined) continue;
+        if (COLS[key].some((n) => n.replace(/[\s_-]/g, '') === c)) map[key] = i;
+      }
+    });
+    cells.forEach((c, i) => {
+      for (const key of Object.keys(COLS)) {
+        if (map[key] !== undefined) continue;
+        // "holder wallet", "recipient address", "nft id": a column named with a word we know, as a word.
+        if (words[i].some((w) => COLS[key].includes(w))) map[key] = i;
       }
     });
     return map.to !== undefined ? map : null;

@@ -1535,6 +1535,41 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.close();
 }
 
+// ---- a header means the column order does not matter, in any order --------------------
+// Asked directly: is this format universal, or set up wrong? The positional convention across NFT airdrop
+// tools is `address,tokenId` for ERC-721 and `address,tokenId,amount` for ERC-1155, which is what this page
+// uses. With a header row the order is free, and that is what these pin down -- including the ordering that
+// reads more naturally (who, how many, which ones).
+//
+// Finding this needed a real test: "to" is a substring of "tokenid", so a substring match claimed the id
+// column as the address column and a file headed `tokenId,amount,address` had every row rejected. Whole
+// names first, then whole words, never a fragment.
+{
+  const page = await open(browser, { approved: true, decimals: 18 });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, ED, '1155');
+  for (const [name, csv] of [
+    ['the convention', 'address,tokenId,amount\n' + A(0x71) + ',1,5\n' + A(0x72) + ',1,7\n'],
+    ['amount before id', 'address,amount,tokenId\n' + A(0x71) + ',5,1\n' + A(0x72) + ',7,1\n'],
+    ['address last', 'tokenId,amount,address\n1,5,' + A(0x71) + '\n1,7,' + A(0x72) + '\n'],
+    ['names of its own', 'NFT ID,how many,recipient wallet\n1,5,' + A(0x71) + '\n1,7,' + A(0x72) + '\n'],
+  ]) {
+    await setList(page, csv);
+    check('an ERC-1155 file is read whatever order its columns are in (' + name + ')',
+      /2 recipients/.test(await text(page, '#parseOut')), name + ' -> ' + (await text(page, '#parseOut')).slice(0, 80));
+  }
+  await useToken(page, NFT, '721');
+  for (const [name, csv] of [
+    ['the convention', 'address,tokenId\n' + A(0x71) + ',251\n'],
+    ['quantity before id', 'address,quantity,tokenId\n' + A(0x71) + ',1,251\n'],
+  ]) {
+    await setList(page, csv);
+    check('and an ERC-721 file likewise (' + name + ')',
+      /1 recipients/.test(await text(page, '#parseOut')), name + ' -> ' + (await text(page, '#parseOut')).slice(0, 80));
+  }
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
