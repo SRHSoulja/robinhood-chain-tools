@@ -1570,6 +1570,57 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.close();
 }
 
+// ---- files other chains' snapshot and airdrop tools actually produce ------------------
+// Asked directly whether this works with the tools people already use. These are real export shapes, not
+// invented ones, and testing them found three that did not parse: Etherscan writes `HolderAddress` with no
+// separator at all, disperse.app writes `address=amount`, and snapshot.org calls the column `voter`.
+{
+  const page = await open(browser, { approved: true, ownedIds: [251, 252, 253, 254] });
+  const dialogs = [];
+  page.removeAllListeners('dialog');
+  page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss(); });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const A1 = A(0xa1), B2 = A(0xb2);
+  for (const [tool, csv] of [
+    ['Etherscan holders', '"HolderAddress","Balance"\n"' + A1 + '","3"\n"' + B2 + '","1"\n'],
+    ['Etherscan 3-column', 'HolderAddress,Balance,PendingBalance\n' + A1 + ',3,0\n' + B2 + ',1,0\n'],
+    ['Blockscout holders', 'Address,Balance\n' + A1 + ',3\n' + B2 + ',1\n'],
+  ]) {
+    dialogs.length = 0;
+    await setList(page, csv);
+    check('a holder export is read as a proportional drop (' + tool + ')',
+      dialogs.some((d) => /how many NFTs each wallet gets/.test(d)) || /NFTs in total/.test(await text(page, '#msgList')),
+      dialogs.join(' | ').slice(0, 120) + ' / ' + (await text(page, '#msgList')).slice(0, 120));
+    check('and its heading is not reported as a broken row (' + tool + ')',
+      !/problem lines/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
+  }
+  for (const [tool, csv] of [
+    ['Safe airdrop', 'token_type,token_address,receiver,amount,id\nnft,0x11,' + A1 + ',1,251\nnft,0x11,' + B2 + ',1,252\n'],
+    ['Moralis/Alchemy', 'owner_address,token_id,amount\n' + A1 + ',251,1\n' + B2 + ',252,1\n'],
+    ['OpenSea', 'Owner,Token ID\n' + A1 + ',251\n' + B2 + ',252\n'],
+    ['disperse.app equals', A1 + '=251\n' + B2 + '=252\n'],
+    ['disperse.app spaces', A1 + ' 251\n' + B2 + ' 252\n'],
+  ]) {
+    await setList(page, csv);
+    check('a file from ' + tool + ' is read as two deliveries',
+      /2 recipients/.test(await text(page, '#parseOut')), tool + ' -> ' + (await text(page, '#parseOut')).slice(0, 80));
+  }
+  for (const [tool, csv] of [
+    ['Premint', 'wallet_address\n' + A1 + '\n' + B2 + '\n'],
+    ['Dune', 'wallet,nfts_held\n' + A1 + '\n' + B2 + '\n'],
+  ]) {
+    await setList(page, csv);
+    check('a bare wallet list from ' + tool + ' offers to fill the ids in',
+      /wallets, no token ids yet/.test(await text(page, '#parseOut')), tool + ' -> ' + (await text(page, '#parseOut')).slice(0, 80));
+  }
+  // and the reason the whole-word rule exists: "to" must not be found inside "tokenId"
+  await setList(page, 'tokenId,amount,address\n251,1,' + A1 + '\n252,1,' + B2 + '\n');
+  check('a column called tokenId is never mistaken for the address column',
+    /2 recipients/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
+  await page.close();
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

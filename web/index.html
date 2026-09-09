@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-Qr/00JnZdJ6KNSIR+pJDTFc0XWdGnvt+Qxjr9ZzOO/o='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-FyxKlNfrU6reM17FEPRaROy4DgQzPTHKichG0JDRc38='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -530,12 +530,16 @@
   // Other airdrop tools export a header row and read columns by name, so the order varies and "quantity"
   // means how many, not which id. Reading positionally would take a quantity column for a token id.
   const COLS = {
+    // Names taken from what other chains' snapshot and airdrop tools actually export, not invented here:
+    // Etherscan (HolderAddress), Blockscout (Address), Safe (receiver), thirdweb (address), Dune (wallet),
+    // Moralis/Alchemy (owner_address), OpenSea (Owner), Premint (wallet_address), snapshot.org (voter).
     to:  ['address', 'addresses', 'wallet', 'wallets', 'walletaddress', 'recipient', 'recipients',
-          'recipientaddress', 'receiver', 'to', 'holder', 'holders', 'owner', 'account', 'addr', 'user',
-          'useraddress', 'destination', 'beneficiary'],
+          'recipientaddress', 'receiver', 'to', 'holder', 'holders', 'holderaddress', 'owner', 'owners',
+          'owneraddress', 'account', 'addr', 'user', 'useraddress', 'destination', 'beneficiary', 'voter'],
     id:  ['tokenid', 'token_id', 'token id', 'id', 'ids', 'nftid', 'nft_id', 'nft', 'nftnumber', 'tokenids',
           'token', 'tokennumber', 'edition', 'serial'],
-    qty: ['amount', 'amounts', 'quantity', 'qty', 'value', 'count', 'tokens', 'number', 'num', 'howmany'],
+    qty: ['amount', 'amounts', 'quantity', 'qty', 'value', 'count', 'tokens', 'number', 'num', 'howmany',
+          'balance', 'balances', 'held', 'vp', 'votingpower', 'weight', 'shares'],
   };
   // RFC 4180: quoted fields may contain the separator, and "" is a literal quote. Splitting on punctuation
   // turns "1,234.5" into two cells and silently changes what someone is sending.
@@ -547,7 +551,9 @@
         if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
         else cur += c;
       } else if (c === '"') inQ = true;
-      else if (c === ',' || c === '\t' || c === ';') { out.push(cur); cur = ''; }
+      // `=` is how disperse.app writes a pair, and it appears in lists people bring from other chains. No
+      // address and no amount contains one, so reading it as a separator cannot change what a line means.
+      else if (c === ',' || c === '\t' || c === ';' || c === '=') { out.push(cur); cur = ''; }
       else cur += c;
     }
     out.push(cur);
@@ -665,7 +671,12 @@
     // column, because "to" is inside "tokenid" -- so a file headed `tokenId,amount,address` had its ids read
     // as recipients and every row rejected. Whole names first, then whole words; never a fragment.
     const map = {};
-    const words = cells.map((c, i) => String(raw[i] || '').toLowerCase().split(/[^a-z]+/).filter(Boolean));
+    // "HolderAddress" is Etherscan's column and it carries no separator at all, so splitting on punctuation
+    // alone sees one unknown word. A capital following a lower-case letter is a word boundary too. This stays
+    // a whole-word rule: it is why "tokenId" reads as token + id and never lends its "to" to the address
+    // column, which a plain substring test did.
+    const words = cells.map((c, i) => String(raw[i] || '')
+      .replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z]+/).filter(Boolean));
     cells.forEach((c, i) => {
       for (const key of Object.keys(COLS)) {
         if (map[key] !== undefined) continue;
@@ -830,7 +841,7 @@
       const t = line.trim(); if (!t) return;
       const isFirst = i === lines.findIndex((x) => x.trim());
       if (isFirst && looksLikeHeading(t)) { headers++; return; }
-      const parts = t.split(/[,\t;]+|\s+/).filter(Boolean);
+      const parts = t.split(/[,\t;=]+|\s+/).filter(Boolean);
       const addr = parts[0];
       if (!ethers.isAddress(addr)) {
         // On the first line the honest answer is that it could be either thing, so say both. Choosing
