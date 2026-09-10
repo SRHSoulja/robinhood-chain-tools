@@ -62,9 +62,14 @@ fi
 say ""
 say "=== the probes: is everything that was fixed still fixed ==="
 count_probe() { node "$1" 2>/dev/null | grep -oE '^[0-9]+ demonstrated' | grep -oE '^[0-9]+' | tail -1; }
-now_airdrop="$(count_probe test/web/audit-probe.mjs)"
-now_check1="$(count_probe test/web/audit-probe-check.mjs)"
-now_check2="$(count_probe test/web/audit-probe-check2.mjs)"
+web_probe_files=""
+for f in test/web/audit-probe*.mjs; do
+  [ -e "$f" ] || continue
+  n="$(basename "$f" .mjs)"
+  c="$(count_probe "$f")"
+  eval "now_web_${n//-/_}=\${c:-999}"
+  web_probe_files="$web_probe_files $n"
+done
 rm -f /tmp/rh-probe-sol.txt
 probe_files=""
 for f in test/Audit*.t.sol; do
@@ -75,17 +80,23 @@ for f in test/Audit*.t.sol; do
   eval "now_probe_$n=\${c:-0}"
   probe_files="$probe_files $n"
 done
-now_sol="${now_probe_AuditProbe:-0}"
 
 if [ ! -f "$BASELINE" ]; then
+  # Written from this run only if there is nothing to compare against yet. It is deliberately not a repair:
+  # a baseline that rewrites itself whenever the numbers move is a baseline that can never fail.
   say "  no baseline yet; writing one from this run. Check these numbers before trusting them."
-  printf '{\n "airdrop": %s,\n "check1": %s,\n "check2": %s,\n "contract_still_passing": %s\n}\n' \
-    "${now_airdrop:-0}" "${now_check1:-0}" "${now_check2:-0}" "${now_sol:-0}" > "$BASELINE"
+  {
+    printf '{\n "_why": "written by verify.sh with no baseline present; check these before trusting them",\n'
+    printf ' "contract_probes": {'
+    sep=""
+    for n in $probe_files; do eval "v=\$now_probe_$n"; printf '%s\n  "%s": %s' "$sep" "$n" "${v:-0}"; sep=","; done
+    printf '\n },\n "web_probes": {'
+    sep=""
+    for n in $web_probe_files; do eval "v=\$now_web_${n//-/_}"; printf '%s\n  "%s": %s' "$sep" "$n" "${v:-0}"; sep=","; done
+    printf '\n }\n}\n'
+  } > "$BASELINE"
 fi
 
-read -r was_airdrop was_check1 was_check2 was_sol <<EOF
-$(python3 -c "import json;d=json.load(open('$BASELINE'));print(d['airdrop'],d['check1'],d['check2'],d['contract_still_passing'])")
-EOF
 
 check_set() {
   local name="$1" now="$2" was="$3" dir="$4"
@@ -107,9 +118,17 @@ check_set() {
     fi
   fi
 }
-check_set "airdrop page" "$now_airdrop" "$was_airdrop" down
-check_set "check page, set one" "$now_check1" "$was_check1" down
-check_set "check page, set two" "$now_check2" "$was_check2" down
+for n in $web_probe_files; do
+  eval "now=\$now_web_${n//-/_}"
+  was="$(python3 -c "import json;d=json.load(open('$BASELINE')).get('web_probes',{});print(d.get('$n','none'))")"
+  if [ "$was" = "none" ]; then
+    say "  FAIL  browser probes $n: $now reproduce, and the baseline has never heard of this file."
+    say "        Add \"$n\" to web_probes in $BASELINE, with the count this run should hold at."
+    fail=1
+  else
+    check_set "browser probes $n" "$now" "$was" down
+  fi
+done
 for n in $probe_files; do
   eval "now=\$now_probe_$n"
   was="$(python3 -c "import json,sys;d=json.load(open('$BASELINE')).get('contract_probes',{});print(d.get('$n','none'))")"

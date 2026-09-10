@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-EdGdQtkBFgviWBEWVJUdOi/PpCxAQokBPTKpv4R8DBs='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-IM39t4xONitVYYmBX6GbW+jvysak/ELLMUBx1klhFw4='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -321,7 +321,17 @@
   // the tokenised equities among them at 57,318 each. An average would be wrong half the time and would not
   // say which half.
   const fallbackPer = () => (std() === '20' ? 57500 : std() === '1155' ? 76000 : 153000);
-  const gasPerRecipient = () => perRecipient || fallbackPer();
+  // What the sender is quoted, which is not the same as what was measured. measuredCap() divides the measured
+  // figure by PROBE_MARGIN before deciding how many fit in a transaction, for the reason written above it:
+  // the probe measures a transfer made BY THE OWNER and BulkSend makes it AS AN OPERATOR, and an
+  // OperatorFilterer collection charges 12-25% more on the operator path, undetectably from outside. The cap
+  // carried that margin and the price did not, so the one number a sender uses to decide whether they can
+  // afford the airdrop was understated by up to a quarter. Both ends of the same measurement now agree.
+  //
+  // The fallback figures get no margin because they are not a measurement: each is the dearest token of its
+  // kind found alive on this chain, already an upper bound, and multiplying a bound by a margin invents a
+  // number nothing supports. Either way what is quoted is a ceiling, which is why it is labelled "at most".
+  const gasPerRecipient = () => (perRecipient ? Math.ceil(perRecipient * PROBE_MARGIN) : fallbackPer());
   // 200 is not a round number. It is the largest batch that the dearest collection measured on this chain
   // (152,843 gas a recipient) still fits inside one transaction, with about 4% to spare. It is what the page
   // falls back to when it could not measure. When it could, the token's own number decides, and a cheap
@@ -1523,11 +1533,24 @@
   // writes is one nothing will ever read again.
   const runKey = () => sendRunKey || computeRunKey();
   // bulksend:<chain>:<account>:<token>:<standard>
+  // The sender belongs to the batch for the same reason the token and the standard do, and it is the half the
+  // round-eleven fix left behind: `from` was still read from the live `me` inside arrivalsFromReceipt, and
+  // reconcilePending runs at load with nothing connected, so every log was filtered out and every pending
+  // batch in the browser was reported as having delivered nothing. It failed held, which is the right
+  // direction, but it meant the load-time catch-up never caught anything up and told the user on every single
+  // page load to go and check a transaction about a problem that did not exist -- which is how someone learns
+  // to stop reading these messages, and one of them is real.
+  //
+  // Recorded on the entry now. `from` for both paths; `call.from` is where the bulk path has always kept it,
+  // and the run key's account segment is the last resort for a record written before any of this.
   function batchWasSentAs(e) {
-    if (e && e.token && e.std) return { token: e.token, std: e.std };
+    const from = String((e && e.from) || (e && e.call && e.call.from) || '').toLowerCase();
     const parts = String((e && e.run) || '').split(':');
-    if (parts.length === 5 && parts[0] === 'bulksend' && ethers.isAddress(parts[3]) && ['721', '1155', '20'].includes(parts[4]))
-      return { token: parts[3], std: parts[4] };
+    const keyed = parts.length === 5 && parts[0] === 'bulksend';
+    const fallbackFrom = keyed && ethers.isAddress(parts[2]) ? parts[2].toLowerCase() : '';
+    if (e && e.token && e.std) return { token: e.token, std: e.std, from: from || fallbackFrom };
+    if (keyed && ethers.isAddress(parts[3]) && ['721', '1155', '20'].includes(parts[4]))
+      return { token: parts[3], std: parts[4], from: from || fallbackFrom };
     return null;
   }
   // Both ends, always. A head-only "0x000000…" is the same string for every address in a list of test
@@ -1911,10 +1934,12 @@
         const rows = rowsFromJson(e.rows);
         let check = null, evidence = 'chain';
         const sentAs = batchWasSentAs(e);
-        if (e.hash && sentAs) {
+        // Without a recorded sender the events cannot be attributed, so this falls through to the ownership
+        // read rather than reading every log as though this account had made it.
+        if (e.hash && sentAs && sentAs.from) {
           try {
             const rc = await new ethers.JsonRpcProvider(cfg().rpc).getTransactionReceipt(e.hash);
-            if (rc) { const byEvent = arrivalsFromReceipt(rc, rows, sentAs.token, sentAs.std); check = { arrived: byEvent.arrived }; evidence = 'events'; }
+            if (rc) { const byEvent = arrivalsFromReceipt(rc, rows, sentAs.token, sentAs.std, sentAs.from); check = { arrived: byEvent.arrived }; evidence = 'events'; }
           } catch (err) { /* fall through to the ownership read, which works for 721 */ }
         }
         if (!check) {
@@ -1995,7 +2020,7 @@
       ['network', c.name],
       ['sent by', how],
       ['', n + ' recipients in ' + batches + ' transaction' + (batches === 1 ? '' : 's')],
-      [perRecipient ? 'about' : 'at most', costLine(n)],
+      ['at most', costLine(n)],
     ]);
     const strictSplit = !lenient() && batches > 1;
     if (strictSplit) ready = false;
@@ -2053,8 +2078,11 @@
       + 'transaction fails, because a failure takes its own batch down and nothing else. On a thousand NFTs '
       + 'the difference between 400 at a time and 100 is about 8%. '
       + (perRecipient
-          ? 'This collection was measured rather than assumed: about ' + perRecipient.toLocaleString()
+          ? 'This collection was measured rather than assumed: about ' + Math.ceil(perRecipient * PROBE_MARGIN).toLocaleString()
             + ' gas a wallet, so at most ' + cap + " fit inside one transaction's 32,000,000 gas. "
+            + 'That is the ' + perRecipient.toLocaleString() + ' the chain quoted for moving it as its owner, plus '
+            + Math.round((PROBE_MARGIN - 1) * 100) + '%: this page moves it as an operator, and some collections charge more for that in a '
+            + 'way nothing outside them can see. Both the cost above and the batch size come from the larger figure. '
           : (probeRefused
               ? 'The chain answered when asked what this collection costs, and the answer was too small to be '
                 + 'real, so it has not been used. The figures above are the dearest token of its kind found '
@@ -2080,7 +2108,7 @@
     const gas = BigInt(n) * BigInt(gasPerRecipient()) + batches * BigInt(TX_BASE);   // the base cost is per transaction, not per recipient
     if (!gasPriceWei || gasPriceFor !== chainId()) return gas.toLocaleString() + ' gas in total';
     const wei = gas * gasPriceWei; const eth = Number(ethers.formatEther(wei));
-    const usd = ethUsd ? ' (about $' + (eth * ethUsd).toFixed(2) + ')' : '';
+    const usd = ethUsd ? ' (about $' + (eth * ethUsd).toFixed(2) + ')' : '';   // "about" is the price, not the gas
     return eth.toFixed(5) + ' ETH in gas' + usd;
   }
 
@@ -2255,9 +2283,10 @@
   // account, token and standard -- so reading the live form here judged a 721 batch by the ERC-20 rules and
   // hit `0n + undefined`, a TypeError that escaped runSend entirely: the user pressed Send, nothing was sent,
   // and nothing was said. Every time, and no remedy on the page cleared it.
-  function arrivalsFromReceipt(rc, rows, forToken, forStd) {
+  function arrivalsFromReceipt(rc, rows, forToken, forStd, forFrom) {
     const token = String(forToken).trim().toLowerCase();
     const st = forStd;
+    const from = String(forFrom || '').toLowerCase();
     const addr = (t) => ethers.getAddress('0x' + String(t).slice(26)).toLowerCase();
     const seen = [];
     for (const l of (rc.logs || [])) {
@@ -2266,7 +2295,6 @@
       // Only what THIS sender moved. A token that credits the recipient from somewhere else inside the same
       // transaction -- a reflection, a mint, a rebase -- used to count toward what this batch delivered, so a
       // row could be recorded as paid on the strength of a transfer nobody here made.
-      const from = String(me || '').toLowerCase();
       if (t0 === TOPIC_TRANSFER && l.topics.length === 4) {
         if (addr(l.topics[1]) !== from) continue;
         seen.push({ kind: '721', to: addr(l.topics[2]), id: BigInt(l.topics[3]).toString() });
@@ -2306,15 +2334,21 @@
   // ---- what one BulkSend receipt actually says ----
   // Used both by the send loop and, later, by the catch-up that reads a receipt this browser never saw.
   const BULK_IFACE = new ethers.Interface(BULK_ABI);
-  function readBatchReceipt(rc, chunk, bulkAddr) {
+  // forToken/forStd/forFrom describe the batch that was SENT. This used to read $('token').value, std() and
+  // `me`, which are correct in the send loop -- the form is locked there -- and wrong everywhere else.
+  // reconcilePending walks every pending record in this browser, so any record whose token, standard or
+  // sender was not what the form happened to be showing failed every event match, came back ambiguous, and
+  // produced "cannot be read back line by line ... check it on the explorer" on every load. That is a claim
+  // about the receipt, and the receipt was fine: the page looked at it with the wrong token in its hand.
+  function readBatchReceipt(rc, chunk, bulkAddr, forToken, forStd, forFrom) {
     const skippedIdx = new Set(); const notes = []; let sent = 0, skipped = 0, ambiguous = false;
     // A recipient's receive hook runs in the middle of the batch, and a hostile one used to be able to call
     // BulkSend again and emit real events from the real address naming the row it was being paid for. The
     // contract now refuses to run inside itself, and this reads the receipt as though it did not: every event
     // has to be about this token, from this sender, and the numbers have to add up to the batch that was sent.
-    const token = String($('token').value.trim()).toLowerCase();
-    const mine = String(me || '').toLowerCase();
-    const wantSummary = std() === '721' ? 'Airdrop721' : std() === '1155' ? 'Airdrop1155' : 'Airdrop20';
+    const token = String(forToken).trim().toLowerCase();
+    const mine = String(forFrom || '').toLowerCase();
+    const wantSummary = forStd === '721' ? 'Airdrop721' : forStd === '1155' ? 'Airdrop1155' : 'Airdrop20';
     let summaries = 0;
     for (const l of rc.logs) {
       if (String(l.address).toLowerCase() !== String(bulkAddr).toLowerCase()) continue;   // only this contract's own events count
@@ -2426,7 +2460,7 @@
       // and this is the same check the live path makes rather than a looser one.
       const settle = async (candidates, label) => {
         // The receipt is the record of that transaction, so the token's own events in it are the evidence.
-        const byEvent = arrivalsFromReceipt(rc, candidates, sentAs.token, sentAs.std);
+        const byEvent = arrivalsFromReceipt(rc, candidates, sentAs.token, sentAs.std, sentAs.from);
         const ok = byEvent.arrived;
         const rest = byEvent.unknown;
         if (!(await commitDelivered(e.run, e.pid, ok, rest))) return false;
@@ -2440,8 +2474,16 @@
         }
         return true;
       };
+      // A record written before this page recorded senders cannot have its transfers attributed: every
+      // Transfer log in that receipt would have to be taken on trust, and a token that credits a recipient
+      // from somewhere else in the same transaction would then read as this batch having paid them. Held,
+      // and said plainly, rather than guessed at from whoever happens to be connected now.
+      if (!sentAs.from) {
+        if (!quiet) log('A batch of ' + chunk.length + ' from ' + new Date(e.at).toLocaleString() + ' does not record who sent it, so the transfers in its transaction cannot be attributed to it. Those recipients stay held back. Open the transaction on the explorer, and use "Forget what was delivered" only for rows you can see did not land.', 'warn', lookFor);
+        continue;
+      }
       if (e.via === 'wallet') { await settle(chunk, 'a batch your wallet sent'); continue; }
-      const r = readBatchReceipt(rc, chunk, e.bulk);
+      const r = readBatchReceipt(rc, chunk, e.bulk, sentAs.token, sentAs.std, sentAs.from);
       if (r.ambiguous) { log('A batch from ' + new Date(e.at).toLocaleString() + ' cannot be read back line by line, so it is left alone. Check it on the explorer before sending to those wallets again.', 'bad', lookFor); continue; }
       await settle(r.delivered, 'a batch');
     }
@@ -2742,6 +2784,16 @@
   // ---- send ----
   $('send').addEventListener('click', async () => {
     if (sending) return;                       // a second click during the slow preflight used to send the whole list twice
+    // And `signing`, which this path did not consult. onlyOnce disables only its OWN button and calls plan()
+    // after its work settles, so while an approval prompt sat unanswered in the wallet, Send was still
+    // enabled. Pressing it raised a second prompt from one page. Usually the run stopped itself, because the
+    // preflight saw the approval had not landed -- but on an account already approved for the collection it
+    // went ahead, which is the one case where it matters. The same guard, on every path that signs.
+    if (signing) {
+      log('Your wallet already has a request from this page waiting. Answer or dismiss that one first: '
+        + 'starting a send now would put a second prompt behind it, and answering both does both.', 'warn');
+      return;
+    }
     lockForm(true); $('send').disabled = true; $('preflight').disabled = true; $('approve').disabled = true;
     try { await runSend(); } finally { lockForm(false); $('stop').disabled = true; plan(); }
   });
@@ -2912,7 +2964,7 @@
           log('  no confirmation after three minutes. If this is a multisig wallet, the batch is waiting for the other signers and will go out when they approve. Those recipients are held back until this page can read the receipt, so reloading will not send them again.', 'bad', tx.hash);
           break;
         }
-        const r = readBatchReceipt(rc, chunk, bulkAddr);
+        const r = readBatchReceipt(rc, chunk, bulkAddr, $('token').value.trim(), std(), String(me || '').toLowerCase());
         for (const [m, cls] of r.notes) log(m, cls);
         skippedRows.push(...r.skippedRows);
         if (r.ambiguous) {
@@ -2973,7 +3025,7 @@
         const id = typeof res === 'string' ? res : (res && res.id);
         if (!id) { log('  the wallet did not return a batch id, so this cannot be tracked. Check your wallet and the explorer before sending again.', 'bad'); break; }
         const pid = newPid();
-        if (!addPending({ pid, run: ledgerKey(), chain: chainId(), bulk: null, hash: null, callsId: String(id), at: Date.now(), rows: rowsToJson(chunk), via: 'wallet', token: $('token').value.trim(), std: std() })) {
+        if (!addPending({ pid, run: ledgerKey(), chain: chainId(), bulk: null, hash: null, callsId: String(id), at: Date.now(), rows: rowsToJson(chunk), via: 'wallet', token: $('token').value.trim(), std: std(), from: String(me || '').toLowerCase() })) {
           log('  this browser stopped saving, and that batch has already gone to your wallet. Nothing more will be sent. Check your wallet before sending to these wallets again.', 'bad');
           break;
         }
@@ -3131,6 +3183,9 @@
   window.__readBatchReceipt = readBatchReceipt;
   window.__loadPendingForTest = loadPending;
   window.__arrivalsFromReceipt = arrivalsFromReceipt;
+  // The measurement and the two numbers derived from it, so a test can check they agree. They disagreed for a
+  // while: the cap divided by PROBE_MARGIN and the price did not, and nothing on the page showed both.
+  window.__gasQuote = () => ({ measured: perRecipient, margin: PROBE_MARGIN, quotedPer: gasPerRecipient(), cap: maxBatch(), txBase: TX_BASE });
   window.ethers = window.ethers || ethers;
 
   // a link to the verified source, so "trust me" is checkable

@@ -830,11 +830,121 @@ async function freshBrowser() {
       { address: bulk, topics: outer.topics, data: outer.data },
     ] };
     const chunk = [{ to, id: 7n, amount: 3n, k: 'x#1' }];
-    const r = window.__readBatchReceipt(rc, chunk, bulk);
-    return { ambiguous: r.ambiguous, sent: r.sent, skipped: r.skipped, delivered: r.delivered.length };
+    // The batch's own token, standard and sender are passed in (S-12). Before that these were read from the
+    // live form, and this call left them out -- which after the signature changed would have made the whole
+    // receipt unreadable for the wrong reason and let this test keep passing while proving nothing.
+    const r = window.__readBatchReceipt(rc, chunk, bulk, ed, '1155', me);
+    // The control: the same receipt, read correctly, must NOT be ambiguous. Without this, every future
+    // mistake in this function reads as a pass, because "refused" is what the test wants to see.
+    const s2 = iface.encodeEventLog('Skipped', [ed, to, 7n, 3n, '0x']);
+    const one = iface.encodeEventLog('Airdrop1155', [ed, me, 0n, 1n]);
+    const honest = { logs: [
+      { address: bulk, topics: s2.topics, data: s2.data },
+      { address: bulk, topics: one.topics, data: one.data },
+    ] };
+    const good = window.__readBatchReceipt(honest, chunk, bulk, ed, '1155', me);
+    return { ambiguous: r.ambiguous, sent: r.sent, skipped: r.skipped, delivered: r.delivered.length,
+             honestAmbiguous: good.ambiguous, honestSkipped: good.skipped };
   }, [BULK, ED, A(0xdead)]);
   check('T-H-01 a receipt whose numbers do not describe the batch is refused',
     injected && injected.ambiguous === true, JSON.stringify(injected));
+  check('T-H-01 control: the same receipt with one honest summary is read, not refused',
+    injected && injected.honestAmbiguous === false && injected.honestSkipped === 1, JSON.stringify(injected));
+  await page.close();
+}
+
+// ---- S-14: one guard, on every path that signs -------------------------------------------------------
+{
+  // onlyOnce disables only its OWN button and calls plan() after its work settles, so an approval prompt
+  // sitting unanswered in the wallet left Send enabled. Pressing it raised a second prompt from one page.
+  const page = await open(browser, { slowMethod: { method: 'eth_sendTransaction', ms: 8000 } });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x41) + ',7\n');
+  const approveUsable = !(await page.evaluate(() => document.querySelector('#approve').disabled));
+  check('S-14 there is an approval to make, so this test is testing something', approveUsable);
+  await page.click('#approve');
+  await page.waitForTimeout(900);                       // the wallet now has an unanswered request
+  const sendEnabled = !(await page.evaluate(() => document.querySelector('#send').disabled));
+  check('S-14 Send is still clickable while an approval is outstanding, which is why the guard is needed',
+    sendEnabled);
+  const before = await page.evaluate(() => (window.__sentCount === undefined ? null : window.__sentCount));
+  await page.click('#send'); await page.waitForTimeout(1200);
+  const logText = await text(page, '#log');
+  check('S-14 pressing Send while a request is waiting is refused, and says why',
+    /already has a request from this page waiting/.test(logText), logText.slice(-260));
+  check('S-14 and the form is not locked by the refusal, so the page is still usable',
+    !(await page.evaluate(() => document.querySelector('#token').disabled)));
+  await page.close();
+}
+
+// ---- S-13: the price quoted to the sender carries the same margin the batch cap gets -------------------
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#list', [A(0x111) + ',1', A(0x222) + ',2'].join('\n'));
+  await page.click('#parse'); await page.waitForTimeout(1200);
+  const q = await page.evaluate(() => window.__gasQuote());
+  check('S-13 the collection was measured', q && typeof q.measured === 'number' && q.measured > 0, JSON.stringify(q));
+  // The probe measures a transfer made by the OWNER; BulkSend makes it as an OPERATOR, and an
+  // OperatorFilterer collection charges 12-25% more on that path, undetectably from outside. The cap has
+  // always carried that margin. The price the sender reads before deciding whether they can afford the
+  // airdrop did not, so it was understated by up to a quarter.
+  check('S-13 the quoted per-recipient gas carries the margin, like the cap',
+    q && q.quotedPer === Math.ceil(q.measured * q.margin), JSON.stringify(q));
+  check('S-13 and the cap is still derived from the same margined figure',
+    q && q.cap === Math.min(400, Math.max(1, Math.floor(30000000 / (q.measured * q.margin)))), JSON.stringify(q));
+  const plan = await text(page, '#plan');
+  check('S-13 the cost is labelled a ceiling rather than an estimate',
+    /at most/.test(plan) && !/\babout\s+[\d.]+\s*ETH/.test(plan), plan.slice(0, 200));
+  const note = await text(page, '#batchNote');
+  // The figure this sentence leads with is what a sender reads as the per-wallet cost, so it has to be the
+  // one the page works from. It also has to make the rest of the sentence true: 40,000 x 400 is 16,000,000,
+  // not the 32,000,000 the same sentence claims they fit inside.
+  const lead = (note.match(/about ([\d,]+) gas a wallet/) || [])[1];
+  check('S-13 the note leads with the figure the page actually works from, not the raw measurement',
+    lead && Number(lead.replace(/,/g, '')) === q.quotedPer, JSON.stringify({ lead, ...q }));
+  check('S-13 and the measurement is still named, as what the chain quoted for an owner transfer',
+    note.includes(q.measured.toLocaleString() + ' the chain quoted'), note.slice(-260));
+  await page.close();
+}
+
+// ---- S-12: the reader takes the batch's token and sender, not whatever the form is showing --------------
+{
+  const page = await open(browser, { approved: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, ED, '1155');            // the form now shows the EDITION contract
+  const BULK = await bulkAddress(page);
+  const v = await page.evaluate(([bulk, ed, nft, me, other]) => {
+    const iface = new window.ethers.Interface([
+      'event Skipped(address indexed token, address indexed to, uint256 id, uint256 amount, bytes reason)',
+      'event Airdrop721(address indexed token, address indexed from, uint256 sent, uint256 skipped)',
+    ]);
+    const to = '0x00000000000000000000000000000000000000d4';
+    // A perfectly ordinary 721 batch: one row, skipped, one summary. It is about a DIFFERENT token and a
+    // DIFFERENT standard than the form is showing, which is the situation reconcilePending is always in.
+    const sk = iface.encodeEventLog('Skipped', [nft, to, 7n, 0n, '0x']);
+    const sum = iface.encodeEventLog('Airdrop721', [nft, me, 0n, 1n]);
+    const rc = { logs: [{ address: bulk, topics: sk.topics, data: sk.data },
+                        { address: bulk, topics: sum.topics, data: sum.data }] };
+    const chunk = [{ to, id: 7n, k: 'y#1' }];
+    return {
+      // Read with the batch's own values: legible.
+      asSent: window.__readBatchReceipt(rc, chunk, bulk, nft, '721', me).ambiguous,
+      // Read with the form's values, which is what this function used to do: unreadable, and the page then
+      // told the user to go and check a transaction that was fine.
+      asForm: window.__readBatchReceipt(rc, chunk, bulk, ed, '1155', me).ambiguous,
+      // And a batch sent by another account is still not attributed to this one.
+      asOther: window.__readBatchReceipt(rc, chunk, bulk, nft, '721', other).ambiguous,
+    };
+  }, [BULK, ED, NFT, A(0xdead), A(0xfeed)]);
+  check('S-12 a receipt is read against the batch that was sent, not the form on screen',
+    v && v.asSent === false, JSON.stringify(v));
+  check('S-12 control: reading it against the form is what made it unreadable',
+    v && v.asForm === true, JSON.stringify(v));
+  check('S-12 and a batch sent by a different account is still not read as this one\'s',
+    v && v.asOther === true, JSON.stringify(v));
   await page.close();
 }
 
@@ -2295,15 +2405,23 @@ async function freshBrowser() {
       const rows = [{ to: recipient, amount: 5n }];
       const log = (from) => ({ address: tok, topics: [TRANSFER, pad(from), pad(recipient)],
                                data: '0x' + (5n).toString(16).padStart(64, '0') });
+      // The sender is passed in, like the token and the standard, because it belongs to the batch that was
+      // sent rather than to whoever is connected when this runs (S-11). Reading it from the live account
+      // meant the load-time catch-up, which runs with nothing connected, filtered out every log.
       return {
-        fromSomeoneElse: window.__arrivalsFromReceipt({ logs: [log(other)] }, rows, tok, '20').arrived.length,
-        fromTheSender:   window.__arrivalsFromReceipt({ logs: [log(me)] }, rows, tok, '20').arrived.length,
+        fromSomeoneElse: window.__arrivalsFromReceipt({ logs: [log(other)] }, rows, tok, '20', me).arrived.length,
+        fromTheSender:   window.__arrivalsFromReceipt({ logs: [log(me)] }, rows, tok, '20', me).arrived.length,
+        // S-11: with no sender recorded nothing can be attributed, and it must hold rather than count
+        // everything as delivered.
+        withNoSenderRecorded: window.__arrivalsFromReceipt({ logs: [log(me)] }, rows, tok, '20', '').arrived.length,
       };
     }, [TOK, A(0xdead), A(0xfeed)]);
     check('S-14 a transfer made by someone else does not count as this batch delivering',
       verdict.fromSomeoneElse === 0, JSON.stringify(verdict));
     check('S-14 and a transfer this sender really made still does',
       verdict.fromTheSender === 1, JSON.stringify(verdict));
+    check('S-11 a batch with no recorded sender attributes nothing, rather than everything',
+      verdict.withNoSenderRecorded === 0, JSON.stringify(verdict));
     await page.close();
   }
   {

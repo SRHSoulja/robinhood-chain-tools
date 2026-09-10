@@ -1,11 +1,13 @@
 {
- "_why": "The reviewers' probes reproduce findings, so for the browser sets a LOWER number is better and a higher one means something closed has reopened. The contract set is written the other way round: its probes are forge tests that PASS while the defect exists, so there a higher number is the regression. Update these only when the change is deliberate and the reason is in the commit. contract_probes holds one entry per test/Audit*.t.sol; a probe file the baseline has never heard of fails the run, because round twelve added one and nothing was watching it.",
- "airdrop": 8,
- "check1": 0,
- "check2": 1,
- "contract_still_passing": 15,
+ "_why": "The reviewers' probes reproduce findings, so for the browser sets a LOWER number is better and a higher one means something closed has reopened. The contract set is written the other way round: its probes are forge tests that PASS while the defect exists, so there a higher number is the regression. Update these only when the change is deliberate and the reason is in the commit. web_probes holds one entry per test/web/audit-probe*.mjs and contract_probes one per test/Audit*.t.sol; a probe file the baseline has never heard of FAILS the run, because both sets had a file nobody was watching -- named one by one rather than enumerated, so adding a file quietly added nothing.",
  "contract_probes": {
   "AuditProbe": 15,
   "Audit12": 5
+ },
+ "web_probes": {
+  "audit-probe": 8,
+  "audit-probe-check": 0,
+  "audit-probe-check2": 1,
+  "audit-probe-12": 4
  }
 }

@@ -10,9 +10,10 @@ bottom so anyone can repeat it and disagree with it.
 - **How many recipients that buys depends entirely on the collection**: measured across 58 live mainnet
   collections, between **209 and 765**.
 - **So the cap is measured, not chosen.** The page estimates one real transfer of the token you are sending
-  and derives the cap from that: `30,000,000 / (measured x 1.15)`, capped at 400. Against all 58 live
+  and derives the cap from that: `30,000,000 / (measured x 1.35)`, capped at 400. Against all 58 live
   collections that never picks a batch that cannot fit, and it gives 56 of the 58 more room than a flat 200
-  would. **200** is the fallback for a token that will not answer, because 200 is the number every one of the
+  would. The same margined figure is what the page quotes as the cost, so the price and the batch size come
+  from one number rather than two. **200** is the fallback for a token that will not answer, because 200 is the number every one of the
   58 clears. **25** when your wallet is sending the transfers as itself, because wallets refuse long batches.
 - **Bigger batches are cheaper, but not by much.** A thousand NFTs cost about 8% less delivered 400 at a time
   than 100 at a time. Delivered 25 at a time they cost 42% more.
@@ -156,10 +157,17 @@ collection and it knows an id the sender holds, so it asks the chain what one tr
 by this sender, to an address that has never held it. That single answer sets the cost estimate, the
 per-recipient figure and the cap.
 
-Checked against all 58: the cap it would choose fits every one of them, the two dearest getting 170 and 175
-against real maxima of 209 and 215, and 56 of the 58 getting more room than a flat 200. The 1.15 margin is
-not a round number either: measuring the same contract both ways, standalone and inside a batch, the
-derivation runs up to 5% light on a lazily-minted collection and up to 35% heavy on a plain one.
+Checked against all 58: the cap it would choose fits every one of them, and 56 of the 58 get more room than a
+flat 200 would.
+
+The margin is 1.35, and it was 1.15 first. 1.15 covered the direction that had been measured -- the same
+contract standalone against in-batch, where the derivation runs up to 5% light on a lazily-minted collection
+and up to 35% heavy on a plain one. It did not cover the direction that had not been measured. **The probe
+sends the token as its owner; BulkSend sends it as an operator.** A collection using the OperatorFilterer
+pattern charges a cold call into a registry on the operator path and nothing at all on the owner path: 5,000
+to 10,000 gas on a base of about 40,000, so 12-25%, against a 15% margin. Collections with a transfer
+validator are detected and routed away already; this pattern is not detectable from outside, so the margin
+has to carry it. At 1.35, 56 of the 58 still get the full 400.
 
 The old table survives only as a stopgap for the second before the answer arrives, and the page says which
 of the two it is looking at rather than presenting a guess as a measurement.
@@ -202,8 +210,10 @@ light. Measured both ways on the same contract:
 | ERC-721 | 51,984 | 38,610 | 35% heavy |
 | ERC721A | 53,944 | 56,618 | **5% light** |
 
-Only the lazily-minted case runs light, and by 5%. That is the entire reason the margin is 1.15 rather than
-1.0, and it is comfortably enough for the other three.
+Only the lazily-minted case runs light, and by 5%. That is why the margin cannot be 1.0. It is not why it is
+1.35: this table measures the same call made the same way, and the margin also has to cover a call made a
+*different* way, as an operator rather than as the owner, which this table cannot see at all. That is the
+12-25% described above, and it is the half that took the margin from 1.15 to 1.35.
 
 ## What is still not settled
 - **The ERC-1155 sample is six.** That is every one that was findable and measurable, and it is not enough
