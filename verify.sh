@@ -26,7 +26,7 @@ fail=0
 say() { printf '%s\n' "$*"; }
 
 say "=== the suites: does everything still work ==="
-forge test >/tmp/rh-forge.txt 2>&1
+forge test --no-match-path 'test/fork/*.t.sol' >/tmp/rh-forge.txt 2>&1
 forge_line="$(grep -E '^Ran .* test suites' /tmp/rh-forge.txt | tail -1)"
 # The reviewers' probe suite is expected to fail; every other contract suite is not.
 forge_bad="$(grep -cE '^\[FAIL' /tmp/rh-forge.txt || true)"
@@ -147,6 +147,8 @@ if [ "$fail" -eq 0 ]; then
   say ""
   say "Not covered by any of the above, and not claimed to be:"
   say "  - the live scripts (they need the network): live-chain, live-send, live-wallet-batch"
+  say "  - test/fork/, which asks the paste guards about REAL mainnet contracts on a read-only local fork:"
+  say "      forge test --match-path 'test/fork/MainnetGuards.t.sol'"
   say "  - anything against a real wallet extension. The maintainer has driven the page from a phone with"
   say "    MetaMask once, by hand, against a pre-v10 contract. Nothing automatic covers it."
 else

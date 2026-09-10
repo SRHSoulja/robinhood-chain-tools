@@ -296,7 +296,7 @@ contract BulkSend {
         if (n != amounts.length) revert LengthMismatch();
         if (n == 0) revert EmptyBatch();
         _mustBeContract(token);
-        _mustNotBeNft(token, amounts[0]);
+        _mustNotBeNft(token, amounts[0], amounts[n - 1]);
         for (uint256 i; i < n;) {
             address dst = to[i];
             if (dst == address(this)) revert SelfRecipient(i);
@@ -435,8 +435,25 @@ contract BulkSend {
     ///      IDS as amounts -- NFTs leave the sender, and the counter and the Airdrop20 event both report a
     ///      token airdrop that never happened. v11 closed this direction for airdrop721 and left the mirror.
     ///      It cannot be perfect: a hybrid can answer both. Neither can _mustBeNft, for the same reason.
-    function _mustNotBeNft(address token, uint256 probeAmount) internal view {
-        if (_answersOwnerOf(token, probeAmount)) revert IsAnNft(token);
+    ///
+    ///      v12 called this a mirror and it was not one. _mustBeNft had just been taught that probing a single
+    ///      id is not enough -- the id in hand can be burned or never minted -- and this was written the same
+    ///      day probing one value. Demonstrated on chain against v12: a sender holding ids 2 and 3, with id 1
+    ///      unminted, pasting the collection into the ERC-20 form emitted two real ERC-721 Transfer events and
+    ///      an Airdrop20(sent 2, skipped 1) in the same transaction. Two NFTs gone, called a token airdrop.
+    ///      So it is now the same shape as its twin, and the order is deliberate: supportsInterface is asked
+    ///      first because it is the only one of the three that does not depend on which ids the sender
+    ///      happened to type.
+    ///
+    ///      The cost is not symmetrical with _mustBeNft and that is worth stating. There the extra probes run
+    ///      only when the first one fails, so an ordinary airdrop never pays them. Here all three run on every
+    ///      ERC-20 batch: about three staticcalls, ~7,800 gas, against a batch that costs tens of millions.
+    function _mustNotBeNft(address token, uint256 probeA, uint256 probeB) internal view {
+        (bool ok165, bytes memory r165) =
+            token.staticcall(abi.encodeWithSelector(0x01ffc9a7, bytes4(0x80ac58cd)));   // supportsInterface(ERC721)
+        if (ok165 && r165.length == 32 && abi.decode(r165, (uint256)) == 1) revert IsAnNft(token);
+        if (_answersOwnerOf(token, probeA)) revert IsAnNft(token);
+        if (probeB != probeA && _answersOwnerOf(token, probeB)) revert IsAnNft(token);
     }
 
     function _mustBeContract(address token) internal view {

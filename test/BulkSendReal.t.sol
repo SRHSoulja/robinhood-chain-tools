@@ -647,6 +647,77 @@ contract BulkSendRealTest is Test {
         assertEq(sent, 0); assertEq(skipped, 2, "two undeliverable rows, and the batch still ran");
     }
 
+    // ---- round thirteen B-1: the mirror was not a mirror ------------------------------------------------
+
+    /// The exact shape that got through v12, and it was demonstrated on chain before it was fixed here:
+    /// two real ERC-721 Transfer events and an Airdrop20(sent 2, skipped 1) in one transaction.
+    /// https://explorer.testnet.chain.robinhood.com/tx/0xc6b4cf63b9e63eea42950973f0c8269ccfbe0f9eb6cb5d889359a1063dad9295
+    function testERC721_throughTheErc20Path_whenTheFirstAmountIsNotALiveId() public {
+        OZ721 t = new OZ721();
+        t.mint(me, 2); t.mint(me, 3);                 // id 1 was never minted
+        address[] memory to = _to(3, 900);
+        uint256[] memory amt = new uint256[](3);
+        amt[0] = 1; amt[1] = 2; amt[2] = 3;           // token ids, read as amounts
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.IsAnNft.selector, address(t)));
+        bulk.airdrop20(address(t), to, amt, true);    // lenient: the mode that used to let it through
+        vm.stopPrank();
+        assertEq(t.ownerOf(2), me, "id 2 must not have moved");
+        assertEq(t.ownerOf(3), me, "id 3 must not have moved");
+    }
+
+    /// And with the missing id LAST, so neither end of the probe range is a live id. Only the
+    /// supportsInterface probe closes this one, which is why it is asked first.
+    function testERC721_throughTheErc20Path_whenNeitherProbedAmountIsALiveId() public {
+        OZ721 t = new OZ721();
+        t.mint(me, 5);                                 // 4 and 6 do not exist; only 5 does, and it is not probed
+        address[] memory to = _to(3, 902);
+        uint256[] memory amt = new uint256[](3);
+        amt[0] = 4; amt[1] = 5; amt[2] = 6;
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.IsAnNft.selector, address(t)));
+        bulk.airdrop20(address(t), to, amt, true);
+        vm.stopPrank();
+        assertEq(t.ownerOf(5), me, "id 5 must not have moved");
+    }
+
+    /// A collection that answers no introspection at all is still caught, as long as one probed amount is a
+    /// live id. That is the residual limit on this side, and it is the mirror of the one on the other.
+    function testBareRevert721_throughTheErc20Path_isCaughtByTheIdProbe() public {
+        BareRevert721NoIntrospection t = new BareRevert721NoIntrospection();
+        t.mint(me, 11);
+        address[] memory to = _to(2, 904);
+        uint256[] memory amt = new uint256[](2);
+        amt[0] = 11; amt[1] = 12;
+        vm.prank(me);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.IsAnNft.selector, address(t)));
+        bulk.airdrop20(address(t), to, amt, true);
+    }
+
+    /// The regression this could cause, and the one that matters most: an ordinary ERC-20 must still deliver.
+    /// Three extra staticcalls now run on every ERC-20 batch, so this asserts the happy path, not just refusal.
+    function testRealErc20_stillDeliversWithTheMirrorAsARealMirror() public {
+        OZ20 t = new OZ20(); t.mint(me, 100e18);
+        address[] memory to = _to(3, 906);
+        vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
+        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, _fill(3, 1e18), false);
+        vm.stopPrank();
+        assertEq(sent, 3); assertEq(skipped, 0);
+        for (uint256 i; i < 3; i++) assertEq(t.balanceOf(to[i]), 1e18);
+    }
+
+    /// A no-return ERC-20 (the USDT shape) must also still deliver: it is the token whose silence the guard
+    /// is distinguishing from an NFT's, so it is the one most likely to be caught by mistake.
+    function testNoReturn20_stillDeliversWithTheMirrorAsARealMirror() public {
+        NoReturn20 t = new NoReturn20(); t.mint(me, 100e18);
+        address[] memory to = _to(2, 908);
+        vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
+        (uint256 sent,) = bulk.airdrop20(address(t), to, _fill(2, 1e18), false);
+        vm.stopPrank();
+        assertEq(sent, 2);
+        for (uint256 i; i < 2; i++) assertEq(t.balanceOf(to[i]), 1e18);
+    }
+
     /// The residual limit, pinned deliberately: bare reverts AND no introspection is indistinguishable from a
     /// contract with no ownerOf, and the guard refuses it. Strict mode users of such a collection must send
     /// an id that exists in the same chunk, which the page's own test run tells them before they sign.
@@ -686,15 +757,17 @@ contract BulkSendRealTest is Test {
         assertEq(t.ownerOf(2), me);
     }
 
-    /// The guard probes ownerOf(amounts[0]), so it catches the dangerous shape -- amounts that are really
-    /// token ids -- and not an NFT address pasted with genuine 18-decimal amounts. That case is harmless
-    /// anyway: no such token id exists, so every transferFrom reverts and nothing leaves the wallet.
-    function testERC721_throughTheErc20Path_withRealAmounts_movesNothing() public {
+    /// An NFT pasted with genuine 18-decimal amounts. Round twelve asserted the weaker outcome this could
+    /// manage at the time -- the batch ran and every row was skipped, because the guard probed
+    /// ownerOf(amounts[0]) and no such id existed. Since B-1 the guard asks supportsInterface first, which
+    /// does not depend on the amounts, so the paste is refused before anything runs. Nothing moves either
+    /// way; the difference is that the sender is told what is wrong instead of receiving a batch of skips.
+    function testERC721_throughTheErc20Path_withRealAmounts_isRefusedOutright() public {
         OZ721 t = new OZ721(); t.mint(me, 1);
         vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
-        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), _to(2, 330), _fill(2, 1e18), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.IsAnNft.selector, address(t)));
+        bulk.airdrop20(address(t), _to(2, 330), _fill(2, 1e18), true);
         vm.stopPrank();
-        assertEq(sent, 0); assertEq(skipped, 2);
         assertEq(t.ownerOf(1), me, "the NFT must not have moved");
     }
 

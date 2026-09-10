@@ -41,6 +41,7 @@ So the sequencing follows two rules:
 | **Covers** | S-3 |
 | **Why first** | Everything after this is protected by it. Nothing before it is. |
 | **Done when** | CI runs `./verify.sh` (probes included) and `./test/csp-gate.test.sh` on every push, and a deliberately reopened finding turns CI red in a scratch branch. Verified by doing it, not by reading the workflow. |
+| **Status** | **done.** CI runs `preflight.sh` then `verify.sh`. Proved by reopening round twelve's S-7 on a branch and opening a PR: CI failed at the verify step with *"browser probes audit-probe-12: 1 findings reproduce, was 0. Something closed has come open again"*, while the same commit on `main` passed. PR closed unmerged, branch deleted. |
 
 CI currently runs `forge test --no-match-path 'test/Audit*.t.sol'` — it excludes every probe file. It also
 runs neither the CSP gate nor `preflight.sh`. A fresh clone has no `core.hooksPath`, so the pre-commit checks
