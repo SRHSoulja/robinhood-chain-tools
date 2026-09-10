@@ -20,6 +20,13 @@
 #   WC_BUNDLE_URL        optional. Where the worker fetches the WalletConnect bundle for /wc.js.
 #   ALLOW_CONNECTOR_GAP  set to 1 only for a first-ever deploy, where no origin copy can exist yet.
 #
+#   Bypasses. Every one of these weakens a check, all of them are read from deploy/local.env before any gate
+#   runs, and a flag left uncommented in that file is therefore permanent until someone notices. So each one
+#   announces itself on every run where it is in effect.
+#   NO_PHONE_WALLET      publish the airdrop page with no phone-wallet connector at all.
+#   ALLOW_DIRTY_PUBLISH  publish from a working tree with uncommitted changes, so the published bytes
+#                        correspond to no commit anyone can check out.
+#
 # Attaching a hostname to a worker is a one-off, separate from publishing:
 #   PUT https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/domains
 #   {"environment":"production","hostname":"<host>","service":"<worker name>","zone_id":"<zone>"}
@@ -27,6 +34,13 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -f "$ROOT/deploy/local.env" ] && . "$ROOT/deploy/local.env"
+
+# Announced before anything is published. These are read from local.env too, where one left uncommented would
+# otherwise stay in force for ever without appearing anywhere in the output.
+for f in NO_PHONE_WALLET ALLOW_DIRTY_PUBLISH ALLOW_CONNECTOR_GAP; do
+  eval "v=\${$f:-}"
+  [ -n "$v" ] && echo "BYPASS IN EFFECT: $f=$v  (this run skips a check it would otherwise make)" >&2
+done
 
 TARGET="${1:-}"
 case "$TARGET" in
@@ -315,7 +329,14 @@ if [ -z "$VERIFY" ]; then
   echo "No URL to verify against (URL_${TARGET^^} unset): the published bytes were not compared with this repository." >&2
 fi
 [ -n "$VERIFY" ] && { verify_body "$VERIFY" "$SRC" "page:" || FAILED=1; }
-if [ "$TARGET" = "airdrop" ] && [ -n "$VERIFY" ] && [ -f "$ROOT/web/wc.js" ]; then
+# Only when a connector was actually configured. This used to ask whether web/wc.js exists, so a deliberate
+# NO_PHONE_WALLET=1 publish -- a supported path this script tells you about itself -- exited 1 with
+# "connector: DOES NOT match" about something it was never asked to publish. A script that cries failure on
+# its own supported path trains whoever runs it to stop reading the exit code, and then it cannot report a
+# real failure either.
+if [ "$TARGET" = "airdrop" ] && [ -n "$VERIFY" ] && [ -n "${WC_BUNDLE_URL:-}" ] && [ -f "$ROOT/web/wc.js" ]; then
   verify_body "${VERIFY%/}/wc.js" "$ROOT/web/wc.js" "connector:" || FAILED=1
+elif [ "$TARGET" = "airdrop" ] && [ "${NO_PHONE_WALLET:-}" = "1" ]; then
+  echo "connector: not published and not checked, because NO_PHONE_WALLET=1 was set."
 fi
 exit $FAILED

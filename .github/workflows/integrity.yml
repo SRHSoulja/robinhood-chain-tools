@@ -5,6 +5,16 @@
 # and needs no secrets at all: if the live pages stop matching what is committed here, the job fails and
 # GitHub tells the maintainer. Someone who takes the Cloudflare account cannot quietly switch it off, and
 # someone who takes this repository cannot change the pages.
+#
+# Two things about a monitor that only e-mails one person, both of which bite hardest during exactly the
+# quiet stretch worth monitoring:
+#   - a failure went to one inbox and nowhere else, so nobody but the maintainer could see the state. The
+#     README now carries this workflow's badge, and a failure opens an issue, which is public and does not
+#     depend on anyone reading their mail.
+#   - GitHub disables scheduled workflows in a public repository after 60 days with no repository activity.
+#     A monitor that switches itself off after two quiet months is worse than none, because the badge keeps
+#     showing the last run it managed. Noted in docs/for-reviewers.md so it is somebody's known problem
+#     rather than a surprise.
 name: integrity
 on:
   schedule:
@@ -14,11 +24,14 @@ on:
 # that what runs is what was reviewed.
 permissions:
   contents: read
+  issues: write        # only so a failure can open one; see the last step
 jobs:
   live-matches-source:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+        with:
+          persist-credentials: false
 
       - name: the served pages are the files in this repository
         run: |
@@ -147,3 +160,37 @@ jobs:
           # that it can be checked against what this source produces.
           [ "$chain" = "$local_code" ] || { echo "the deployed runtime is NOT what this source builds"; exit 1; }
           echo "  ok    identical"
+
+      # A monitor whose only channel is one person's e-mail is a monitor that fails quietly. This opens an
+      # issue on the repository, which is public, searchable, and does not depend on anyone reading their
+      # mail on a weekend.
+      - name: say so somewhere public if this failed
+        if: failure()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea   # v7
+        with:
+          script: |
+            const title = 'integrity check failed: the live pages may not match this repository';
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'integrity',
+            });
+            const body = [
+              'The scheduled integrity check failed.',
+              '',
+              'That means one of: a live page no longer matches the file in this repository, a security header',
+              'is missing, the explorer passthrough served something it should not, or the site is unreachable.',
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              'This issue was opened by the workflow itself. Close it once the run is green again.',
+            ].join('\n');
+            if (existing.data.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['integrity'],
+              });
+            }

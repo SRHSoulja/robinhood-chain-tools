@@ -381,8 +381,12 @@ contract BulkSend {
         }
     }
 
-    /// @dev A low-level call to an address with no code "succeeds" with empty return data, which is also what
-    ///      USDT-style tokens return on success. So the token must be a contract before any batch runs.
+    /// @dev Refuses an address with NO code. That is all it does, and the distinction matters: a single 0x00
+    ///      byte is code, so a contract that does nothing at all passes this and returns the same empty
+    ///      success a USDT-style token returns. This guard catches a mistyped address, not an impostor. What
+    ///      separates a real token from something wearing its shape cannot be settled on chain, which is why
+    ///      the README says so under what this cannot promise, and why the page asks who holds what
+    ///      afterwards rather than believing a counter.
     ///      An EIP-7702 wallet carries a 23-byte delegation designator (0xef0100 + address), which is code but
     ///      is not a token; treated as a mistyped address rather than something to call.
     /// @dev One staticcall per batch, not per row. A contract with no `ownerOf` reverts with empty

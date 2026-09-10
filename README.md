@@ -1,5 +1,13 @@
 # rh-airdrop
 
+[![integrity](https://github.com/SRHSoulja/robinhood-chain-tools/actions/workflows/integrity.yml/badge.svg)](https://github.com/SRHSoulja/robinhood-chain-tools/actions/workflows/integrity.yml)
+[![tests](https://github.com/SRHSoulja/robinhood-chain-tools/actions/workflows/tests.yml/badge.svg)](https://github.com/SRHSoulja/robinhood-chain-tools/actions/workflows/tests.yml)
+
+The integrity badge is the live pages checked against the files here, four times a day, from outside the
+thing being checked. Note that GitHub disables scheduled workflows in a public repository after 60 days with
+no repository activity, so a green badge on a long-dormant repository means the last run that happened, not
+the state today.
+
 Two tools for [Robinhood Chain](https://robinhoodchain.com), built from two requests made by people in that
 community. Both are free, both are open source, and neither takes a fee.
 

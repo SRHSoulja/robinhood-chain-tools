@@ -106,6 +106,11 @@ which is the case worth monitoring for.
 ## Previous review
 
 - Six internal review passes.
+- The integrity workflow watches the live pages against this repository four times a day. **GitHub disables
+  scheduled workflows in a public repository after 60 days with no repository activity**, and the quiet
+  stretch is the one worth monitoring, so a green badge on a dormant repository means the last run that
+  happened rather than the state today. A failure also opens an issue, so it is visible without access to
+  anyone's inbox.
 - Eleven adversarial review rounds, each by a fresh model with no prior context, all published unedited in
   [`docs/`](.), in order: 8H/4M/3L, then 6H/5M/1L, then 4H/1M, then 6H/2M/1L, then 5H/2M/2L, then
   4 blocking/2/1, then 6 blocking/6/1, then 3 blocking/8/5, then 4 blocking/6/5, then 3 blocking/6/5. Every
