@@ -19,8 +19,12 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09   # v1
         with:
           version: v1.4.1        # pinned: "stable" is a moving target
-      - name: contract tests
-        run: forge test --no-match-path 'test/Audit*.t.sol'
+      # Cheap and first, so a stale CSP hash or a page pointing at the wrong contract fails in seconds rather
+      # than after a sixteen-minute browser run. This also stops depending on anyone's local git config: the
+      # same checks live in .githooks/pre-commit, and a fresh clone has no core.hooksPath set, so before this
+      # they ran only for whoever had configured them.
+      - name: preflight, the cheap consistency checks
+        run: ./preflight.sh
       - name: the deployed bytecode is what this source builds
         run: |
           set -euo pipefail
@@ -38,11 +42,24 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4
         with:
           node-version: '22.20.0'   # pinned: a major line moves under you
-      - name: browser tests
+      - name: install, from the lockfile
         run: |
           npm ci --no-audit --no-fund      # the lockfile decides, not the registry
           npx playwright install --with-deps chromium
-          npm test
+      # ./verify.sh, not `npm test` and not `forge test`. This is the whole point of the step.
+      #
+      # CI used to run `forge test --no-match-path 'test/Audit*.t.sol'` plus `npm test`, which between them
+      # EXCLUDE every probe file. The probe files are the only thing in this repository that can tell a fix
+      # from a belief: they reproduce a finding, so a probe that fails is a finding that is fixed, and roughly
+      # twenty closed findings are pinned by nothing else. Nothing ran them automatically, so a later change
+      # could quietly reopen any of them and still get a green tick.
+      #
+      # verify.sh runs the contract tests, both browser suites, the publish gate, and every probe file, and
+      # compares the probe counts against test/findings-baseline.json. It fails if a closed finding reproduces
+      # again, and it fails on a probe file the baseline has never heard of -- because twice now a probe file
+      # has been added with nothing watching it.
+      - name: everything, including the probes that pin every closed finding
+        run: ./verify.sh
       - name: the connector is reproducible from its pinned source
         run: |
           set -euo pipefail

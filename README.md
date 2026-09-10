@@ -217,12 +217,19 @@ what makes Check's previews real; `debug_traceCall` and `eth_createAccessList` a
 
 ## Checking it yourself
 
+    git config core.hooksPath .githooks    # once per clone, and worth doing before anything else
+
     ./preflight.sh    # under a second: the page's CSP matches its own script, the spliced copy is current,
                       #   the page and the manifest and the tests name one contract, nothing personal is
-                      #   tracked. Runs on every commit through .githooks/pre-commit.
+                      #   tracked.
     ./verify.sh       # everything: all three suites, plus every reviewer probe compared against a recorded
                       #   baseline, so a fix that quietly reopens an earlier finding fails rather than passing.
     ./test.sh         # the suites alone
+
+Git does not carry hook configuration in a clone, so `.githooks/pre-commit` runs only for someone who has set
+`core.hooksPath` themselves. That was worth saying out loud rather than assuming, and it is why **CI runs
+`preflight.sh` and `verify.sh` itself** rather than trusting that a local hook fired: the checks that matter
+cannot depend on how any one person configured their machine.
 
 `verify.sh` exists because a green suite and a closed finding are different claims. A suite tests what the
 code should do; a finding is a thing it should no longer do, and nothing in a suite notices when one comes
