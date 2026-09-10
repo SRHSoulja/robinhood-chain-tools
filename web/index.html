@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-1gw8OZE2HrAwGxp9Fg3/TPFEiX5BgRno77h+dlb+b3U='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-U0NqJalGqZi4drgP/7WnI8f4Gil0m4ZUwiczyP6gtCo='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -219,18 +219,25 @@
     signing = true;
     const el = $(id), was = el.disabled;
     el.disabled = true;
-    // The lock has to end even when the thing it is holding does not. A wallet that never answers is not
-    // hypothetical here -- it is the bug this page was just fixed for -- and a guard that waits forever on
-    // one would trade a double approval for a button that can never be pressed again without a reload.
-    // Long enough that no real signature is cut short, short enough that a wedged one is recoverable.
+    // The lock ends when the thing it is holding ends, and not before. Promise.race does not cancel the
+    // loser: at 180 s this used to release the button while the wallet request was still queued, and in
+    // MetaMask an unanswered prompt stays there until the user acts on it. A second press could then raise a
+    // second prompt, and answering both sends both. The old message made it worse by saying "nothing has been
+    // sent from here" -- true at that instant, untrue about what happened next, and exactly the sentence that
+    // invited the second press. The window was never wrong; releasing unconditionally was. So the timeout
+    // reports and does not release, and the way out of a wallet that never answers is to dismiss it there.
+    let settled = false;
+    const done = Promise.resolve()
+      .then(fn)
+      .catch((e) => { log('That did not go through: ' + String((e && (e.shortMessage || e.message)) || e).slice(0, 120), 'bad'); })
+      .then(() => { settled = true; signing = false; el.disabled = was; plan(); });
     let release = null;
-    const giveUp = new Promise((r) => { release = setTimeout(() => {
-      log('That is taking longer than any signature should. If your wallet never showed a prompt, check it, '
-        + 'then press again \u2014 nothing has been sent from here.', 'warn');
-      r();
-    }, 180000); });
-    try { await Promise.race([fn(), giveUp]); }
-    finally { clearTimeout(release); signing = false; el.disabled = was; plan(); }
+    const giveUp = new Promise((r) => { release = setTimeout(r, 180000); });
+    await Promise.race([done, giveUp]);
+    clearTimeout(release);
+    if (!settled) log('That is taking longer than any signature should, and the request is still sitting in '
+      + 'your wallet: this page cannot take it back. Open your wallet and either approve it or reject it. Do '
+      + 'not press again first \u2014 a second press can raise a second prompt, and answering both sends both.', 'warn');
   };
   let badLines = 0, badLinesOk = false;
   let walletBatch = null;   // does the wallet run several calls as itself, in one transaction (EIP-5792)
@@ -3045,7 +3052,12 @@
     if (!b || b === '0x') return 'the transfer failed with no reason, or it needed more than the ' + (customGas() || gasBounds.def).toLocaleString() + ' gas allowed per transfer';
     const sel = b.slice(0, 10).toLowerCase();
     try {
-      if (sel === '0x08c379a0') return String(ethers.AbiCoder.defaultAbiCoder().decode(['string'], '0x' + b.slice(10))[0]).slice(0, 160);
+      if (sel === '0x08c379a0') {
+        const said = String(ethers.AbiCoder.defaultAbiCoder().decode(['string'], '0x' + b.slice(10))[0]).slice(0, 160);
+        // Quoted and attributed. These are the contract's words, not this page's, and a contract is free to
+        // write anything at all in them, including instructions it would like you to follow.
+        return 'the token refused it and says: \u201c' + said + '\u201d (that is the contract\u2019s own text, not advice from this page)';
+      }
       if (sel === '0x4e487b71') return 'internal error in the token contract (panic ' + ethers.AbiCoder.defaultAbiCoder().decode(['uint256'], '0x' + b.slice(10))[0] + ')';
     } catch {}
     return (KNOWN[sel] || OURS[sel] || ('reverted with ' + sel)).slice(0, 220);
@@ -3054,8 +3066,13 @@
     const data = e?.data || e?.info?.error?.data || e?.error?.data || (typeof e?.value === 'string' ? e.value : null);
     if (typeof data === 'string' && data.startsWith('0x') && data.length >= 10) return decodeReason(data);
     const msg = String(e?.shortMessage || e?.message || e);
-    for (const sel of Object.keys(KNOWN)) if (msg.toLowerCase().includes(sel)) return KNOWN[sel];
-    for (const sel of Object.keys(OURS)) if (msg.toLowerCase().includes(sel)) return OURS[sel];
+    // Only where a selector can really be: the front of a hex payload. Matching it as a substring of free
+    // text let a contract put the characters of an error selector into its revert string and choose which
+    // piece of safety advice this page would give.
+    const low = msg.toLowerCase();
+    const payloads = (low.match(/0x[0-9a-f]{8,}/g) || []).map((h) => h.slice(0, 10));
+    for (const sel of Object.keys(KNOWN)) if (payloads.includes(sel)) return KNOWN[sel];
+    for (const sel of Object.keys(OURS)) if (payloads.includes(sel)) return OURS[sel];
     return msg.slice(0, 220);
   }
   window.__decodeReason = decodeReason;   // used by the page's own checks
