@@ -1062,6 +1062,7 @@
         from: (typeof o.from === 'string' && /^0x[0-9a-fA-F]{40}$/.test(o.from)) ? o.from : null,
       },
       calls, notes: note, kindName: 'wallet_sendCalls',
+      declaredChain: o.chainId === undefined ? null : o.chainId,
       conflictingSenders: (o.from && conflicting) ? conflicting : 0,
       schemaProblems: schema, invalidMembers: invalid,
       // Kept, not dropped. Capabilities are how a wallet is permitted to change what a request means, so one
@@ -1119,6 +1120,11 @@
       }],
       notes: note, kindName: 'eth_sendTransaction',
       invalidMembers: readable ? 0 : 1,
+      // The one name every reader reports its declared network under. It used to be carried on the envelope
+      // for wallet_sendCalls and on the call for a transaction, and the renderer only knew about the first --
+      // so a transaction that took the batch path had its chain read by nobody, which is exactly the finding
+      // this was supposed to have fixed, surviving on the reader nobody re-checked.
+      declaredChain: o.chainId === undefined ? null : o.chainId,
     };
   }
 
@@ -1263,14 +1269,19 @@
               'This request leaves the sender to the wallet. Everything below was worked out as ' + short(chosenSender) + ' because that is what is in the box.'));
           }
           // B-02: each request is judged against the chain it names, not against whatever the page is set to.
-          if (env && env.chainId !== null && env.chainId !== undefined) {
+          // Read from `declaredChain`, which every reader sets, rather than from the envelope, which only one
+          // shape has. Reaching into `env` here meant an eth_sendTransaction reaching this renderer -- which
+          // happens whenever two requests are pasted, or one carries a field the reader does not recognise --
+          // had its network read by nobody at all.
+          const declared = reqs[ri].declaredChain;
+          if (declared !== null && declared !== undefined) {
             let want = null;
-            if (env.chainIdOk) { try { want = Number(BigInt(env.chainId)); } catch (e) { want = null; } }
-            const leadingZero = typeof env.chainId === 'string' && /^0x0[0-9a-fA-F]+$/.test(env.chainId);
+            if (isHexQuantity(declared)) { try { want = Number(BigInt(declared)); } catch (e) { want = null; } }
+            const leadingZero = typeof declared === 'string' && /^0x0[0-9a-fA-F]+$/.test(declared);
             if (leadingZero) {
-              let n = null; try { n = Number(BigInt(env.chainId)); } catch (e) {}
+              let n = null; try { n = Number(BigInt(declared)); } catch (e) {}
               cards.push(note('bad', label + 'this request writes its network in a form the specification does not allow',
-                'Its chainId is "' + env.chainId + '"' + (n !== null ? ', which names chain ' + n : '') + ', written with a leading zero. '
+                'Its chainId is "' + declared + '"' + (n !== null ? ', which names chain ' + n : '') + ', written with a leading zero. '
                 + 'A hex quantity may not carry one, so a wallet may refuse this request outright. Nothing in it has been checked here, '
                 + 'because a request a wallet might refuse is not one to describe as though it would run. What was meant is not in doubt: '
                 + 'write it without the leading zero.'));
@@ -1281,13 +1292,13 @@
               // against whatever this page happens to be set to is how a malformed field becomes an answer
               // about the wrong network.
               cards.push(note('bad', label + 'this request names a network that cannot be read',
-                'Its chainId is ' + JSON.stringify(String(env.chainId)).slice(0, 40) + ', which is not the hex string this kind of request has to carry. '
+                'Its chainId is ' + JSON.stringify(String(declared)).slice(0, 40) + ', which is not the hex string this kind of request has to carry. '
                 + 'Nothing in it has been checked: an unreadable network is not the same as no network, and guessing would mean answering about the wrong chain.'));
               continue;
             }
             if (want !== chainId()) {
               cards.push(note('bad', label + 'this request is for a different network',
-                'Its chainId is ' + String(env.chainId) + ', which is chain ' + want + (CHAINS[want] ? ' (' + CHAINS[want].name + ')' : '') + ', and this page is set to '
+                'Its chainId is ' + String(declared) + ', which is chain ' + want + (CHAINS[want] ? ' (' + CHAINS[want].name + ')' : '') + ', and this page is set to '
                 + chainId() + ' (' + cfg().name + '). Nothing in it has been checked: the same address is a different contract on a different chain, and an answer from the wrong one is worse than none.'));
               continue;
             }

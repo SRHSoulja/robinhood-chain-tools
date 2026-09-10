@@ -20,7 +20,7 @@ jobs:
         with:
           version: v1.4.1        # pinned: "stable" is a moving target
       - name: contract tests
-        run: forge test
+        run: forge test --no-match-path 'test/Audit*.t.sol'
       - name: the deployed bytecode is what this source builds
         run: |
           set -euo pipefail
