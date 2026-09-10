@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-ArhqNeJvgtLyhwq0qlnD4+YovqxkZehgbsDv/FJMKHc='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-KJjFK7xvDSx5kItSBlj0RWmIcbZDuQOemg6Rw8kajI0='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -1958,6 +1958,7 @@
               : path === 'blocked' ? 'this collection needs a wallet that batches' : 'not deployed on this network yet';
     probeGas();
     syncBatchRow();
+    syncGasRow();   // the standard or the delivery path can change under it, and its warning with them
     setStat($('plan'), [
       ['network', c.name],
       ['sent by', how],
@@ -1983,6 +1984,7 @@
     else if (strictSplit) why = '"All or nothing" only holds inside one transaction. This list needs ' + batches + '. Raise the recipients per transaction so it fits in one, shorten the list, or choose "Keep going".';
     $('whyDisabled').textContent = why;
     $('export').disabled = skippedRows.length === 0;
+    $('manifest').disabled = !lastManifest;   // there is a list to download exactly when there is one
     const held = heldByPending().size;
     $('review').textContent = held ? 'Review ' + held + ' held row' + (held === 1 ? '' : 's') : 'Review held rows';
     $('review').style.borderColor = held ? 'var(--warn)' : ''; $('review').style.color = held ? 'var(--warn)' : '';
@@ -2229,9 +2231,19 @@
     for (const l of (rc.logs || [])) {
       if (String(l.address).toLowerCase() !== token) continue;
       const t0 = (l.topics || [])[0];
-      if (t0 === TOPIC_TRANSFER && l.topics.length === 4) seen.push({ kind: '721', to: addr(l.topics[2]), id: BigInt(l.topics[3]).toString() });
-      else if (t0 === TOPIC_TRANSFER && l.topics.length === 3) seen.push({ kind: '20', to: addr(l.topics[2]), amount: BigInt(l.data || '0x0') });
-      else if (t0 === TOPIC_SINGLE && l.topics.length === 4) {
+      // Only what THIS sender moved. A token that credits the recipient from somewhere else inside the same
+      // transaction -- a reflection, a mint, a rebase -- used to count toward what this batch delivered, so a
+      // row could be recorded as paid on the strength of a transfer nobody here made.
+      const from = String(me || '').toLowerCase();
+      if (t0 === TOPIC_TRANSFER && l.topics.length === 4) {
+        if (addr(l.topics[1]) !== from) continue;
+        seen.push({ kind: '721', to: addr(l.topics[2]), id: BigInt(l.topics[3]).toString() });
+      } else if (t0 === TOPIC_TRANSFER && l.topics.length === 3) {
+        if (addr(l.topics[1]) !== from) continue;
+        seen.push({ kind: '20', to: addr(l.topics[2]), amount: BigInt(l.data || '0x0') });
+      } else if (t0 === TOPIC_SINGLE && l.topics.length === 4) {
+        // TransferSingle indexes operator, from, to; `from` is the one that has to be this sender.
+        if (addr(l.topics[2]) !== from) continue;
         try { const [id, val] = ethers.AbiCoder.defaultAbiCoder().decode(['uint256', 'uint256'], l.data);
           seen.push({ kind: '1155', to: addr(l.topics[3]), id: id.toString(), amount: val }); } catch (e) {}
       }
@@ -2804,7 +2816,12 @@
         'Estimated cost: ' + costLine(finalList.length),
         'Your wallet will ask you to confirm about ' + sigs + ' time' + (sigs === 1 ? '' : 's') + '.',
       ].filter(Boolean);
-      if (!confirm(lines.join('\n'))) { log('Cancelled. Nothing was sent.', 'warn'); return; }
+      if (!confirm(lines.join('\n'))) {
+        // The manifest is described as the signed plan. Nothing was signed, so there is no plan to hand over.
+        lastManifest = null; $('manifest').disabled = true;
+        log('Cancelled. Nothing was sent.', 'warn');
+        return;
+      }
     }
     $('stop').disabled = false;
     if (deliveryPath() === 'wallet') { await sendViaWallet(pre); return; }
@@ -3021,6 +3038,9 @@
 
   // ---- revert reasons in words ----
   const KNOWN = {
+    // Not in 4byte.directory, so it cannot be checked from the obvious place. It is
+    // StrictAuthorizedTransferSecurityRegistry__UnauthorizedTransfer(), resolvable through Openchain,
+    // and it is what a creator transfer validator reverts with when an operator is not on its list.
     '0x1de5204e': 'this collection only allows transfers through operators its creator approved, so a bulk sender cannot move it. Ask the collection team to whitelist BulkSend, or use their own transfer tool.',
     '0x177e802f': 'this wallet has not approved BulkSend for that id, or no longer owns it', '0x64283d7b': 'that id is not owned by the sending wallet',
     '0x64a0ae92': 'the recipient would not accept an NFT sent this way. A wallet that has been upgraded (EIP-7702) to code with no NFT receive hook looks like this; untick the safe-transfer box and a plain transfer reaches it. A contract that genuinely cannot hold NFTs looks like this too, so leave the box ticked if you are not sure who this is.', '0x7e273289': 'that token id does not exist', '0x73c6ac6e': 'invalid sender', '0x5b08ba18': 'invalid operator',

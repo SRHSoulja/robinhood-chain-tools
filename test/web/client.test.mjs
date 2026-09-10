@@ -2272,6 +2272,46 @@ async function freshBrowser() {
   }
 }
 
+// ---- S-14: two of the grouped items that change what gets recorded --------------------------------------
+{
+  // A Transfer event only counts if this sender made it. Without that, a token that credits the recipient
+  // from somewhere else in the same transaction -- a reflection, a mint, a rebase -- counted toward what the
+  // batch delivered, and a row was recorded as paid on a transfer nobody here made.
+  {
+    const page = await open(browser, {});
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, TOK, '20');
+    const verdict = await page.evaluate(([tok, me, other]) => {
+      const pad = (a) => '0x' + a.slice(2).padStart(64, '0');
+      const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+      const recipient = '0x00000000000000000000000000000000000000b1';
+      const rows = [{ to: recipient, amount: 5n }];
+      const log = (from) => ({ address: tok, topics: [TRANSFER, pad(from), pad(recipient)],
+                               data: '0x' + (5n).toString(16).padStart(64, '0') });
+      return {
+        fromSomeoneElse: window.__arrivalsFromReceipt({ logs: [log(other)] }, rows, tok, '20').arrived.length,
+        fromTheSender:   window.__arrivalsFromReceipt({ logs: [log(me)] }, rows, tok, '20').arrived.length,
+      };
+    }, [TOK, A(0xdead), A(0xfeed)]);
+    check('S-14 a transfer made by someone else does not count as this batch delivering',
+      verdict.fromSomeoneElse === 0, JSON.stringify(verdict));
+    check('S-14 and a transfer this sender really made still does',
+      verdict.fromTheSender === 1, JSON.stringify(verdict));
+    await page.close();
+  }
+  {
+    // "Download the exact list" calls itself the signed plan. After a cancelled confirmation there is no plan.
+    const page = await open(browser, { dismissDialogs: true });
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, NFT, '721');
+    await setList(page, A(0x71) + ',7\n');
+    await page.click('#send'); await page.waitForTimeout(3000);
+    check('S-14 cancelling the confirmation leaves no manifest of a send that never happened',
+      await page.evaluate(() => document.querySelector('#manifest').disabled));
+    await page.close();
+  }
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
