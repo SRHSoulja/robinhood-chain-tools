@@ -9,11 +9,25 @@ fine. There is no bounty.
 
 ## Transport
 
-Both pages are served over HTTPS only. Plain HTTP is redirected permanently, and every HTTPS response carries
-`Strict-Transport-Security` -- the successes, the redirects and the errors alike -- so a browser that has seen
-the site once over HTTPS will not try HTTP again. The header is sent on the HTTP redirect too, but say what
-that is worth: a browser is required to ignore HSTS on a plain-HTTP response, so it is the first *HTTPS*
-answer that pins someone, not the redirect that got them there. This matters
+Both pages are served over HTTPS only. Every response **that this project's Worker produces** redirects plain
+HTTP permanently and carries `Strict-Transport-Security` -- the successes, the redirects and the errors alike
+-- so a browser that has seen the site once over HTTPS will not try HTTP again. The header is sent on the HTTP
+redirect too, but say what that is worth: a browser is required to ignore HSTS on a plain-HTTP response, so it
+is the first *HTTPS* answer that pins someone, not the redirect that got them there.
+
+**Where that stops being true, because "every" was wrong when this said it.** `/cdn-cgi/*` is reserved by
+Cloudflare and answered ahead of any Worker, so nothing in this repository can put a header on it:
+
+    curl -sSI http://rhairdrop.gmgnrepeat.com/cdn-cgi/trace   ->  404, no HSTS, and no redirect
+
+The missing redirect on the HTTP side also shows that zone-level "Always Use HTTPS" is off: the 301 you get on
+`/` comes from the Worker, so the only thing pinning HTTP visitors is code that cannot run on that namespace.
+Practical exposure is narrow -- a visitor's first-ever contact with the host would have to be a `/cdn-cgi/*`
+URL over plain HTTP -- but Cloudflare's own beacon posts to `/cdn-cgi/rum` on this same host, so it is not a
+namespace nobody touches. Closing it needs zone-level HSTS and "Always Use HTTPS" enabled in the Cloudflare
+dashboard, which covers Cloudflare-generated responses, WAF blocks and 5xx interstitials as well. That is a
+commitment across the whole domain rather than these two pages, so it is the domain owner's call and not
+something this repository can make; until it is made, this section says so rather than claiming otherwise. This matters
 more here than on an ordinary site: the page builds transactions, and a page delivered once over HTTP could be
 replaced in transit before any of its own protections exist. HSTS preload is deliberately not set, because
 that is a commitment on behalf of every subdomain of the domain rather than just these two.

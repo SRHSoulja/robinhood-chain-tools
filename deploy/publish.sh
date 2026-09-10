@@ -172,17 +172,35 @@ x_route = """
     if (!base || x[2].includes('..')) return new Response('bad path', { status: 400, headers: secure() });
     // The mainnet explorer answers browsers and challenges everything else, so ask the way a browser does.
     // One reader's lookup at a time, cached at the edge for a minute so it stays that way.
+    // The user-agent below no longer buys anything: Blockscout's managed challenge fires on the mainnet
+    // explorer regardless of it, so every /x/4663/* request degrades. Kept because it costs nothing and the
+    // testnet explorer still answers, but it is not a working spoof and the code should not imply it is.
+    // `redirect: 'manual'` because following one would let an explorer decide which host gets to put a
+    // document on this origin.
     const upstream = await fetch(base + '/api/v2' + x[2] + url.search, {
       headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' },
+      redirect: 'manual',
       cf: { cacheEverything: true, cacheTtl: 60 },
     });
     // Only a real answer is worth keeping. The explorer occasionally answers a challenge page instead, and
     // caching that for a minute serves the failure to everyone who asks in that minute -- including after the
     // explorer has recovered. A transient error must not become the cached answer.
     const good = upstream.ok && String(upstream.headers.get('content-type') || '').includes('json');
-    return new Response(upstream.body, { status: upstream.status, headers: Object.assign(secure(), {
-      'content-type': good ? 'application/json; charset=utf-8' : (upstream.headers.get('content-type') || 'text/plain; charset=utf-8'),
-      'cache-control': good ? 'public, max-age=60' : 'no-store' }) });
+    // Refusing to relabel a bad response is not the same as refusing to serve its bytes, which is what this
+    // used to do. Nothing that is not a real JSON answer is passed through at all now: not the body, and not
+    // the status. The status matters as much as the body, because Cloudflare intercepts a 404 from a worker
+    // and substitutes this origin's own page for it, without any of the headers above. The page's reader
+    // already treats this shape as "could not check" rather than "nothing found", which is the distinction
+    // that keeps a failed lookup from being reported as a clean bill of health.
+    if (!good) {
+      return new Response(JSON.stringify({ error: 'upstream', status: upstream.status }), {
+        status: 200,
+        headers: Object.assign(secure(), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }),
+      });
+    }
+    return new Response(upstream.body, { status: 200, headers: Object.assign(secure(), {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'public, max-age=60' }) });
   }
 """ if target == "check" else ""
 
@@ -205,6 +223,10 @@ const secure = () => ({
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'strict-origin-when-cross-origin',
   'cross-origin-opener-policy': 'same-origin',
+  // Everything this worker returns other than the page itself. `frame-ancestors` cannot be written in a
+  // <meta> tag, so a response carrying no CSP header has no framing protection at all, whatever the document
+  // inside it says about itself.
+  'content-security-policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; sandbox",
 });
 export default { async fetch(request) {
   const url = new URL(request.url);

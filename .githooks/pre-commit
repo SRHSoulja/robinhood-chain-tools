@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# The cheap consistency checks, every commit. Under a second, no browser, no network.
+# The expensive half is ./verify.sh and is not run here: a hook that takes fifteen minutes is a hook that
+# gets bypassed, and a bypassed hook protects nothing.
+exec ./preflight.sh

@@ -62,6 +62,35 @@ jobs:
             echo "  ok    $host redirects and sends HSTS"
           done
 
+          # /cdn-cgi/* is Cloudflare's, answered before any Worker, so nothing in this repository can put a
+          # header on it. SECURITY.md says so explicitly. This asserts the state that sentence describes, and
+          # will fail if zone-level HSTS is ever turned on -- at which point the sentence needs updating too.
+          for host in rhairdrop.gmgnrepeat.com rhcheck.gmgnrepeat.com; do
+            if curl -sI --max-time 25 "https://$host/cdn-cgi/trace" | grep -qi '^strict-transport-security:'; then
+              echo "$host/cdn-cgi/ now sends HSTS. Good, but SECURITY.md's Transport section still says it does not."
+              exit 1
+            fi
+            echo "  note  $host/cdn-cgi/ sends no HSTS, as SECURITY.md states"
+          done
+
+      - name: the explorer passthrough never serves someone else's document from this origin
+        run: |
+          set -euo pipefail
+          for host in rhcheck.gmgnrepeat.com; do
+            for path in "/x/46630/tokens/0x0000000000000000000000000000000000000000" "/x/4663/stats"; do
+              hdr="$(curl -sI --max-time 25 "https://$host$path")"
+              code="$(printf '%s' "$hdr" | head -1 | tr -dc '0-9')"
+              [ "$code" = "200" ] || { echo "$path answered $code; a non-2xx from here is replaced by Cloudflare with our own page"; exit 1; }
+              printf '%s' "$hdr" | grep -qi '^content-type: application/json' \
+                || { echo "$path did not answer JSON; it must never pass a third-party document through"; exit 1; }
+              printf '%s' "$hdr" | grep -qi '^content-security-policy:' \
+                || { echo "$path sent no CSP header; frame-ancestors cannot come from a meta tag"; exit 1; }
+              printf '%s' "$hdr" | grep -qi '^strict-transport-security:' \
+                || { echo "$path sent no HSTS"; exit 1; }
+              echo "  ok    $path is JSON, 200, with the full header set"
+            done
+          done
+
       - name: the error paths are hardened too, not just the healthy ones
         run: |
           set -euo pipefail

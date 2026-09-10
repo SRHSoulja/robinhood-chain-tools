@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-Yr2MKeKI1Yu1sD5VAZIP/PVdrOlI7RXPLWI4mbufWjg='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-d+0AGYBIJjwG6wnYG8nv1JESuxhFjsiIEDdGcNh1p50='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <title>Robinhood Chain Check · read it before you sign</title>
 <meta name="description" content="Paste a transaction, a contract, or the calldata your wallet is about to sign, and read what it actually does on Robinhood Chain: what moves, what the contract can do to you, and why something failed.">
 <style>
@@ -318,6 +318,11 @@
           const ct = String(r.headers.get('content-type') || '');
           if (!ct.includes('json')) continue;
           const j = await r.json();
+          if (j && j.error === 'upstream') {
+            explorerRoute = route; reached = true;
+            if (Number(j.status) === 404) { missing = true; continue; }   // really not there
+            continue;                                                     // reached, but it would not answer
+          }
           explorerRoute = route; reached = true;
           return { ok: true, data: j };
         } catch (e) { continue; }

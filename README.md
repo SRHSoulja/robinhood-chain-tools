@@ -202,6 +202,22 @@ Gas token is ETH. Testnet faucet: https://faucet.testnet.chain.robinhood.com/ (b
 automation). `eth_simulateV1` is available on both networks and returns the logs a call would emit, which is
 what makes Check's previews real; `debug_traceCall` and `eth_createAccessList` are not exposed.
 
+## Checking it yourself
+
+    ./preflight.sh    # under a second: the page's CSP matches its own script, the spliced copy is current,
+                      #   the page and the manifest and the tests name one contract, nothing personal is
+                      #   tracked. Runs on every commit through .githooks/pre-commit.
+    ./verify.sh       # everything: all three suites, plus every reviewer probe compared against a recorded
+                      #   baseline, so a fix that quietly reopens an earlier finding fails rather than passing.
+    ./test.sh         # the suites alone
+
+`verify.sh` exists because a green suite and a closed finding are different claims. A suite tests what the
+code should do; a finding is a thing it should no longer do, and nothing in a suite notices when one comes
+back. The reviewers' probe files are the only record of the second kind, and they are written backwards on
+purpose: a probe reproduces a defect, so a probe that fails is a defect that is fixed.
+
+[docs/status.md](docs/status.md) is what all of that currently says.
+
 ## Reviews
 
 Six internal review passes and eleven adversarial review rounds, each by a fresh model given the code and no

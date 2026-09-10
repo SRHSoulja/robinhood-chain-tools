@@ -228,6 +228,11 @@
           const ct = String(r.headers.get('content-type') || '');
           if (!ct.includes('json')) continue;
           const j = await r.json();
+          if (j && j.error === 'upstream') {
+            explorerRoute = route; reached = true;
+            if (Number(j.status) === 404) { missing = true; continue; }   // really not there
+            continue;                                                     // reached, but it would not answer
+          }
           explorerRoute = route; reached = true;
           return { ok: true, data: j };
         } catch (e) { continue; }
