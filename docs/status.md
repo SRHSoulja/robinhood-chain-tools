@@ -27,9 +27,14 @@ nonce is 0.
 ```
 ./test.sh                              # everything below except the live scripts
 forge test                             #  93 contract tests, plus 27 reviewer probes of which 7 must FAIL
-node test/web/client.test.mjs          # 270 airdrop page tests
+node test/web/client.test.mjs          # 301 airdrop page tests
 node test/web/check.test.mjs           # 116 Check page tests
+./test/csp-gate.test.sh                #  21 checks that a weaker published CSP is refused
 ```
+
+`./verify.sh` runs all of that, plus every probe file, and compares the probe counts against
+[`test/findings-baseline.json`](../test/findings-baseline.json). It **fails on a probe file the baseline has
+never heard of**, because twice now a probe file has been added and watched by nothing.
 
 The reviewer's probe files reproduce findings, so a probe that **fails** is a finding that is fixed. They are
 kept rather than deleted, because they are the only thing that can tell a fix from a belief.
