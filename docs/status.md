@@ -1,6 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 10 September 2026, against `66784ed`.
+Last updated 10 September 2026, against `cebe40c`.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -26,8 +26,8 @@ nonce is 0.
 
 ```
 ./test.sh                              # everything below except the live scripts
-forge test                             #  80 contract tests, plus 24 reviewer probes that must FAIL
-node test/web/client.test.mjs          # 257 airdrop page tests
+forge test                             #  86 contract tests, plus 20 reviewer probes of which 5 must FAIL
+node test/web/client.test.mjs          # 270 airdrop page tests
 node test/web/check.test.mjs           # 116 Check page tests
 ```
 
@@ -43,9 +43,18 @@ a chain being up is not a test you want gating a commit:
 node test/web/live-chain.mjs           # the real page, real testnet, four real token types
 node test/web/live-send.mjs            # signs and sends a real airdrop, then asks the chain who owns what
 node test/web/live-wallet-batch.mjs    # the no-approval path over a real EIP-7702 delegation
+node test/web/live-send-all.mjs        # real ERC-1155 and ERC-20 airdrops, balances checked afterwards
 ```
 
-All three were last run green against BulkSend v11 on 10 September 2026: 4, 10 and 12 checks.
+All four were last run green against BulkSend v11 on 10 September 2026: 4, 10, 12 and 18 checks. Between
+them, every one of the three standards has been delivered on chain through the current contract and the
+balances read back afterwards.
+
+live-send-all.mjs signs with a deliberately **undelegated** key. That is not incidental: an EIP-7702 upgraded
+wallet has code, so a conforming ERC-1155 refuses to mint to it unless its delegate implements
+`onERC1155Received`. The first run of that script failed on exactly this. It is a real constraint on upgraded
+wallets, and the page already handles it: `upgradedWalletsThatCannotReceive` probes each recipient's delegate
+and holds back the ones that would fail rather than reverting the batch.
 
 They sign with a testnet-only key that holds no mainnet balance and refuse to run unless the chain id is
 46630.
@@ -60,7 +69,8 @@ They sign with a testnet-only key that holds no mainnet balance and refuse to ru
 | the gas probe gets a sane answer from a real chain | `live-chain.mjs`, four token types | ✅ |
 | deployed bytecode matches what this repository builds | v11, byte-identical, 18,276 chars, and verified on the explorer (not partially, compiler 0.8.36) | ✅ |
 | the deployed pages match these files | `deploy/publish.sh` verifies the hash after publishing | ✅ |
-| ERC-1155 and ERC-20 batches really land | **only against mocks**. Only ERC-721 has landed on chain. | ❌ |
+| ERC-1155 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding 2 of an edition | ✅ |
+| ERC-20 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding exactly 1.5, to the wei | ✅ |
 | any of it against a real wallet extension | **never** — every wallet in every test is written by this repository | ❌ |
 | behaviour on mainnet | **never, by design** | ❌ |
 
@@ -97,7 +107,7 @@ A finding is marked closed only when the probe that demonstrated it stops reprod
 | B-4 | `chainId` read by nobody, so another chain's contract described as this one's | closed |
 | B-5 | unsettled token standard written up as ERC-20 | closed |
 
-### Should be fixed — 14 closed, 5 open
+### Should be fixed — 18 closed, 1 open
 
 | | | |
 | --- | --- | --- |
@@ -111,13 +121,13 @@ A finding is marked closed only when the probe that demonstrated it stops reprod
 | S-3 | "Review held rows" can never confirm an ERC-20 or ERC-1155 row | closed |
 | S-6 | `onlyOnce` releases the button while the first request is still live | closed |
 | S-7 | attacker-controlled revert text presented as the page's own words | closed |
-| S-8 | a 404 from the explorer passthrough is replaced by our own page, unhardened | **open** |
-| S-9 | the explorer passthrough serves third-party HTML from this origin with no CSP | **open** |
+| S-8 | a 404 from the explorer passthrough is replaced by our own page, unhardened | closed |
+| S-9 | the explorer passthrough serves third-party HTML from this origin with no CSP | closed |
 | S-10 | the publish CSP gate counts hashes and checks nothing else | **open** |
-| S-11 | `/cdn-cgi/*` is answered before the Worker, so a claim in SECURITY.md is false | **open** |
+| S-11 | `/cdn-cgi/*` is answered before the Worker, so a claim in SECURITY.md is false | closed |
 | S-12 | the contract counts a 721/1155 delivery without reading the call's return data | closed |
 | S-13 | `ZERO_REASON` is the selector of an error this contract does not declare | closed |
-| S-14 | smaller things, grouped (13 items) | **open** |
+| S-14 | smaller things, grouped (13 items) | closed |
 | S-18 | `owner() == 0` stated as fact, its qualifier rendering in the other branch | closed |
 | S-19 | smaller Check-page items (7 items) | closed |
 
@@ -136,6 +146,10 @@ Re-running every probe against the current commit:
 | Check page probes, set two | 1 of 6 |
 | Airdrop page probes | 8 of 23 |
 | Contract probes | 15 of 20 |
+
+`./verify.sh` runs all of the above in one command and compares those counts against
+[`test/findings-baseline.json`](../test/findings-baseline.json), so a later fix that quietly reopens an
+earlier finding fails rather than passing. `./preflight.sh` runs the cheap consistency checks on every commit.
 
 The one left in the Check set is the page correctly stating that no function name in the published source
 matched, which is true and is not a defect: the finding was the *combination* with an unqualified "nobody owns

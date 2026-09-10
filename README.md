@@ -22,6 +22,11 @@ community. Both are free, both are open source, and neither takes a fee.
 
 ---
 
+**What this is for:** [docs/what-this-is-for.md](docs/what-this-is-for.md) — who it is for, the gap it
+fills (there was a bulk sender for ERC-20 on this chain and nothing else), the promises stated in terms that
+can be checked rather than trusted, what it deliberately does not do, and what would have to be true for it
+to be finished.
+
 **What is tested and what is still open:** [docs/status.md](docs/status.md) is the current state of the
 project in one place: which suites run and what each one actually proves, what has never been tested and is
 marked so, every finding from the last review with open or closed beside it, and the two conditions that have

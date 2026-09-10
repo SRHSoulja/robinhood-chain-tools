@@ -19,7 +19,9 @@ open('check.html', 'w', encoding='utf-8').write(html)
 
 for path in ('index.html', 'check.html'):
     s = open(path, encoding='utf-8').read()
-    blocks = [b for b in re.findall(r'<script>(.*?)</script>', s, re.S) if b.strip()]
+    # Any inline script, however its tag is written; a src= tag is external, not inline.
+    blocks = [b for a, b in re.findall(r'<script([^>]*)>(.*?)</script>', s, re.S)
+              if 'src=' not in a.lower() and b.strip()]
     assert len(blocks) == 1, '%s has %d inline scripts' % (path, len(blocks))
     # Exactly what the browser hashes: everything between the tags, leading newline included.
     want = 'sha256-' + base64.b64encode(hashlib.sha256(blocks[0].encode()).digest()).decode()

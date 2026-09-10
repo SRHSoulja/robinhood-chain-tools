@@ -136,8 +136,11 @@ const CSP_PAGES = [['../../web/check.html', '../../web/check.js']];
   const { createHash } = await import('node:crypto');
   const die = (m) => { console.error('\n' + m + '\nRun web/sync.sh and try again.\n'); process.exit(1); };
   const inlineScript = (src, name) => {
-    const blocks = (src.match(/<script>([\s\S]*?)<\/script>/g) || [])
-      .map((b) => b.slice(8, -9)).filter((b) => b.trim());
+    // Any inline script, however its tag is written. Matching the literal "<script>" made
+    // `<script type="module">` invisible to every layer that used it, so a second inline script passed the
+    // count and was never hashed. A tag carrying src= is external, not inline.
+    const blocks = [...src.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)]
+      .filter((m) => !/src=/i.test(m[1]) && m[2].trim()).map((m) => m[2]);
     if (blocks.length !== 1) die(name + ' has ' + blocks.length + ' inline scripts; expected exactly 1.');
     return blocks[0];
   };

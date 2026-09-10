@@ -79,8 +79,11 @@ import base64, hashlib, re, sys
 html = open(sys.argv[1], encoding="utf-8").read()
 # The hash covers everything between the tags, the leading newline included. Dropping it produces a
 # hash that looks right and blocks the page.
-blocks = re.findall(r"<script>(.*?)</script>", html, re.S)
-blocks = [b for b in blocks if b.strip()]
+# Any inline script, however the tag is written. Matching the literal "<script>" meant
+# `<script type="module">`, `<script >` and `<script\n>` were invisible here, so a second inline script
+# passed this count and was never hashed. Tags with a src= are external and not inline, so they are excluded.
+blocks = [b for a, b in re.findall(r"<script([^>]*)>(.*?)</script>", html, re.S)
+          if "src=" not in a.lower() and b.strip()]
 assert len(blocks) == 1, "expected exactly one inline script, found %d" % len(blocks)
 print("sha256-" + base64.b64encode(hashlib.sha256(blocks[0].encode()).digest()).decode())
 PY
@@ -104,8 +107,28 @@ if hashes != ["'%s'" % want]:
     raise SystemExit(
         "the page's CSP must name exactly one script hash, its own.\n  script-src hashes: %s\n  this page's script: '%s'\nRun web/sync.sh and commit the result."
         % (", ".join(hashes) or "(none)", want))
-# Only the hash is managed here. Rewriting the whole directive would silently drop any other source the
-# policy deliberately allows, which it did once.
+# Naming the right hash is not the same as being a safe policy. A script-src can carry this exact hash and
+# still authorize everything, so the rest of the directive is checked too.
+NEVER = ("'unsafe-inline'", "'unsafe-eval'", "'strict-dynamic'", "'unsafe-hashes'", "*")
+tokens = src.group(1).split()
+for t in tokens:
+    if t in NEVER:
+        raise SystemExit(
+            "the page's CSP script-src contains %s, which this project does not publish.\n"
+            "  'strict-dynamic' in particular makes every host source below it irrelevant: any script the\n"
+            "  hashed inline script inserts would load from anywhere, which is the whole thing the hash buys."
+            % t)
+
+# And the host sources are an allowlist, not whatever is there. An addition is loud, and a deliberate one is
+# a one-line commit to this file rather than a change nobody sees.
+ALLOWED_SOURCES = {"'self'", "https://static.cloudflareinsights.com", "https://cdnjs.cloudflare.com"}
+extra = {t for t in tokens if not t.startswith("'sha256-")} - ALLOWED_SOURCES
+if extra:
+    raise SystemExit(
+        "the page's CSP script-src names sources this script does not know: %s\n"
+        "  If that is deliberate, add it to ALLOWED_SOURCES in deploy/publish.sh in the same commit, so the\n"
+        "  change is reviewable rather than silent." % ", ".join(sorted(extra)))
+print("  CSP: one hash, its own; no unsafe token; no source outside the allowlist")
 PY
 
 # The page is inlined into the worker as a string constant, so the worker serves it from the edge with no

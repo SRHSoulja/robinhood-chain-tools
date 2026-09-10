@@ -20,7 +20,8 @@ import base64, hashlib, re, io, sys
 ok = True
 for path in ('web/index.html', 'web/check.html'):
     s = io.open(path, encoding='utf-8').read()
-    blocks = [b for b in re.findall(r'<script>(.*?)</script>', s, re.S) if b.strip()]
+    blocks = [b for a, b in re.findall(r'<script([^>]*)>(.*?)</script>', s, re.S)
+              if 'src=' not in a.lower() and b.strip()]
     if len(blocks) != 1:
         print('  FAIL   %s has %d inline scripts, expected 1' % (path, len(blocks))); ok = False; continue
     want = 'sha256-' + base64.b64encode(hashlib.sha256(blocks[0].encode()).digest()).decode()
@@ -38,7 +39,7 @@ python3 - <<'PY' || bad=1
 import io, re, sys
 h = io.open('web/check.html', encoding='utf-8').read()
 js = io.open('web/check.js', encoding='utf-8').read()
-b = [x for x in re.findall(r'<script>(.*?)</script>', h, re.S) if x.strip()][0]
+b = [x for a, x in re.findall(r'<script([^>]*)>(.*?)</script>', h, re.S) if 'src=' not in a.lower() and x.strip()][0]
 if b != '\n' + js:
     print('  FAIL   check.html does not carry the current check.js. Run web/sync.sh.'); sys.exit(1)
 print('  ok     check.html carries the current check.js')
