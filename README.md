@@ -199,14 +199,18 @@ what makes Check's previews real; `debug_traceCall` and `eth_createAccessList` a
 
 ## Reviews
 
-Six internal review passes and eight external audits, each by a different model given the code and no other
-context. Every blocking finding is fixed, and all eight are published unedited in [`docs/`](docs/) including
-the parts that are unflattering: a bug dismissed in a code comment as deliberate that was a double-payment
-path, a page printing safety conclusions from function names, a build recipe that did not reproduce the file
-it described, and three occasions where a fix became the next round's finding.
+Six internal review passes and eleven adversarial review rounds, each by a fresh model given the code and no
+other context and asked to break it. Every blocking finding is fixed, and all eleven are published unedited in
+[`docs/`](docs/) including the parts that are unflattering: a page that answered "this is a plain transfer of
+ETH", in green, for an unlimited approval whose `0x` prefix had been lost; a bug dismissed in a code comment
+as deliberate that was a double-payment path; a page printing safety conclusions from function names; a build
+recipe that did not reproduce the file it described; and three occasions where a fix became the next round's
+finding.
 
-No human audit firm has reviewed this. If you are reviewing it, start with
-[`docs/for-reviewers.md`](docs/for-reviewers.md).
+**These are not an audit in the sense a firm means it, and calling them one would be borrowing authority they
+have not earned.** They are the pass that finds what would otherwise waste a real auditor's time. No human
+audit firm has reviewed this, and this process is not a substitute for one. If you are reviewing it, start
+with [`docs/for-reviewers.md`](docs/for-reviewers.md).
 
 ## Secrets
 

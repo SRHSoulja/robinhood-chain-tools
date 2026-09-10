@@ -106,7 +106,7 @@ which is the case worth monitoring for.
 ## Previous review
 
 - Six internal review passes.
-- Ten external audits, each by a different model with no prior context, all published unedited in
+- Eleven adversarial review rounds, each by a fresh model with no prior context, all published unedited in
   [`docs/`](.), in order: 8H/4M/3L, then 6H/5M/1L, then 4H/1M, then 6H/2M/1L, then 5H/2M/2L, then
   4 blocking/2/1, then 6 blocking/6/1, then 3 blocking/8/5, then 4 blocking/6/5, then 3 blocking/6/5. Every
   blocking finding is fixed. The counts are blocking / should-fix / inherent-limit, and the last group is not
