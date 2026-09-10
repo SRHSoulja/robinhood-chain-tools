@@ -13,3 +13,4 @@ echo
 echo "The live check (needs the network, so it is not part of this run):"
 echo "  node test/web/live-chain.mjs    (measures real tokens on testnet)"
 echo "  node test/web/live-send.mjs     (signs and sends a real airdrop on testnet)"
+echo "  node test/web/live-wallet-batch.mjs  (the no-approval path, over real EIP-7702)"
