@@ -5,12 +5,15 @@ bottom so anyone can repeat it and disagree with it.
 
 ## The short version
 
-- One transaction on this chain stops at roughly **32M gas**. A plain ERC-721 batch reverts above **819
-  recipients**, at 32.2M.
-- The page caps a batch at **200** whenever it is checking recipients or leaving room for a transfer to
-  fail, which covers the default settings and almost every real send. **400** needs both of those off: no
-  recipient check and all-or-nothing. **25** when your wallet is sending the transfers as itself, because
-  wallets refuse long batches.
+- One transaction stops at **32,000,000 gas**, which the chain declares itself:
+  `ArbGasInfo.getGasAccountingParams()` returns it as `maxTxGasLimit` on both networks.
+- **How many recipients that buys depends entirely on the collection**: measured across 58 live mainnet
+  collections, between **209 and 765**.
+- **So the cap is measured, not chosen.** The page estimates one real transfer of the token you are sending
+  and derives the cap from that: `30,000,000 / (measured x 1.15)`, capped at 400. Against all 58 live
+  collections that never picks a batch that cannot fit, and it gives 56 of the 58 more room than a flat 200
+  would. **200** is the fallback for a token that will not answer, because 200 is the number every one of the
+  58 clears. **25** when your wallet is sending the transfers as itself, because wallets refuse long batches.
 - **Bigger batches are cheaper, but not by much.** A thousand NFTs cost about 8% less delivered 400 at a time
   than 100 at a time. Delivered 25 at a time they cost 42% more.
 - **Order matters far more than size on a lazily-minted collection.** Shuffled ids cost 45% more than
@@ -59,7 +62,7 @@ transaction at 400 wastes four times as much gas as one at 100.
 | 400 | 16.0M | fine |
 | 700 | 27.5M | fine |
 | 800 | 31.4M | fine |
-| **819** | **32.2M** | the largest that completes |
+| **819** | **32.2M** | the largest that completes *for this token* |
 | 900 and above | | reverts, `OutOfGasForBatch(index)` |
 
 The revert is BulkSend's own guard, not a silent truncation. It names the index it stopped at, and nothing in
@@ -102,3 +105,70 @@ one percent, which is what makes the rest of the sweep worth trusting.
 Prices came from the live mainnet base fee (`eth_baseFee`, sampled across 500,000 blocks: 0.17 to 0.20 gwei)
 and a public ETH price. Gas costs are a property of the chain; the dollar figures are only as current as the
 day they were written, 9 September 2026.
+
+## What real collections actually cost
+
+The figures above come from tokens deployed for the purpose, which is a fair test of the contract and a poor
+test of the world. So: every ERC-721 collection that moved a token on Robinhood Chain mainnet inside a recent
+12,000-block window, 58 of them, measured by asking the chain to estimate a real transfer by the token's real
+current owner to an address that has never been touched. Read-only, nothing signed.
+
+Converted to what one more recipient costs inside a batch (a standalone estimate carries the 21,000 base cost
+a batch pays once; the conversion is measured both ways on the same contract and the conservative end is used
+here):
+
+| | gas per recipient | recipients that fit in one transaction |
+| --- | --- | --- |
+| cheapest collection | 41,825 | 765 |
+| median | 54,987 | 581 |
+| 75th percentile | 70,399 | 454 |
+| 90th percentile | 105,218 | 304 |
+| dearest measured | 152,843 | 209 |
+
+Two things fall out of that, and they point opposite ways to what I expected.
+
+**The cap of 200 is right, and it is not conservative.** Not one of the 58 collections would fail at 200. The
+dearest fits 209. The cap that looked like it had four times the headroom it needed has, against the real
+worst case on this chain, about four percent.
+
+**The cap of 400 is too high.** Six of the 58 would not fit a 400-recipient batch:
+
+| collection | gas per recipient | fits |
+| --- | --- | --- |
+| QUOTRONS | 152,843 | ~209 |
+| Only Traits | 148,635 | ~215 |
+| up Position NFT | 106,794 | ~299 |
+| Uniswap V3 Positions | 106,776 | ~299 |
+| DUELISTS | 106,233 | ~301 |
+| The Reserve | 105,218 | ~304 |
+
+That is 10% of what is live. Nobody would lose money over it, because the test run simulates the whole batch
+and the contract's own guard stops it, but they would hit a wall the page never warned them about. 400 is
+only reachable with the recipient check off and all-or-nothing chosen, which is a rare combination, but rare
+is not the same as safe.
+
+**And the per-recipient figure the page shows is too low for a third of them.** The page assumes 57,000 gas
+per recipient in its careful modes. 19 of the 58 cost more than that, up to 2.7 times more. The plan calls
+its estimate a ceiling, and for those it is not one.
+
+The fix for all three is the same, and it is smaller than any of them: stop assuming. The page knows the
+collection and it knows an id the sender holds, so it asks the chain what one transfer of *this* token costs,
+by this sender, to an address that has never held it. That single answer sets the cost estimate, the
+per-recipient figure and the cap.
+
+Checked against all 58: the cap it would choose fits every one of them, the two dearest getting 170 and 175
+against real maxima of 209 and 215, and 56 of the 58 getting more room than a flat 200. The 1.15 margin is
+not a round number either: measuring the same contract both ways, standalone and inside a batch, the
+derivation runs up to 5% light on a lazily-minted collection and up to 35% heavy on a plain one.
+
+The old table survives only as a stopgap for the second before the answer arrives, and the page says which
+of the two it is looking at rather than presenting a guess as a measurement.
+
+## What is still not settled
+- **ERC-1155 and ERC-20 have not had the same survey.** The 721 numbers here are from live collections; the
+  1155 and 20 numbers are still from tokens deployed for the purpose.
+- **A collection dearer than QUOTRONS can be deployed tomorrow.** No fixed cap survives that, which is the
+  argument for deriving it from the token in front of you rather than from a table.
+- **The L1 data component moves.** Calldata carries a surcharge that counts against the same 32M limit. It is
+  under 1% today (111,320 gas of a 16,026,033 batch at 400 recipients, measured through the chain's own
+  NodeInterface), so it changes nothing now, but it scales with the L1 fee and it does not amortise.

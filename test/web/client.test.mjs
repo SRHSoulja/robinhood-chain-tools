@@ -137,7 +137,12 @@ function chainAnswer(O) {
           ],
         };
       }
-      case 'eth_estimateGas': return '0x186a0';
+      case 'eth_estimateGas': {
+        // What one real transfer of this token costs. The page derives the per-recipient figure and the
+        // batch cap from this single answer, so a test sets it to be a cheap collection or a dear one.
+        if (O.estimateGas === 'revert') { const e = new Error('execution reverted'); e.revertData = '0x'; throw e; }
+        return '0x' + Number(O.estimateGas || 0x186a0).toString(16);
+      }
       case 'eth_getCode': {
         const a = String(params[0] || '').toLowerCase();
         if ([NFT, TOK, ED].includes(a)) return '0x60006000';
@@ -2035,23 +2040,68 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
   await setList(page, Array.from({ length: 450 }, (_, i) => A(0x1000 + i) + ',' + (i + 1)).join('\n'));
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(800);
   check('the field explains what the number costs instead of only holding it',
     /less per wallet/.test(await text(page, '#batchNote')) && /at most/.test(await text(page, '#batchNote')),
     await text(page, '#batchNote'));
-  const capNow = () => page.evaluate(() => document.querySelector('#batch').getAttribute('max'));
-  check('with the recipient check on, the box will not offer more than the page will use', await capNow() === '200', await capNow());
-  await page.fill('#batch', '400'); await page.waitForTimeout(400);
-  check('asking for more than that is answered, not silently ignored',
-    /You asked for 400/.test(await text(page, '#batchClamp')), await text(page, '#batchClamp'));
-  check('and the plan counts the transactions it will really send',
-    (await text(page, '#plan')).includes('3 transactions'), await text(page, '#plan'));
-  await page.uncheck('#safe'); await page.selectOption('#mode', 'strict'); await page.waitForTimeout(400);
-  check('without the check and without a stipend the cap really is 400', await capNow() === '400', await capNow());
+  await page.fill('#batch', '9999'); await page.waitForTimeout(500);
+  check('asking for more than the cap is answered, not silently ignored',
+    /You asked for 9999/.test(await text(page, '#batchClamp')), await text(page, '#batchClamp'));
+  await page.fill('#batch', '100'); await page.waitForTimeout(400);
   check('and the clamp message goes away once it no longer applies', (await text(page, '#batchClamp')) === '');
-  check('the plan calls its gas figure a ceiling, because that is what the per-recipient constant is',
-    (await text(page, '#plan')).includes('at most'), await text(page, '#plan'));
   await page.close();
+}
+
+// ---- the cap comes from the token, not from a table -----------------------------------------------------
+// Measured against the 58 ERC-721 collections live on this chain, one more recipient costs between 41,825
+// and 152,843 gas. A single number cannot be right for all of them: the old table was too low for a third,
+// and it let six of them accept a batch that cannot fit in one transaction. So the page estimates one real
+// transfer of the token in front of it and works from that. 32,000,000 is the chain's own maxTxGasLimit.
+{
+  const cap = (page) => page.evaluate(() => document.querySelector('#batch').getAttribute('max'));
+  const list = Array.from({ length: 40 }, (_, i) => A(0x1000 + i) + ',' + (i + 1)).join('\n');
+
+  // QUOTRONS, the dearest collection actually live on this chain: 173,843 gas for one safeTransferFrom.
+  {
+    const page = await open(browser, { estimateGas: 173843 });
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, NFT, '721');
+    await setList(page, list); await page.waitForTimeout(900);
+    const c = Number(await cap(page));
+    check('a collection that costs 152,843 a wallet is capped near what one transaction can hold',
+      c > 120 && c < 200, 'cap=' + c);
+    check('and the page says the figure was measured, with the number',
+      /measured rather than assumed/.test(await text(page, '#batchNote'))
+      && /152,843/.test(await text(page, '#batchNote')), await text(page, '#batchNote'));
+    check('the plan calls its estimate an estimate once it is one',
+      (await text(page, '#plan')).includes('about'), await text(page, '#plan'));
+    await page.close();
+  }
+
+  // A cheap collection earns the room the dear one cannot have.
+  {
+    const page = await open(browser, { estimateGas: 60000 });
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, NFT, '721');
+    await setList(page, list); await page.waitForTimeout(900);
+    check('a cheap collection is allowed the full 400, which the old table refused it', await cap(page) === '400', await cap(page));
+    await page.close();
+  }
+
+  // And when the chain will not answer, it falls back to the number that cleared all 58.
+  {
+    const page = await open(browser, { estimateGas: 'revert' });
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, NFT, '721');
+    await setList(page, list); await page.waitForTimeout(900);
+    check('a token that will not answer falls back to 200, which every collection measured fits inside',
+      await cap(page) === '200', await cap(page));
+    check('and says so rather than claiming a measurement it does not have',
+      /has not been measured yet/.test(await text(page, '#batchNote')), await text(page, '#batchNote'));
+    check('the plan calls that figure rough, because it is', (await text(page, '#plan')).includes('roughly'),
+      await text(page, '#plan'));
+    await page.close();
+  }
 }
 
 await browser.close();

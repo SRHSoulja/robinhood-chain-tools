@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-jTZGEYvQaiCyewGpIBI/ZdAVqpICVyZZGw53s1F0fhk='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-ez6jbgBsgPQI1s0b0+QfQb6f/WYYGX/fSQGoUD5zWqI='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -276,18 +276,63 @@
   const lenient = () => $('mode').value === 'lenient';
   const safeMode = () => $('safe').checked;
   const bulkReady = () => ethers.isAddress(cfg().bulk || '');
-  // From live receipts and a full estimate sweep against real tokens, per recipient, to addresses that held
-  // nothing before: 28.8k for an ERC-20, 34.1k for an ERC-1155, 35.8k for a plain 721 transfer, 38.6k with the
-  // receiver check on, and 56.6k for the same check against a lazily-minted (ERC721A) collection. These are
-  // deliberately the ceiling of that range rather than the middle, so the figure on screen is the most this
-  // can cost and not a number that can be beaten by an ordinary collection.
-  const gasPer = () => (std() === '20' ? 32 : (safeMode() || lenient()) ? 57 : 37);
-  // One transaction on this chain stops at about 32M gas. Measured: a plain 721 batch reverts above 819
-  // recipients, at 32.2M, and the contract's own OutOfGasForBatch is what stops it rather than anything
-  // silent. The caps below sit well inside that. 200 rather than 400 in the careful modes is the receiver
-  // check and the failure stipend, which together take a lazily-minted collection to 23M at 400 and leave
-  // too little room for a collection dearer than the ones measured.
-  const maxBatch = () => deliveryPath() === 'wallet' ? 25 : (safeMode() || lenient()) ? 200 : 400;
+  // ---- what one more recipient costs -------------------------------------------------------------------
+  // This used to be a table of three numbers. Measured against the 58 ERC-721 collections that were live on
+  // this chain, one more recipient costs anywhere from 41,825 to 152,843 gas, so no single number is right
+  // for all of them: the table was too low for a third of those collections, and it let six of them accept a
+  // batch size that cannot fit in one transaction. A table cannot be fixed by choosing better numbers, only
+  // by not being a table. So the page asks instead, once per token: estimate one real transfer of THIS
+  // token, by this sender, to an address that has never held it, which is what every recipient in an airdrop
+  // is. Everything below falls out of that one answer.
+  const TX_BASE = 21000;         // a standalone estimate carries it; a batch pays it once, not per recipient
+  const BATCH_ROOM = 30000000;   // of the chain's 32,000,000 (ArbGasInfo.maxTxGasLimit), leaving the batch its own
+  const PROBE_MARGIN = 1.15;     // measured both ways on one contract, the derivation can run 5% light
+  let perRecipient = null;       // measured gas for one more recipient, null while unasked or unanswerable
+  let gasProbeKey = null;        // chain|token|standard|check, so an answer is never read for another question
+  // When the chain will not answer, these are the old table. They are a stopgap for the moment before the
+  // measurement lands, not a claim: 19 of those 58 collections cost more than the 57,000 below.
+  const fallbackPer = () => (std() === '20' ? 32000 : (safeMode() || lenient()) ? 57000 : 37000);
+  const gasPerRecipient = () => perRecipient || fallbackPer();
+  // 200 is not a round number. It is the largest batch that the dearest collection measured on this chain
+  // (152,843 gas a recipient) still fits inside one transaction, with about 4% to spare. It is what the page
+  // falls back to when it could not measure. When it could, the token's own number decides, and a cheap
+  // collection is allowed more, up to 400.
+  const measuredCap = () => (perRecipient ? Math.max(1, Math.floor(BATCH_ROOM / (perRecipient * PROBE_MARGIN))) : null);
+  const maxBatch = () => (deliveryPath() === 'wallet' ? 25 : Math.min(400, measuredCap() || 200));
+  const PROBE_ABI = [
+    'function transferFrom(address from, address to, uint256 id)',
+    'function safeTransferFrom(address from, address to, uint256 id)',
+    'function safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes data)',
+    'function transfer(address to, uint256 amount)',
+  ];
+  async function probeGas() {
+    const token = $('token').value.trim();
+    const key = [chainId(), token.toLowerCase(), std(), safeMode() ? 's' : 'p'].join('|');
+    if (gasProbeKey === key || !me || !provider || !ethers.isAddress(token) || !rows.length) return;
+    gasProbeKey = key; perRecipient = null;
+    // The lowest id, because that is the one that goes out first and the rest follow it. On a lazily-minted
+    // collection the first transfer is the dear one and every later transfer lands on the record it left.
+    const row = orderForDelivery(rows)[0];
+    // Never held this token, so the estimate includes the cold write every real recipient will pay for.
+    const bytes = crypto.getRandomValues(new Uint8Array(20));
+    const fresh = ethers.getAddress('0x' + [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(''));
+    const iface = new ethers.Interface(PROBE_ABI);
+    let data;
+    try {
+      data = std() === '721'
+        ? iface.encodeFunctionData(safeMode() ? 'safeTransferFrom(address,address,uint256)' : 'transferFrom', [me, fresh, row.id])
+        : std() === '1155'
+          ? iface.encodeFunctionData('safeTransferFrom(address,address,uint256,uint256,bytes)', [me, fresh, row.id, row.amount, '0x'])
+          : iface.encodeFunctionData('transfer', [fresh, row.amount]);
+    } catch (e) { return; }
+    try {
+      const g = Number(await new ethers.JsonRpcProvider(cfg().rpc).estimateGas({ from: me, to: token, data }));
+      if (gasProbeKey !== key) return;                       // the question changed while we were asking it
+      if (!Number.isFinite(g) || g <= TX_BASE) return;
+      perRecipient = g - TX_BASE;
+      plan();
+    } catch (e) { /* a token that will not answer keeps the fallback, and the test run is still the real check */ }
+  }
 
   const EXPLORER_API = () => (chainId() === 4663 ? 'https://robinhoodchain.blockscout.com/api/v2' : 'https://explorer.testnet.chain.robinhood.com/api/v2');
   async function explorer(path) { const r = await fetch(EXPLORER_API() + path, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error('explorer ' + r.status); return r.json(); }
@@ -1827,12 +1872,13 @@
               : path === 'wallet' ? 'your wallet, as itself (no approval)'
               : path === 'bulk' ? 'BulkSend ' + (bulkReady() ? shortAddr(c.bulk) : '')
               : path === 'blocked' ? 'this collection needs a wallet that batches' : 'not deployed on this network yet';
+    probeGas();
     syncBatchRow();
     setStat($('plan'), [
       ['network', c.name],
       ['sent by', how],
       ['', n + ' recipients in ' + batches + ' transaction' + (batches === 1 ? '' : 's')],
-      ['at most', costLine(n)],
+      [perRecipient ? 'about' : 'roughly', costLine(n)],
     ]);
     const strictSplit = !lenient() && batches > 1;
     if (strictSplit) ready = false;
@@ -1882,11 +1928,18 @@
     const typed = parseInt($('batch').value);
     const over = !isNaN(typed) && typed > cap;
     const why = deliveryPath() === 'wallet' ? BATCH_WHY.wallet : (safeMode() || lenient()) ? BATCH_WHY.careful : BATCH_WHY.plain;
+    // Long enough to answer the question, short enough to read. The world-wide context belongs in the case
+    // where there is no measurement to give instead; once the sender has their own number it is just noise.
     $('batchNote').textContent =
       'A bigger batch costs less per wallet and asks for fewer signatures. A smaller one loses less when a '
-      + 'transaction fails, because a failure takes its own batch down and nothing else. Measured on this chain, '
-      + 'a thousand NFTs cost about 8% less delivered 400 at a time than 100 at a time, and about 42% more '
-      + 'delivered 25 at a time. As this page is set now it will use at most ' + cap + ' per transaction. ' + why;
+      + 'transaction fails, because a failure takes its own batch down and nothing else. On a thousand NFTs '
+      + 'the difference between 400 at a time and 100 is about 8%. '
+      + (perRecipient
+          ? 'This collection was measured rather than assumed: about ' + perRecipient.toLocaleString()
+            + ' gas a wallet, so at most ' + cap + " fit inside one transaction's 32,000,000 gas. "
+          : 'This collection has not been measured yet, so this page will use at most ' + cap
+            + ' per transaction, the largest that fitted every one of 58 collections live on this chain. ')
+      + why;
     say('batchClamp', over
       ? 'You asked for ' + typed + '. This page will use ' + cap + ', which is as many as it will put in one transaction the way this send is set up.'
       : '', over ? 'warn' : '');
@@ -1901,7 +1954,7 @@
   function costLine(n) {
     if (!n) return 'nothing yet';
     const batches = BigInt(Math.ceil(n / batchSize()));
-    const gas = BigInt(n) * BigInt(gasPer()) * 1000n + batches * 21000n;   // include the per-transaction base cost
+    const gas = BigInt(n) * BigInt(gasPerRecipient()) + batches * BigInt(TX_BASE);   // the base cost is per transaction, not per recipient
     if (!gasPriceWei || gasPriceFor !== chainId()) return gas.toLocaleString() + ' gas in total';
     const wei = gas * gasPriceWei; const eth = Number(ethers.formatEther(wei));
     const usd = ethUsd ? ' (about $' + (eth * ethUsd).toFixed(2) + ')' : '';
