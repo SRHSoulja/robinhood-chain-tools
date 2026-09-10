@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-kcUDYYRD0XICUGXcCZDAhABi6EDweZDL2bwgHR1nNGI='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-1gw8OZE2HrAwGxp9Fg3/TPFEiX5BgRno77h+dlb+b3U='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -1373,10 +1373,29 @@
     }
     updatePickCount();
   }
+  // How many deliveries one line asks for. The rules are parseList's, deliberately: if these two ever
+  // disagree the picker silently shortens the list again.
+  function deliveriesOn(line, col) {
+    const t = String(line || '').trim();
+    if (!t) return 0;
+    if (std() !== '721') return 1;
+    const parts = col ? splitRow(t).filter(Boolean) : t.split(/[,\t;=]+|\s+/).filter(Boolean);
+    const rest = parts.slice(1);
+    // "0xA x3" -- the shape "Apply to the list" writes, and the shape the CSV quantity path produces.
+    const mult = rest.find((x) => /^x\d+$/i.test(x));
+    if (mult) { const n = parseInt(mult.slice(1), 10); return Number.isFinite(n) && n > 0 ? n : 1; }
+    // "0xA,11,12,13" -- three ids on one line are three NFTs.
+    if (rest.length > 1 && rest.every((x) => wholeText(x) !== null)) return rest.length;
+    return 1;
+  }
   function walletsInBox() {
     const col = boxColumns();
     const out = [];
-    for (const line of $('list').value.split(/\r?\n/)) { const a = addressOn(line, col); if (a) out.push(a); }
+    for (const line of $('list').value.split(/\r?\n/)) {
+      const a = addressOn(line, col);
+      if (!a) continue;
+      for (let k = 0, n = deliveriesOn(line, col); k < n; k++) out.push(a);
+    }
     return out;
   }
   function updatePickCount() {
@@ -1464,6 +1483,14 @@
   // arrival moves the key to `anon` underneath the send: the ledger it reads is empty and the ledger it
   // writes is one nothing will ever read again.
   const runKey = () => sendRunKey || computeRunKey();
+  // bulksend:<chain>:<account>:<token>:<standard>
+  function batchWasSentAs(e) {
+    if (e && e.token && e.std) return { token: e.token, std: e.std };
+    const parts = String((e && e.run) || '').split(':');
+    if (parts.length === 5 && parts[0] === 'bulksend' && ethers.isAddress(parts[3]) && ['721', '1155', '20'].includes(parts[4]))
+      return { token: parts[3], std: parts[4] };
+    return null;
+  }
   // Both ends, always. A head-only "0x000000…" is the same string for every address in a list of test
   // wallets, and the confirmation that used it was asking someone to approve four transfers to what looked
   // like one destination. The tail is the half that tells them apart.
@@ -1843,14 +1870,32 @@
       let released = 0, stillHeld = 0;
       for (const e of mine) {
         const rows = rowsFromJson(e.rows);
-        const check = await confirmArrival(rows, new Map());
+        let check = null, evidence = 'chain';
+        const sentAs = batchWasSentAs(e);
+        if (e.hash && sentAs) {
+          try {
+            const rc = await new ethers.JsonRpcProvider(cfg().rpc).getTransactionReceipt(e.hash);
+            if (rc) { const byEvent = arrivalsFromReceipt(rc, rows, sentAs.token, sentAs.std); check = { arrived: byEvent.arrived }; evidence = 'events'; }
+          } catch (err) { /* fall through to the ownership read, which works for 721 */ }
+        }
+        if (!check) {
+          check = await confirmArrival(rows, new Map());
+          // For anything fungible that read cannot answer without a baseline this page no longer has, so say
+          // that, rather than attributing the silence to the chain.
+          if (((sentAs && sentAs.std) || std()) !== '721') evidence = 'none';
+        }
         const rest = rows.filter(r => !check.arrived.includes(r));
         if (!(await commitDelivered(e.run, e.pid, check.arrived, rest))) { stillHeld += rows.length; continue; }
         if (check.arrived.length) log('  ' + check.arrived.length + ' of a batch from ' + new Date(e.at).toLocaleString() + ' now read as held by their recipient on chain, and are recorded as delivered.', 'ok', e.hash);
         if (!rest.length) continue;
         const lines = rest.slice(0, 15).map(r => '  ' + r.to + (r.id !== undefined ? '  id ' + r.id : '') + (r.amount !== undefined && std() !== '721' ? '  x' + r.amount : ''));
+        const why = evidence === 'events' ? ' that the token did not report a transfer for, in that transaction.'
+          : evidence === 'chain' ? ' the chain will not confirm arrived.'
+          : ' this page cannot tell you either way about: judging an amount needs a before-and-after reading it '
+            + 'no longer has, and no transaction hash was recorded to read the token\u2019s own events from. That is '
+            + 'this page being unable to answer, not the chain saying no.';
         const ok = confirm('A batch sent on ' + new Date(e.at).toLocaleString() + ' has ' + rest.length + ' line'
-          + (rest.length === 1 ? '' : 's') + ' the chain will not confirm arrived.\n\n'
+          + (rest.length === 1 ? '' : 's') + why + '\n\n'
           + lines.join('\n') + (rest.length > 15 ? '\n  … and ' + (rest.length - 15) + ' more' : '')
           + '\n\nTransaction: ' + (e.hash || 'never came back from the wallet')
           + '\n\nRelease these to be sent again?\n\nOnly do this if you have looked at that transaction and are satisfied they were not paid. If they were paid, releasing them pays them twice.');
@@ -2079,7 +2124,7 @@
   //
   // Balances are grouped, because a balance belongs to an address and not to a row. Two rows paying the same
   // wallet share one delta, so they are judged together and, if the total is short, neither can be attributed.
-  const groupKey = (r) => (std() === '1155' ? r.to.toLowerCase() + ':' + r.id : r.to.toLowerCase());
+  const groupKey = (r, st) => ((st || std()) === '1155' ? r.to.toLowerCase() + ':' + r.id : r.to.toLowerCase());
   async function holdingsOf(chunk) {
     const token = $('token').value.trim(); const out = new Map();
     if (std() === '721') return out;                     // ownership is read per id instead
@@ -2164,8 +2209,14 @@
   // read, which cannot say which transaction put the balance there.
   const TOPIC_TRANSFER = ethers.id('Transfer(address,address,uint256)');
   const TOPIC_SINGLE = ethers.id('TransferSingle(address,address,address,uint256,uint256)');
-  function arrivalsFromReceipt(rc, rows) {
-    const token = String($('token').value.trim()).toLowerCase();
+  // The token and the standard belong to the batch that was sent, not to whatever the form happens to be
+  // showing when this runs. reconcilePending walks every pending record in this browser -- every chain,
+  // account, token and standard -- so reading the live form here judged a 721 batch by the ERC-20 rules and
+  // hit `0n + undefined`, a TypeError that escaped runSend entirely: the user pressed Send, nothing was sent,
+  // and nothing was said. Every time, and no remedy on the page cleared it.
+  function arrivalsFromReceipt(rc, rows, forToken, forStd) {
+    const token = String(forToken).trim().toLowerCase();
+    const st = forStd;
     const addr = (t) => ethers.getAddress('0x' + String(t).slice(26)).toLowerCase();
     const seen = [];
     for (const l of (rc.logs || [])) {
@@ -2179,23 +2230,23 @@
       }
     }
     const arrived = [], unknown = [];
-    if (std() === '721') {
+    if (st === '721') {
       const pool = new Set(seen.filter(x => x.kind === '721').map(x => x.to + ':' + x.id));
-      for (const r of rows) (pool.has(r.to.toLowerCase() + ':' + r.id.toString()) ? arrived : unknown).push(r);
+      for (const r of rows) (pool.has(r.to.toLowerCase() + ':' + String(r.id)) ? arrived : unknown).push(r);
     } else {
       // Amounts are aggregated per destination, the same way the live check groups them.
       const got = new Map();
       for (const x of seen) {
-        if (std() === '1155' && x.kind !== '1155') continue;
-        if (std() === '20' && x.kind !== '20') continue;
-        const k = std() === '1155' ? x.to + ':' + x.id : x.to;
+        if (st === '1155' && x.kind !== '1155') continue;
+        if (st === '20' && x.kind !== '20') continue;
+        const k = st === '1155' ? x.to + ':' + x.id : x.to;
         got.set(k, (got.get(k) || 0n) + x.amount);
       }
       const want = new Map();
-      for (const r of rows) { const k = groupKey(r); want.set(k, (want.get(k) || 0n) + r.amount); }
+      for (const r of rows) { const k = groupKey(r, st); want.set(k, (want.get(k) || 0n) + (r.amount || 0n)); }
       for (const r of rows) {
-        const k = groupKey(r);
-        ((got.get(k) || 0n) >= want.get(k) ? arrived : unknown).push(r);
+        const k = groupKey(r, st);
+        ((got.get(k) || 0n) >= (want.get(k) || 0n) ? arrived : unknown).push(r);
       }
     }
     return { arrived, unknown };
@@ -2314,12 +2365,17 @@
       }
 
       const chunk = rowsFromJson(e.rows);
+      const sentAs = batchWasSentAs(e);
+      if (!sentAs) {
+        if (!quiet) log('A batch of ' + chunk.length + ' from ' + new Date(e.at).toLocaleString() + ' does not say which token or standard it was sent under, and this page will not guess from the form: judging it against the wrong contract\u2019s events is how a paid recipient reads as unpaid. Those recipients stay held back. Open the transaction on the explorer, and use "Forget what was delivered" only for rows you can see did not land.', 'warn', lookFor);
+        continue;
+      }
       if (rc.status === 0) { log('A batch sent on ' + new Date(e.at).toLocaleString() + ' failed on the chain, so nothing in it moved. Those ' + chunk.length + ' recipients are back in the list.', 'warn', lookFor); dropPending(e.pid); resolved++; continue; }
       // Whether a transaction succeeded and whether the recipients hold anything are different questions,
       // and this is the same check the live path makes rather than a looser one.
       const settle = async (candidates, label) => {
         // The receipt is the record of that transaction, so the token's own events in it are the evidence.
-        const byEvent = arrivalsFromReceipt(rc, candidates);
+        const byEvent = arrivalsFromReceipt(rc, candidates, sentAs.token, sentAs.std);
         const ok = byEvent.arrived;
         const rest = byEvent.unknown;
         if (!(await commitDelivered(e.run, e.pid, ok, rest))) return false;
@@ -2642,7 +2698,13 @@
     stopFlag = false; skippedRows = [];
     // Before any lock is held. Reconciliation walks every run, so it needs other runs' locks, and taking
     // those while holding this run's is how two tabs deadlock on each other.
-    await reconcilePending(false);
+    // Outside runSend's own try, so anything thrown here used to escape the click handler entirely: the form
+    // unlocked in the finally, the page looked normal, and Send did nothing and said nothing.
+    try { await reconcilePending(false); }
+    catch (err) {
+      log('Could not read back the batches this browser has already sent (' + String(err && err.message || err).slice(0, 90) + '). Nothing has been sent, because sending without that check is how a recipient gets paid twice.', 'bad');
+      return;
+    }
     // Two tabs of the same list would both read "nothing delivered yet" and both send it.
     let releaseLock = null;
     const lockedRun = runKey();   // captured once: the key must not shift under the lock that was taken for it
@@ -2762,7 +2824,7 @@
         // assuming none of these were paid.
         const pid = newPid();
         if (!addPending({ pid, run: ledgerKey(), chain: chainId(), bulk: bulkAddr, hash: tx.hash, at: Date.now(),
-                          rows: rowsToJson(chunk), via: 'bulk',
+                          rows: rowsToJson(chunk), via: 'bulk', token: $('token').value.trim(), std: std(),
                           call: { to: String(tx.to || '').toLowerCase(), data: String(tx.data || ''), value: String(tx.value || 0n), from: String(me || '').toLowerCase() } })) {
           log('  this browser stopped saving. That batch is on its way and this page can no longer keep track of it, so nothing more will be sent. Check ' + tx.hash.slice(0, 12) + '… on the explorer before sending to these wallets again.', 'bad', tx.hash);
           break;
@@ -2855,7 +2917,7 @@
         const id = typeof res === 'string' ? res : (res && res.id);
         if (!id) { log('  the wallet did not return a batch id, so this cannot be tracked. Check your wallet and the explorer before sending again.', 'bad'); break; }
         const pid = newPid();
-        if (!addPending({ pid, run: ledgerKey(), chain: chainId(), bulk: null, hash: null, callsId: String(id), at: Date.now(), rows: rowsToJson(chunk), via: 'wallet' })) {
+        if (!addPending({ pid, run: ledgerKey(), chain: chainId(), bulk: null, hash: null, callsId: String(id), at: Date.now(), rows: rowsToJson(chunk), via: 'wallet', token: $('token').value.trim(), std: std() })) {
           log('  this browser stopped saving, and that batch has already gone to your wallet. Nothing more will be sent. Check your wallet before sending to these wallets again.', 'bad');
           break;
         }
