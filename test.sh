@@ -11,4 +11,5 @@ node test/web/client.test.mjs
 node test/web/check.test.mjs
 echo
 echo "The live check (needs the network, so it is not part of this run):"
-echo "  node test/web/live-chain.mjs"
+echo "  node test/web/live-chain.mjs    (measures real tokens on testnet)"
+echo "  node test/web/live-send.mjs     (signs and sends a real airdrop on testnet)"
