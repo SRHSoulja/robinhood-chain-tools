@@ -39,7 +39,10 @@ const call = (to, sig, ...args) =>
 // one whose checksum does not hold: the first version of this test generated exactly that and was rejected.
 const stamp = Date.now().toString(16).toLowerCase().padStart(12, '0');
 const to = (n) => ('0x' + '51e' + stamp + '0'.repeat(40 - 3 - 12 - 1) + n).toLowerCase();
-const IDS = [210000, 210001, 210002];
+const base = 230000 + (Date.now() % 100000) * 10;
+execFileSync(CAST, ['send', D.OZ721, 'mintMany(address,uint256,uint256)', ME, String(base), '3',
+  '--rpc-url', RPC, '--private-key', KEY.private_key], { maxBuffer: 1 << 24 });
+const IDS = [base, base + 1, base + 2];
 const RECIPIENTS = [to(1), to(2), to(3)];
 
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--allow-file-access-from-files'] });

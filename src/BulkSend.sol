@@ -27,6 +27,7 @@ pragma solidity ^0.8.24;
 interface IERC721Like {
     function transferFrom(address from, address to, uint256 tokenId) external;
     function safeTransferFrom(address from, address to, uint256 tokenId) external;
+    function ownerOf(uint256 tokenId) external view returns (address);
 }
 
 interface IERC1155Like {
@@ -47,6 +48,7 @@ contract BulkSend {
     error EmptyBatch();
     error TransferFailed(address to, uint256 id);
     error NotAContract(address token);
+    error NotAnNft(address token);
     error DelegatedWallet(address token);
     error SelfRecipient(uint256 index);
     error ZeroAmount(uint256 index);
@@ -109,7 +111,12 @@ contract BulkSend {
     /// @dev Reason emitted when a lenient batch is asked to send to the zero address. The transfer is skipped
     ///      rather than attempted: some tokens treat the zero address as a burn, and burning someone's NFT
     ///      because of a stray line in a spreadsheet is not a recoverable mistake. Strict mode reverts instead.
-    bytes internal constant ZERO_REASON = hex"9fabe1c1";
+    /// @dev The reason recorded against a skipped zero-address row. Built per row so it carries the index:
+    ///      this used to be a bare constant holding the selector of `AddressZero()`, an error this contract
+    ///      does not declare and nothing in the repository could decode.
+    function _zeroReason(uint256 i) internal pure returns (bytes memory) {
+        return abi.encodeWithSelector(ZeroRecipient.selector, i);
+    }
 
     /// @notice Bytes of a failed transfer's revert data kept for the `Skipped` event.
     /// @dev A hostile recipient can revert with megabytes; copying and emitting all of it is a gas amplifier.
@@ -150,11 +157,12 @@ contract BulkSend {
         if (n != ids.length) revert LengthMismatch();
         if (n == 0) revert EmptyBatch();
         _mustBeContract(token);
+        _mustBeNft(token, ids[0]);
         for (uint256 i; i < n;) {
             address dst = to[i];
             if (dst == address(this)) revert SelfRecipient(i);   // nothing here can ever give it back
             if (o.lenient) {
-                if (dst == address(0)) { ++skipped; emit Skipped(token, dst, ids[i], 1, ZERO_REASON); unchecked { ++i; } continue; }
+                if (dst == address(0)) { ++skipped; emit Skipped(token, dst, ids[i], 1, _zeroReason(i)); unchecked { ++i; } continue; }
                 (bool ok, bytes memory reason) = _tryCall(
                     token,
                     o.safe
@@ -164,6 +172,9 @@ contract BulkSend {
                     o.gasPerTransfer
                 );
                 if (ok) {
+                    // A conforming ERC-721 returns nothing. Anything that answers is not the function we
+                    // called, and counting it as delivered is recording a payment that may not have happened.
+                    if (reason.length != 0) revert AmbiguousResult(dst, i);
                     ++sent;
                 } else {
                     ++skipped;
@@ -173,6 +184,11 @@ contract BulkSend {
                 if (dst == address(0)) revert ZeroRecipient(i);
                 if (o.safe) IERC721Like(token).safeTransferFrom(msg.sender, dst, ids[i]);
                 else IERC721Like(token).transferFrom(msg.sender, dst, ids[i]);
+                // A high-level call to a void function ignores whatever comes back, so strict mode counted a
+                // token that answered as a delivery just as lenient mode did.
+                uint256 rds;
+                assembly ("memory-safe") { rds := returndatasize() }
+                if (rds != 0) revert AmbiguousResult(dst, i);
             }
             unchecked { ++i; }
         }
@@ -221,10 +237,11 @@ contract BulkSend {
             if (dst == address(this)) revert SelfRecipient(i);
             if (amounts[i] == 0) revert ZeroAmount(i);           // a no-op is not a delivery
             if (o.lenient) {
-                if (dst == address(0)) { ++skipped; emit Skipped(token, dst, ids[i], amounts[i], ZERO_REASON); unchecked { ++i; } continue; }
+                if (dst == address(0)) { ++skipped; emit Skipped(token, dst, ids[i], amounts[i], _zeroReason(i)); unchecked { ++i; } continue; }
                 (bool ok, bytes memory reason) =
                     _tryCall(token, abi.encodeCall(IERC1155Like.safeTransferFrom, (msg.sender, dst, ids[i], amounts[i], "")), i, o.gasPerTransfer);
                 if (ok) {
+                    if (reason.length != 0) revert AmbiguousResult(dst, i);
                     ++sent;
                 } else {
                     ++skipped;
@@ -233,6 +250,9 @@ contract BulkSend {
             } else {
                 if (dst == address(0)) revert ZeroRecipient(i);
                 IERC1155Like(token).safeTransferFrom(msg.sender, dst, ids[i], amounts[i], "");
+                uint256 rds;
+                assembly ("memory-safe") { rds := returndatasize() }
+                if (rds != 0) revert AmbiguousResult(dst, i);
             }
             unchecked { ++i; }
         }
@@ -281,7 +301,7 @@ contract BulkSend {
             if (amounts[i] == 0) revert ZeroAmount(i);
             if (dst == address(0)) {
                 if (!o.lenient) revert ZeroRecipient(i);
-                ++skipped; emit Skipped(token, dst, 0, amounts[i], ZERO_REASON); unchecked { ++i; } continue;
+                ++skipped; emit Skipped(token, dst, 0, amounts[i], _zeroReason(i)); unchecked { ++i; } continue;
             }
             bytes memory data = abi.encodeCall(IERC20Like.transferFrom, (msg.sender, dst, amounts[i]));
             bool ok;
@@ -365,6 +385,15 @@ contract BulkSend {
     ///      USDT-style tokens return on success. So the token must be a contract before any batch runs.
     ///      An EIP-7702 wallet carries a 23-byte delegation designator (0xef0100 + address), which is code but
     ///      is not a token; treated as a mistyped address rather than something to call.
+    /// @dev One staticcall per batch, not per row. A contract with no `ownerOf` reverts with empty
+    ///      returndata; an ERC-721 that simply will not answer for this id reverts with its own error, which
+    ///      carries data. Only the first is grounds for refusing the batch.
+    function _mustBeNft(address token, uint256 probeId) internal view {
+        (bool ok, bytes memory ret) = token.staticcall(abi.encodeCall(IERC721Like.ownerOf, (probeId)));
+        if (!ok && ret.length == 0) revert NotAnNft(token);
+        if (ok && ret.length != 32) revert NotAnNft(token);
+    }
+
     function _mustBeContract(address token) internal view {
         uint256 len = token.code.length;
         if (len == 0) revert NotAContract(token);

@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import {BulkSend} from "../src/BulkSend.sol";
-import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20, Callback20, Erc20GasHog, PaysThenLies20, LongReason20, TwoWord20, PolitelyDoesNothing} from "./RealTokens.sol";
+import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20, Callback20, Erc20GasHog, PaysThenLies20, LongReason20, TwoWord20, PolitelyDoesNothing, SilentlyDoesNothing, PretendsToBeAnNft} from "./RealTokens.sol";
 import {IERC721Errors, IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 /// Every airdrop method, against real token implementations, in every mode, with every awkward recipient.
@@ -777,11 +777,34 @@ contract BulkSendRealTest is Test {
         assertEq(t.balanceOf(me), 10e18);
     }
 
-    /// The boundary, stated as a test so nobody mistakes the counter for a receipt: a contract that accepts
-    /// every call, returns success and moves nothing is counted as delivered, and no on-chain check can
-    /// distinguish it from a token that paid. This is what the README and the contract's NatSpec must say.
-    function test_aContractThatAcceptsAndMovesNothingIsCountedAsSent() public {
+    /// The boundary, stated as a test so nobody mistakes the counter for a receipt. It moved: a contract that
+    /// ANSWERS a call that should return nothing is now refused, because a conforming ERC-721 transfer
+    /// returns void and anything coming back means this was not the function we called.
+    function test_aContractThatAnswersAVoidCallIsRefusedRatherThanCounted() public {
         PolitelyDoesNothing fake = new PolitelyDoesNothing();
+        address[] memory to = _to(2, 42);
+        vm.prank(me);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[0], 0));
+        bulk.airdrop721(address(fake), to, _range(1, 2), false, false);
+    }
+
+    /// A silent contract that cannot answer ownerOf is refused on the shape of the contract, before any
+    /// transfer is attempted.
+    function test_aSilentContractWithNoOwnerOfIsRefused() public {
+        SilentlyDoesNothing fake = new SilentlyDoesNothing();
+        address[] memory to = _to(2, 42);
+        vm.prank(me);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.NotAnNft.selector, address(fake)));
+        bulk.airdrop721(address(fake), to, _range(1, 2), false, false);
+    }
+
+    /// And where the boundary actually is, after three narrowings. A contract that answers ownerOf like an
+    /// ERC-721, accepts the transfer, returns nothing exactly as a conforming one does, and moves nothing is
+    /// counted as delivered. Nothing the caller can observe separates it from a token that paid. That is why
+    /// the page asks the chain who holds what afterwards rather than believing this counter, and it is what
+    /// the README and the NatSpec have to keep saying.
+    function test_aContractThatImpersonatesAnNftIsStillCountedAsSent() public {
+        PretendsToBeAnNft fake = new PretendsToBeAnNft();
         address[] memory to = _to(2, 42);
         vm.prank(me);
         (uint256 sent, uint256 skipped) = bulk.airdrop721(address(fake), to, _range(1, 2), false, false);

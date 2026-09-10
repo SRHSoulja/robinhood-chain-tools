@@ -19,7 +19,7 @@ const A = (n) => '0x' + n.toString(16).padStart(40, '0');
 const BULK_SELECTORS = ['0xb097e731', '0x97e763b3', '0xd00a888d', '0x45310558', '0xc0d13d4e', '0xeb0f0b68'];
 // The deployed address the page is pointed at. The mock needs it as a literal; the H-01 test asserts the
 // page agrees, so this cannot drift silently.
-const BULK_FOR_MOCK = '0x91949d7328387a3613b29e56f6979ae893ccd23c';
+const BULK_FOR_MOCK = '0x8a28d0487f2e10fb325e15b81445aa083a35e7fe';
 const padAddr = (a) => '0x' + a.slice(2).padStart(64, '0');
 // The batch summary BulkSend emits. The page now requires exactly one, naming the right token and sender,
 // before it will read a receipt at all, so a mocked send has to produce a real-shaped one.
@@ -924,7 +924,7 @@ async function freshBrowser() {
   await page.evaluate(([acct, tok, to]) => {
     const run = 'bulksend:46630:' + acct.toLowerCase() + ':' + tok.toLowerCase() + ':20';
     localStorage.setItem('bulksend:pending:p9', JSON.stringify({
-      pid: 'p9', run, chain: 46630, bulk: '0x91949d7328387a3613b29e56f6979ae893ccd23c',
+      pid: 'p9', run, chain: 46630, bulk: '0x8a28d0487f2e10fb325e15b81445aa083a35e7fe',
       hash: '0x' + 'ab'.repeat(32), at: Date.now() - 60000, via: 'wallet',
       rows: [{ to, id: null, amount: '1000000000000000000', k: to.toLowerCase() + '::1000000000000000000#1' }],
     }));

@@ -220,3 +220,18 @@ contract TwoWord20 {
 contract PolitelyDoesNothing {
     fallback() external { assembly { mstore(0, 1) return(0, 32) } }
 }
+
+/// Accepts every call, returns nothing at all, moves nothing. Refused now, because it cannot answer ownerOf
+/// with an address either.
+contract SilentlyDoesNothing {
+    fallback() external {}
+}
+
+/// The shape that is genuinely indistinguishable: it answers ownerOf like an ERC-721, accepts the transfer,
+/// returns nothing exactly as a conforming one does, and moves nothing. Nothing the caller can observe
+/// separates this from a token that paid, which is why the page asks the chain who holds what afterwards
+/// instead of believing the contract's counter.
+contract PretendsToBeAnNft {
+    function ownerOf(uint256) external view returns (address) { return msg.sender; }
+    fallback() external {}
+}
