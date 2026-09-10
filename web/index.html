@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-ooM7DB9PYhrOKe9mgevERlDuzMpuiyZwjgVrgbm1pLs='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-0vPO4zCWzwIp7nSJwNBi1wdYwhdLt4M5C5bCffb6ZcI='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -1477,6 +1477,15 @@
     const t = String(line || '').trim();
     if (!t) return 0;
     if (std() !== '721') return 1;
+    // When the file names its columns there is nothing to infer, and inferring anyway is the defect: `col`
+    // was a parameter this function never read, so `0xA,1,1` under `address,tokenId,amount` was counted as
+    // two ids on one line. parseList read two recipients from that file and the picker sized itself against
+    // four wallets, from the same box, at the same moment.
+    if (col) {
+      const cells = splitRow(t);
+      if (col.qty !== undefined) return Math.max(1, Math.min(1000, wholeNumber(String(cells[col.qty] ?? '')) || 1));
+      return 1;                                    // one named address column, one named id column, one NFT
+    }
     const parts = splitRow(t).filter(Boolean);
     const rest = parts.slice(1);
     // "0xA x3" -- the shape "Apply to the list" writes, and the shape the CSV quantity path produces.
@@ -1507,8 +1516,14 @@
     const col = boxColumns();
     const bad = [];
     const lines = $('list').value.split(/\r?\n/);
+    // parseList's own rule for the header, not a second one: the first non-blank line, when that line reads
+    // as a header. Written differently here, this counted a perfectly good heading as a line with no wallet
+    // address on it -- so "Use these" and Assign both refused every headed CSV, and the refusal told the user
+    // to delete the heading, which is how a valid file becomes an unreadable one on the page's own advice.
+    const headerAt = col ? lines.findIndex((l) => l.trim()) : -1;
     for (let i = 0; i < lines.length; i++) {
       if (!lines[i].trim()) continue;                       // a blank line is not an unreadable one
+      if (i === headerAt) continue;                         // nor is the heading it was told to read
       if (!addressOn(lines[i], col)) bad.push(i + 1);
     }
     return bad;
@@ -1867,7 +1882,12 @@
     const mode = $('weight').value;
     const cap = Math.max(1, Math.min(1000, parseInt($('cap').value) || 10));
     const each = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
-    const lines = $('list').value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const rawLines = $('list').value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    // The heading is a line and not a wallet. Round thirteen found this counted wrongly in two places; the
+    // reader map found it in a third, here, where it was reported as "N wallets" including the heading.
+    const hdrCol = boxColumns();
+    const lines = hdrCol && rawLines.length && looksLikeHeading(rawLines[0]) ? rawLines.slice(1) : rawLines;
+    const headerLine = lines.length === rawLines.length ? null : rawLines[0];
     if (!lines.length) { say('msgList', 'Put the wallets in the box first, or read a collection\u2019s holders.', 'bad'); return; }
     if (mode !== 'flat') {
       if (!snap || !snap.holdings.size) { say('msgList', 'This page does not know what these wallets hold. Read a collection\u2019s holders first, and it will.', 'bad'); return; }
@@ -1879,17 +1899,34 @@
     }
     let capped = 0, unknown = 0, total = 0;
     const acol = boxColumns();
+    // A file that names its columns has already said where a quantity goes, and the "0xA x3" shorthand is not
+    // it. Writing that shorthand into a headed file produced a box the page could not read back: the heading
+    // said column 1 was tokenId and the new value was a quantity, so parseList reported every line as
+    // unreadable -- a list rewritten by this page into a form this page refuses. The quantity goes in the
+    // column the file named, and where the file named no such column this stops instead of guessing.
+    if (acol && acol.qty === undefined) {
+      say('msgList', 'That file names its columns and none of them is an amount, so there is nowhere to write '
+        + 'how many each wallet gets. Add a column called "amount", or paste a plain list of addresses with no '
+        + 'heading. Nothing has been changed.', 'bad');
+      return;
+    }
+    const setQty = (line, n) => {
+      const cells = splitRow(line);
+      while (cells.length <= acol.qty) cells.push('');
+      cells[acol.qty] = String(n);
+      return cells.join(',');
+    };
     const out = lines.map(l => {
       const addr = addressOn(l, acol);
       if (!addr) return l;
-      if (mode === 'flat') { total += each; return addr + (each > 1 ? ' x' + each : ''); }
+      if (mode === 'flat') { total += each; return acol ? setQty(l, each) : addr + (each > 1 ? ' x' + each : ''); }
       const held = snap.holdings.get(addr);
-      if (!held) { unknown++; total += 1; return addr; }
+      if (!held) { unknown++; total += 1; return acol ? setQty(l, 1) : addr; }
       const want = mode === 'per' ? held : held * each;
       const n = Math.min(want, cap);
       if (n < want) capped++;
       total += n;
-      return addr + (n > 1 ? ' x' + n : '');
+      return acol ? setQty(l, n) : addr + (n > 1 ? ' x' + n : '');
     });
     if (!confirm('This rewrites the list so each wallet gets '
       + (mode === 'flat' ? each + ' each' : mode === 'per' ? 'one for each one it holds' : each + ' for each one it holds')
@@ -1899,10 +1936,13 @@
       + (capped ? '\n' + capped + ' wallets are being capped.' : '')
       + (unknown ? '\n' + unknown + ' wallets are not in the holder reading and get one each.' : '')
       + '\n\nThere is no undo. Continue?')) return;
-    $('list').value = out.join('\n');
-    say('msgList', lines.length + ' wallets, ' + total.toLocaleString() + ' in total' + (capped ? ', ' + capped + ' capped' : '') + '. Press "Assign my token ids" to choose which of yours they receive.', 'ok');
+    $('list').value = (headerLine ? [headerLine, ...out] : out).join('\n');
     log('List weighted by holdings: ' + total.toLocaleString() + ' across ' + lines.length + ' wallets' + (capped ? ', ' + capped + ' capped at ' + cap : '') + '.', 'ok');
     parseList();
+    // After parseList, not before: parseList writes its own message into the same box, so this used to be
+    // overwritten in the same tick and the sender never saw the summary of what had just been done to
+    // their list.
+    say('msgList', lines.length + ' wallets, ' + total.toLocaleString() + ' in total' + (capped ? ', ' + capped + ' capped' : '') + '. Press "Assign my token ids" to choose which of yours they receive.', 'ok');
   });
 
   $('dropContracts').addEventListener('click', () => {

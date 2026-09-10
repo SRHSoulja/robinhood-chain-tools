@@ -861,6 +861,78 @@ async function freshBrowser() {
   await page.close();
 }
 
+// ---- Phase 4: one input, one count. The heading is a line and it is not a wallet. --------------------
+{
+  // Three functions counted the heading row as a wallet or as an unreadable line, and each was found
+  // separately: two by round thirteen, the third by reading the reader map. They are fixed together and
+  // tested together, because that is the step that was missing.
+  const page = await open(browser, { approved: true, ownedIds: [11, 12, 13] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const headed = 'address,tokenId,amount\n' + A(0x111) + ',1,1\n' + A(0x222) + ',2,1\n';
+
+  await setList(page, headed);
+  const plan = await text(page, '#plan');
+  check('S-1 a headed file parses to the wallets it contains, not the lines',
+    /2 recipients/.test(plan), plan.slice(0, 140));
+
+  // S-2: the picker must size itself against the same number parseList read.
+  await page.click('#pick'); await page.waitForTimeout(6000);
+  const count = await text(page, '#pickCount');
+  check('S-2 the picker counts the same wallets the parser did, not double',
+    / of 2 wallet/.test(count), count);
+
+  // S-1 again, from the other end: "Use these" must not refuse the file for having a heading.
+  await page.click('#pickAll'); await page.waitForTimeout(400);
+  await page.click('#pickUse'); await page.waitForTimeout(800);
+  const pickMsg = await text(page, '#pickMsg');
+  check('S-1 "Use these" accepts a headed file instead of blaming its heading',
+    !/have a wallet address on them|Fix or remove/.test(pickMsg), pickMsg.slice(0, 200));
+  await page.close();
+}
+{
+  // S-2b: the page offers Assign for a headed address-only file, so Assign has to accept that same file.
+  const page = await open(browser, { approved: true, ownedIds: [21, 22] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, 'address\n' + A(0x111) + '\n' + A(0x222) + '\n');
+  const offered = await text(page, '#problems');
+  await page.click('#assign'); await page.waitForTimeout(2500);
+  const msg = await text(page, '#msgList');
+  check('S-2b Assign accepts the headed file the page just told the user to press Assign for',
+    !/have a wallet address on them|Fix or remove/.test(msg), 'offered: ' + offered.slice(0, 90) + ' || said: ' + msg.slice(0, 160));
+  await page.close();
+}
+{
+  // The third instance, from the map: applyWeight reported lines.length as a wallet count, so a headed file
+  // was announced as one wallet more than it has. It must also keep the heading it did not write.
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, 'address,tokenId,amount\n' + A(0x111) + ',1,1\n' + A(0x222) + ',2,1\n');
+  // The weighting row is revealed by a holder snapshot. Its "the same for everyone" mode needs no snapshot
+  // DATA -- the handler's flat branch never touches it -- so the row is revealed directly here rather than
+  // driving an explorer read that has nothing to do with what is being tested.
+  await page.evaluate(() => { document.getElementById('weightRow').style.display = 'flex'; });
+  await page.selectOption('#weight', 'flat');
+  await page.fill('#each', '2');
+  await page.click('#applyWeight'); await page.waitForTimeout(900);
+  const msg = await text(page, '#msgList');
+  const box = await page.evaluate(() => document.querySelector('#list').value);
+  check('map-3 applyWeight counts wallets, not lines, on a headed file',
+    /\b2 wallets\b/.test(msg) && !/\b3 wallets\b/.test(msg), msg.slice(0, 160));
+  check('map-3 and the heading it did not write is still there',
+    /^address,tokenId,amount/.test(box), JSON.stringify(box).slice(0, 140));
+  // And the list it wrote must be one this page can read back. It used to write the "0xA x2" shorthand into
+  // a headed file, so the heading said tokenId and the value was a quantity, and parseList then called every
+  // line unreadable -- a box rewritten by this page into a form this page refuses.
+  await page.click('#parse'); await page.waitForTimeout(900);
+  check('map-3 and the page can read back the list it just wrote',
+    /2 recipients/.test(await text(page, '#plan')) && !/could not be read/.test(await text(page, '#msgList')),
+    (await text(page, '#plan')).slice(0, 120) + ' || ' + (await text(page, '#msgList')).slice(0, 120));
+  await page.close();
+}
+
 // ---- B-2: the record exists while the wallet still has the request ------------------------------------
 {
   // Between pressing Send and the wallet answering, the user is in their wallet app. On a phone that means
