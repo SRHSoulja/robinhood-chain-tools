@@ -117,6 +117,32 @@ exists to prevent, so they are release-blocking for mainnet even though they are
 Then, and only then, the mainnet question goes to the maintainer. Two conditions, both required, neither
 sufficient alone: a round with no release blockers, and explicit permission given after it.
 
+## The tools, and which of them this project was not using
+
+The block explorer was sitting there for the whole project and I was reading receipts with the same code that
+wrote them, which is checking code with itself. That was a symptom. Here is the whole toolbox, what it says,
+and where it now feeds into the plan.
+
+| tool | state before | what it found |
+| --- | --- | --- |
+| **Blockscout explorer** | unused | Decodes against the *verified* ABI, independently of this repository. Ended B-1 in one transaction, confirmed the right entry point is called on all four paths, and showed the gas probe over-estimates by 2-20% — always in the safe direction, previously assumed rather than known. |
+| **`forge coverage`** | **never run** | 98.67% of lines but **83.64% of branches**. Nine uncovered, and they cluster: the ERC-1155 path's zero-address skip, its strict `ZeroRecipient`, its `LengthMismatch`/`EmptyBatch`, and three `AmbiguousResult` branches — the guards added in v11. Branches are where B-1 lived. |
+| **Slither** | **never run** | 102 detectors, **0 High, 0 Medium**. The 6 Lows are all `calls-loop`, which is what a batch airdrop is. Worth recording as a real result: static analysis finds nothing here, so the adversarial rounds are carrying the weight, not duplicating a scanner. |
+| **Fork testing** (`vm.createSelectFork`) | **never used** | Works against Robinhood Chain mainnet. Read-only and local — a fork is a sandbox, no transaction is sent and no gas is spent. This is the answer to "a mocked test answers its own question": the guards can be tested against the **58 real mainnet collections** instead of fixtures this repository wrote. |
+| **`cast run` / `debug_traceTransaction`** | unused | **Unavailable on this chain.** The public RPC exposes no `debug_*`, and `cast run` cannot even parse an Orbit block: every block carries an internal system transaction of type `0x6a`, which the deserialiser rejects. Recorded so nobody spends another half hour on it. |
+| **Fuzz / invariant tests** | 3 fuzz, **0 invariant** | `foundry.toml` already sets `runs = 512` and almost nothing uses it. The contract's properties — "sent + skipped == n", "nothing leaves that was not approved" — are invariants, and are currently asserted example by example. |
+| **`forge snapshot`** | unused | No gas regression tracking at all. v13 changes the guards, so this is the round to start. |
+
+Three of these become work rather than notes:
+
+- **The uncovered branches go into Phase 1's map.** Nine untested branches on the ERC-1155 and ERC-20 paths is
+  the same finding as the reader map, arrived at mechanically: this tool covers all three standards, and its
+  ERC-721 path is better tested than the other two. That is a coverage claim I could have measured on any day
+  of this project and did not.
+- **The guards get tested against real collections in Phase 2**, on a mainnet fork, before v13 is deployed.
+  B-1 is exactly the question "does the guard agree with reality", and reality is 58 contracts that exist.
+- **Invariants and a gas snapshot land with v13**, because that is when the contract changes.
+
 ## Standing practices adopted this round
 
 - **Read the chain back from the explorer.** Checking receipts with the same code that wrote them is checking
@@ -125,6 +151,9 @@ sufficient alone: a round with no release blockers, and explicit permission give
   was previously assumed rather than known.
 - **When a reader is fixed, enumerate its twins in the commit message.**
 - **Do not deploy the contract twice for one change set.** Map first.
+- **Run the mechanical tools before the human argument.** `forge coverage` and Slither cost minutes and answer
+  questions no amount of reading answers. Neither had ever been run here.
+- **Prefer a fork over a fixture** where a real contract exists to test against.
 
 ## What this plan does not cover
 
