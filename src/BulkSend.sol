@@ -49,6 +49,7 @@ contract BulkSend {
     error TransferFailed(address to, uint256 id);
     error NotAContract(address token);
     error NotAnNft(address token);
+    error IsAnNft(address token);
     error DelegatedWallet(address token);
     error SelfRecipient(uint256 index);
     error ZeroAmount(uint256 index);
@@ -157,7 +158,7 @@ contract BulkSend {
         if (n != ids.length) revert LengthMismatch();
         if (n == 0) revert EmptyBatch();
         _mustBeContract(token);
-        _mustBeNft(token, ids[0]);
+        _mustBeNft(token, ids[0], ids[n - 1]);
         for (uint256 i; i < n;) {
             address dst = to[i];
             if (dst == address(this)) revert SelfRecipient(i);   // nothing here can ever give it back
@@ -295,6 +296,7 @@ contract BulkSend {
         if (n != amounts.length) revert LengthMismatch();
         if (n == 0) revert EmptyBatch();
         _mustBeContract(token);
+        _mustNotBeNft(token, amounts[0]);
         for (uint256 i; i < n;) {
             address dst = to[i];
             if (dst == address(this)) revert SelfRecipient(i);
@@ -314,8 +316,7 @@ contract BulkSend {
             if (ok) {
                 // Exactly nothing (USDT-style) or exactly one word holding 1. Trailing bytes after that word
                 // are not a `bool`, and this contract has no business guessing what they were meant to be.
-                bool answeredTrue = ret.length == 0 || (ret.length == 32 && abi.decode(ret, (uint256)) == 1);
-                if (!answeredTrue) revert AmbiguousResult(dst, i);   // it may have paid them; do not call this a skip
+                if (_erc20Answer(ret) != ANSWER_DELIVERED) revert AmbiguousResult(dst, i);   // may have paid them
                 ++sent;
             } else if (o.lenient) {
                 ++skipped;
@@ -392,10 +393,50 @@ contract BulkSend {
     /// @dev One staticcall per batch, not per row. A contract with no `ownerOf` reverts with empty
     ///      returndata; an ERC-721 that simply will not answer for this id reverts with its own error, which
     ///      carries data. Only the first is grounds for refusing the batch.
-    function _mustBeNft(address token, uint256 probeId) internal view {
-        (bool ok, bytes memory ret) = token.staticcall(abi.encodeCall(IERC721Like.ownerOf, (probeId)));
-        if (!ok && ret.length == 0) revert NotAnNft(token);
-        if (ok && ret.length != 32) revert NotAnNft(token);
+    function _mustBeNft(address token, uint256 probeA, uint256 probeB) internal view {
+        if (_answersOwnerOf(token, probeA)) return;
+        // A revert with empty returndata is not proof of anything. `require(cond);` with no reason string
+        // compiles to revert(0,0), which is what the Vyper reference ERC-721 and any bare assert produce, so a
+        // real collection refusing an id that was burned or never minted looks identical to a contract with no
+        // such function. Two cheap ways out before refusing a batch, both in the failure path only.
+        if (probeB != probeA && _answersOwnerOf(token, probeB)) return;   // a different id from the same list
+        // And the question this page asks everywhere else for exactly this: does it claim to be one.
+        (bool ok165, bytes memory r165) =
+            token.staticcall(abi.encodeWithSelector(0x01ffc9a7, bytes4(0x80ac58cd)));   // supportsInterface(ERC721)
+        if (ok165 && r165.length == 32 && abi.decode(r165, (uint256)) == 1) return;
+        revert NotAnNft(token);
+    }
+
+    uint8 internal constant ANSWER_DELIVERED = 0;
+    uint8 internal constant ANSWER_UNREADABLE = 2;
+
+    /// @dev What an ERC-20 said. Nothing at all is a USDT-style success, and exactly `1` is a success.
+    ///      EVERYTHING else, `false` included, is unreadable and takes the batch down.
+    ///      Round twelve argued that `false` should be skipped in lenient mode instead, because the standard
+    ///      defines it as "I did not transfer" and a conforming token answering it has moved nothing. That is
+    ///      right about conforming tokens, and this contract cannot know it has one: PaysThenLies20 in this
+    ///      repository's own fixtures moves the balance and then answers false. Nothing observable from here
+    ///      separates the two, and reporting a payment that happened as a skip is how a retry pays someone
+    ///      twice. Kept out of the loop because _airdrop20 sits on the stack limit.
+    function _erc20Answer(bytes memory ret) private pure returns (uint8) {
+        if (ret.length == 0) return ANSWER_DELIVERED;
+        if (ret.length != 32) return ANSWER_UNREADABLE;
+        return abi.decode(ret, (uint256)) == 1 ? ANSWER_DELIVERED : ANSWER_UNREADABLE;
+    }
+
+    function _answersOwnerOf(address token, uint256 id) private view returns (bool) {
+        (bool ok, bytes memory ret) = token.staticcall(abi.encodeCall(IERC721Like.ownerOf, (id)));
+        return ok && ret.length == 32;
+    }
+
+    /// @dev The mirror of _mustBeNft, and it exists for the same reason: `transferFrom(address,address,uint256)`
+    ///      is one selector for both standards, and a conforming ERC-721 returns nothing, which the ERC-20
+    ///      path reads as a USDT-style success. Without this, an ERC-721 through airdrop20 spends its token
+    ///      IDS as amounts -- NFTs leave the sender, and the counter and the Airdrop20 event both report a
+    ///      token airdrop that never happened. v11 closed this direction for airdrop721 and left the mirror.
+    ///      It cannot be perfect: a hybrid can answer both. Neither can _mustBeNft, for the same reason.
+    function _mustNotBeNft(address token, uint256 probeAmount) internal view {
+        if (_answersOwnerOf(token, probeAmount)) revert IsAnNft(token);
     }
 
     function _mustBeContract(address token) internal view {

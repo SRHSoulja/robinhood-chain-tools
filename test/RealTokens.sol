@@ -235,3 +235,33 @@ contract PretendsToBeAnNft {
     function ownerOf(uint256) external view returns (address) { return msg.sender; }
     fallback() external {}
 }
+
+/// A real ERC-721 whose `ownerOf` refuses a missing id with `revert(0, 0)` -- no error, no message. This is
+/// what a bare `require(cond);` compiles to, what Vyper's reference ERC-721 and any bare `assert` produce, and
+/// several collections in the wild are built this way. v11's "not an NFT" guard read an empty revert as proof
+/// that no such function existed, so it refused these collections outright whenever the first id in the chunk
+/// happened to be burned or unminted -- and refused them with a message about the whole collection.
+contract BareRevert721 {
+    mapping(uint256 => address) internal _owner;
+    function mint(address to, uint256 id) external { _owner[id] = to; }
+    function ownerOf(uint256 id) external view returns (address) {
+        require(_owner[id] != address(0));           // no reason string: revert(0, 0)
+        return _owner[id];
+    }
+    function supportsInterface(bytes4 i) external pure returns (bool) { return i == 0x80ac58cd || i == 0x01ffc9a7; }
+    function transferFrom(address f, address t, uint256 id) external {
+        require(_owner[id] == f);
+        _owner[id] = t;
+    }
+    function isApprovedForAll(address, address) external pure returns (bool) { return true; }
+}
+
+/// The same, and it does not answer supportsInterface either -- the last way out of the guard closed. A real
+/// collection this shape cannot be told apart from a contract with no ownerOf at all, and the guard refuses
+/// it. That is the residual cost of the check, pinned here so it is a known limit and not a surprise.
+contract BareRevert721NoIntrospection {
+    mapping(uint256 => address) internal _owner;
+    function mint(address to, uint256 id) external { _owner[id] = to; }
+    function ownerOf(uint256 id) external view returns (address) { require(_owner[id] != address(0)); return _owner[id]; }
+    function transferFrom(address f, address t, uint256 id) external { require(_owner[id] == f); _owner[id] = t; }
+}

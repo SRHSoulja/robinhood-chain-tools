@@ -47,7 +47,7 @@ One contract, three functions. It holds nothing: every transfer is `transferFrom
 only move what you approved, inside the transaction you signed. **No owner, no upgrade path, no fees, no
 pause.** If you want it to stop, stop calling it.
 
-Deployed at [`0x91949D7328387A3613b29E56f6979Ae893ccd23C`](https://explorer.testnet.chain.robinhood.com/address/0x91949D7328387A3613b29E56f6979Ae893ccd23C),
+Deployed at [`0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481`](https://explorer.testnet.chain.robinhood.com/address/0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481),
 verified, runtime bytecode byte-for-byte equal to what this repository builds.
 
 ### Modes
@@ -233,13 +233,14 @@ purpose: a probe reproduces a defect, so a probe that fails is a defect that is 
 
 ## Reviews
 
-Six internal review passes and eleven adversarial review rounds, each by a fresh model given the code and no
-other context and asked to break it. Every blocking finding is fixed, and all eleven are published unedited in
+Six internal review passes and twelve adversarial review rounds, each by a fresh model given the code and no
+other context and asked to break it. Every blocking finding is fixed, and all twelve are published unedited in
 [`docs/`](docs/) including the parts that are unflattering: a page that answered "this is a plain transfer of
 ETH", in green, for an unlimited approval whose `0x` prefix had been lost; a bug dismissed in a code comment
 as deliberate that was a double-payment path; a page printing safety conclusions from function names; a build
-recipe that did not reproduce the file it described; and three occasions where a fix became the next round's
-finding.
+recipe that did not reproduce the file it described; a CI job that stayed red for eight commits because
+deliberately-failing files were added and nobody ran the watcher; and five occasions where a fix became the
+next round's finding.
 
 **These are not an audit in the sense a firm means it, and calling them one would be borrowing authority they
 have not earned.** They are the pass that finds what would otherwise waste a real auditor's time. No human

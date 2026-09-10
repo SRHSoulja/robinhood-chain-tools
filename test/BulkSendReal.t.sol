@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import {BulkSend} from "../src/BulkSend.sol";
-import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20, Callback20, Erc20GasHog, PaysThenLies20, LongReason20, TwoWord20, PolitelyDoesNothing, SilentlyDoesNothing, PretendsToBeAnNft} from "./RealTokens.sol";
+import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20, Callback20, Erc20GasHog, PaysThenLies20, LongReason20, TwoWord20, PolitelyDoesNothing, SilentlyDoesNothing, PretendsToBeAnNft, BareRevert721, BareRevert721NoIntrospection} from "./RealTokens.sol";
 import {IERC721Errors, IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 /// Every airdrop method, against real token implementations, in every mode, with every awkward recipient.
@@ -409,6 +409,13 @@ contract BulkSendRealTest is Test {
 
     /// A `false` answer is indistinguishable from a token that paid and then lied, so neither mode may treat it
     /// as a skip. The whole batch is undone, which also undoes anything the token did do.
+    /// Round twelve S-6 argued this should be a lenient SKIP: ERC-20 defines `false` as "I did not transfer",
+    /// and this fixture really did move nothing, so a blocklisted recipient should not cost the batch. The
+    /// counter-example is the test below -- PaysThenLies20 pays and THEN answers false -- and from inside the
+    /// call the two are identical. The choice is to keep them together and take the whole batch down, because
+    /// listing a paid recipient as skipped is how a re-run pays them twice. See docs/for-reviewers.md
+    /// decision 3. This test and testERC20_paidButAnsweredWrong_revertsInsteadOfSkipping pin both halves; if a
+    /// later round changes one of them, it must say what new information separates the two shapes.
     function testFalse20_returningFalseRevertsBothModes() public {
         False20 t = new False20(); t.mint(me, 100);
         address[] memory to = _to(2, 12); uint256[] memory amt = new uint256[](2); amt[0] = 60; amt[1] = 60;
@@ -601,7 +608,8 @@ contract BulkSendRealTest is Test {
         }
     }
 
-    /// A token that REVERTS moved nothing, so lenient mode may still skip it. That is the distinction.
+    /// A token that REVERTS moved nothing -- the EVM undid it -- so lenient mode may still skip it. That is
+    /// the distinction, and it is the whole reason a returned `false` cannot be treated the same way.
     function testERC20_revertedTransferIsStillSkippable() public {
         Blacklist20 t = new Blacklist20(); t.mint(me, 100e18);
         address[] memory to = _to(2, 310); t.block_(to[1], true);
@@ -609,6 +617,96 @@ contract BulkSendRealTest is Test {
         (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, _fill(2, 1e18), true);
         vm.stopPrank();
         assertEq(sent, 1); assertEq(skipped, 1); assertEq(t.balanceOf(to[0]), 1e18); assertEq(t.balanceOf(to[1]), 0);
+    }
+
+    // ---- round twelve S-5: an empty revert is not proof, and one id is not a batch ----------------------
+
+    /// The id being probed is missing, a later one in the same list is not. v11 refused the whole collection.
+    function testBareRevert721_deliversWhenALaterIdAnswers() public {
+        BareRevert721 t = new BareRevert721();
+        uint256[] memory ids = new uint256[](2); ids[0] = 7; ids[1] = 8;
+        t.mint(me, 8);                                     // id 7 was never minted; id 8 is real
+        address[] memory to = _to(2, 320);
+        vm.startPrank(me);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721(address(t), to, ids, false, true);
+        vm.stopPrank();
+        assertEq(sent, 1, "the real id must go out");
+        assertEq(skipped, 1, "the missing id is one skipped row, not a refused collection");
+        assertEq(t.ownerOf(8), to[1]);
+    }
+
+    /// Neither probed id exists, so the only thing left is whether it claims to be an ERC-721. It does.
+    function testBareRevert721_deliversWhenOnlyIntrospectionAnswers() public {
+        BareRevert721 t = new BareRevert721();
+        uint256[] memory ids = new uint256[](2); ids[0] = 7; ids[1] = 9;
+        t.mint(me, 8);                                     // neither 7 nor 9 exists; 8 does and is not probed
+        address[] memory to = _to(2, 322);
+        vm.startPrank(me);
+        (uint256 sent, uint256 skipped) = bulk.airdrop721(address(t), to, ids, false, true);
+        vm.stopPrank();
+        assertEq(sent, 0); assertEq(skipped, 2, "two undeliverable rows, and the batch still ran");
+    }
+
+    /// The residual limit, pinned deliberately: bare reverts AND no introspection is indistinguishable from a
+    /// contract with no ownerOf, and the guard refuses it. Strict mode users of such a collection must send
+    /// an id that exists in the same chunk, which the page's own test run tells them before they sign.
+    function testBareRevert721_withoutIntrospection_isStillRefused() public {
+        BareRevert721NoIntrospection t = new BareRevert721NoIntrospection();
+        uint256[] memory ids = new uint256[](1); ids[0] = 7;
+        t.mint(me, 8);
+        vm.prank(me);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.NotAnNft.selector, address(t)));
+        bulk.airdrop721(address(t), _to(1, 324), ids, false, true);
+    }
+
+    /// A contract with no ownerOf at all is still refused, which is the check's whole reason to exist.
+    function testDeafContract_isStillNotAnNft() public {
+        Deaf t = new Deaf();
+        uint256[] memory ids = new uint256[](1); ids[0] = 1;
+        vm.prank(me);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.NotAnNft.selector, address(t)));
+        bulk.airdrop721(address(t), _to(1, 326), ids, false, true);
+    }
+
+    // ---- round twelve S-4: the mirror of that guard, on the ERC-20 path ---------------------------------
+
+    /// `transferFrom(address,address,uint256)` is one selector for both standards, and a conforming ERC-721
+    /// returns nothing -- which the ERC-20 path reads as a USDT-style success. Without this guard an NFT sent
+    /// through the ERC-20 form spends its token IDS as amounts: the NFTs leave, and the count and the
+    /// Airdrop20 event both report a token airdrop that never happened. v11 closed the other direction only.
+    function testERC721_throughTheErc20Path_isRefused() public {
+        OZ721 t = new OZ721(); t.mint(me, 1); t.mint(me, 2);
+        address[] memory to = _to(2, 328);
+        uint256[] memory amt = new uint256[](2); amt[0] = 1; amt[1] = 2;    // token ids, read as amounts
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.IsAnNft.selector, address(t)));
+        bulk.airdrop20(address(t), to, amt, true);
+        vm.stopPrank();
+        assertEq(t.ownerOf(1), me, "the NFT must not have moved");
+        assertEq(t.ownerOf(2), me);
+    }
+
+    /// The guard probes ownerOf(amounts[0]), so it catches the dangerous shape -- amounts that are really
+    /// token ids -- and not an NFT address pasted with genuine 18-decimal amounts. That case is harmless
+    /// anyway: no such token id exists, so every transferFrom reverts and nothing leaves the wallet.
+    function testERC721_throughTheErc20Path_withRealAmounts_movesNothing() public {
+        OZ721 t = new OZ721(); t.mint(me, 1);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), _to(2, 330), _fill(2, 1e18), true);
+        vm.stopPrank();
+        assertEq(sent, 0); assertEq(skipped, 2);
+        assertEq(t.ownerOf(1), me, "the NFT must not have moved");
+    }
+
+    /// And a real ERC-20 must still go through, which is the regression this guard could have caused.
+    function testRealErc20_stillDeliversWithTheMirrorGuardInPlace() public {
+        OZ20 t = new OZ20(); t.mint(me, 100e18);
+        address[] memory to = _to(3, 332);
+        vm.startPrank(me); t.approve(address(bulk), type(uint256).max);
+        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, _fill(3, 1e18), false);
+        vm.stopPrank();
+        assertEq(sent, 3); assertEq(skipped, 0);
+        for (uint256 i; i < 3; i++) assertEq(t.balanceOf(to[i]), 1e18);
     }
 
     /// H-07. The contract can never give anything back, so it must refuse to be a recipient.

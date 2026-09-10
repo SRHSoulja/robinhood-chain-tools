@@ -1,6 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 10 September 2026, against `cebe40c`.
+Last updated 10 September 2026, against BulkSend **v12** and round twelve.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -15,7 +15,7 @@ Two things have to be true before that changes, and both are currently false:
 
 | | state |
 | --- | --- |
-| a review round with no release blockers | **not met** — round eleven found five, all now fixed, but the round that finds none has not happened |
+| a review round with no release blockers | **not met** — round twelve found one, now fixed. The round that finds none has not happened |
 | explicit permission from the maintainer, given after that round | **not given** |
 
 Neither alone is enough. The deployer holds about 0.002 mainnet ETH that someone else sent, which is enough
@@ -26,7 +26,7 @@ nonce is 0.
 
 ```
 ./test.sh                              # everything below except the live scripts
-forge test                             #  86 contract tests, plus 20 reviewer probes of which 5 must FAIL
+forge test                             #  93 contract tests, plus 27 reviewer probes of which 7 must FAIL
 node test/web/client.test.mjs          # 270 airdrop page tests
 node test/web/check.test.mjs           # 116 Check page tests
 ```
@@ -46,9 +46,14 @@ node test/web/live-wallet-batch.mjs    # the no-approval path over a real EIP-77
 node test/web/live-send-all.mjs        # real ERC-1155 and ERC-20 airdrops, balances checked afterwards
 ```
 
-All four were last run green against BulkSend v11 on 10 September 2026: 4, 10, 12 and 18 checks. Between
-them, every one of the three standards has been delivered on chain through the current contract and the
-balances read back afterwards.
+All four were last run green against BulkSend **v12** on 10 September 2026: 4, 10, 12 and 18 checks, 44 in
+total. Between them, every one of the three standards has been delivered on chain through the current
+contract and the balances read back afterwards -- three NFTs to three fresh addresses, three recipients each
+holding 2 of an ERC-1155 edition, and three each holding exactly 1.5 of an ERC-20, to the wei.
+
+This matters more than usual for v12, because v12 changed the guard that decides whether a contract is an NFT
+at all. Had that discrimination been backwards, every legitimate airdrop would now refuse, and no mocked suite
+could have told me: a mock answers `ownerOf` however the test says to.
 
 live-send-all.mjs signs with a deliberately **undelegated** key. That is not incidental: an EIP-7702 upgraded
 wallet has code, so a conforming ERC-1155 refuses to mint to it unless its delegate implements
@@ -67,7 +72,7 @@ They sign with a testnet-only key that holds no mainnet balance and refuse to ru
 | a batch of ERC-721 really lands | `live-send.mjs`, on chain, three fresh addresses | ✅ |
 | the no-approval path really works with no approval | `live-wallet-batch.mjs`, on chain, BulkSend approved for nothing before or after | ✅ |
 | the gas probe gets a sane answer from a real chain | `live-chain.mjs`, four token types | ✅ |
-| deployed bytecode matches what this repository builds | v11, byte-identical, 18,276 chars, and verified on the explorer (not partially, compiler 0.8.36) | ✅ |
+| deployed bytecode matches what this repository builds | v12, byte-identical, 8,968 bytes, and verified on the explorer (not partially, compiler 0.8.36) | ✅ |
 | the deployed pages match these files | `deploy/publish.sh` verifies the hash after publishing | ✅ |
 | ERC-1155 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding 2 of an edition | ✅ |
 | ERC-20 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding exactly 1.5, to the wei | ✅ |
@@ -83,8 +88,9 @@ a distribution, only its top, and the file says so.
 
 ## Open findings
 
-Round eleven, 9 September 2026, against `33c29e0`. The full report is
-[`audit-2026-09-09-eleventh-external.md`](audit-2026-09-09-eleventh-external.md), published unedited.
+Round twelve, 10 September 2026, against `59e979f`. The full report is
+[`audit-2026-09-10-twelfth-external.md`](audit-2026-09-10-twelfth-external.md), published unedited. One
+blocking finding, eighteen should-fix, six inherent limits.
 
 Reproduction is by the reviewer's own probes, which are in the repository and can be re-run:
 
@@ -92,49 +98,73 @@ Reproduction is by the reviewer's own probes, which are in the repository and ca
 node test/web/audit-probe.mjs          # the airdrop page
 node test/web/audit-probe-check.mjs    # the Check page
 node test/web/audit-probe-check2.mjs   # the Check page, second set
-forge test --match-path test/AuditProbe.t.sol
+node test/web/audit-probe-12.mjs       # round twelve
+forge test --match-path 'test/Audit*.t.sol'
 ```
 
 A finding is marked closed only when the probe that demonstrated it stops reproducing.
 
-### Blocks release — all closed
+### Blocks release — closed
 
 | | | |
 | --- | --- | --- |
-| B-1 | a wallet's word released already-paid recipients for re-payment | closed |
-| B-2 | de-prefixed calldata answered as "a plain transfer of ETH", in green | closed |
-| B-3 | a transaction whose body could not be read described as a plain transfer | closed |
-| B-4 | `chainId` read by nobody, so another chain's contract described as this one's | closed |
-| B-5 | unsettled token standard written up as ERC-20 | closed |
+| B-1 | a transaction naming another chain is read against this one | closed |
 
-### Should be fixed — 18 closed, 1 open
+B-1 is the same defect as round eleven's B-4, surviving on the reader nobody re-checked: the fix went onto the
+single-call path and the batch renderer kept reading `env.chainId`, a field only a `wallet_sendCalls` envelope
+has. Both readers now report their declared network under one name and the renderer reads that name.
+
+### Should be fixed — 6 closed, 1 declined with its reason, 11 open
 
 | | | |
 | --- | --- | --- |
-| S-4 | a hostile RPC could raise the batch cap above the un-measured fallback | closed |
-| S-5 | the gas measurement was not re-taken when the list or the account changed | closed |
-| S-15 | `value` not checked as a hex quantity, an ETH figure stated from it | closed |
-| S-16 | the unlimited-approval warning missed `increaseAllowance` and `permit` | closed |
-| S-17 | a refused input left the previous answer on screen | closed |
-| S-1 | the NFT picker silently collapses a documented multi-id line | closed |
-| S-2 | a stale wallet-batch record makes Send throw before the run lock is taken | closed |
-| S-3 | "Review held rows" can never confirm an ERC-20 or ERC-1155 row | closed |
-| S-6 | `onlyOnce` releases the button while the first request is still live | closed |
-| S-7 | attacker-controlled revert text presented as the page's own words | closed |
-| S-8 | a 404 from the explorer passthrough is replaced by our own page, unhardened | closed |
-| S-9 | the explorer passthrough serves third-party HTML from this origin with no CSP | closed |
-| S-10 | the publish CSP gate counts hashes and checks nothing else | **open** |
-| S-11 | `/cdn-cgi/*` is answered before the Worker, so a claim in SECURITY.md is false | closed |
-| S-12 | the contract counts a 721/1155 delivery without reading the call's return data | closed |
-| S-13 | `ZERO_REASON` is the selector of an error this contract does not declare | closed |
-| S-14 | smaller things, grouped (13 items) | closed |
-| S-18 | `owner() == 0` stated as fact, its qualifier rendering in the other branch | closed |
-| S-19 | smaller Check-page items (7 items) | closed |
+| S-1 | `tests` CI red for 8 commits; browser suites and bytecode check skipped | closed |
+| S-2 | the live Check page was not this repository's | closed |
+| S-3 | deployed runtime ≠ what this source builds | closed — **v12** deployed and verified |
+| S-4 | `airdrop20` on an ERC-721 spends amounts as token ids | closed in v12 |
+| S-5 | `_mustBeNft` refuses a bare-`require` ERC-721; probes `ids[0]` only | closed in v12 |
+| S-6 | one `false` answer reverts the whole lenient ERC-20 batch | **declined**, reason below |
+| S-7 | "Use these" silently deletes unreadable list lines | open |
+| S-8 | a quoted CSV works with a header row and fails without one | open |
+| S-9 | "would not switch" reported for a wallet that never answered | open |
+| S-10 | `readTransaction` validates neither `to` nor `from` | open |
+| S-11 | `arrivalsFromReceipt` reads the live account | open |
+| S-12 | `readBatchReceipt` reads the live form during reconciliation | open |
+| S-13 | the quoted cost carries none of the 1.35 margin; docs still say 1.15 | open |
+| S-14 | Send does not check the `signing` guard | open |
+| S-15 | the publish gate checks `script-src` and no other directive | open |
+| S-16 | origin-wide `cdnjs` grant; ethers from a third-party CDN | open |
+| S-17 | `integrity.yml` hashes bodies, so a header regression on `/` passes | open |
+| S-18 | six small items, grouped | open |
 
-### Inherent limits — 8, acknowledged not fixed
+**S-6, declined.** The reviewer's reasoning is sound: ERC-20 defines `false` as "I did not transfer", so a
+conforming token answering it has moved nothing, and one blocklisted recipient should not cost a 400-row
+lenient batch. It is declined because this repository's own fixture disproves the premise — `PaysThenLies20`
+moves the balance and *then* answers `false`, and from inside the call nothing separates it from a refusal
+short of reading every balance before and after. Reporting a payment that happened as a skip is how a re-run
+pays someone twice. The choice, its cost, and what would have to change to revisit it are written up in
+[`for-reviewers.md`](for-reviewers.md) decision 3, and both halves are pinned by tests, so a later round that
+wants to change it has to say what new information separates the two shapes.
+
+Three of the four most serious findings in this round were process failures from the same night the code was
+written: a fix applied to one path and not its twin, CI red for eight commits because deliberately-failing
+probe files were added and the watcher never run, and a page committed but never deployed. None of them were
+subtle. All three now have an automatic guard, in `preflight.sh` and `verify.sh`.
+
+### Inherent limits — 6, acknowledged not fixed
 
 Things that cannot be engineered away in a browser, listed in the report's own section. Pretending otherwise
 would be its own defect, so they are recorded rather than closed.
+
+### Round eleven, 9 September 2026 — all closed
+
+Kept for the record. The full report is
+[`audit-2026-09-09-eleventh-external.md`](audit-2026-09-09-eleventh-external.md).
+
+Five blockers: a wallet's word released already-paid recipients for re-payment; de-prefixed calldata answered
+as "a plain transfer of ETH", in green; a transaction whose body could not be read described as a plain
+transfer; `chainId` read by nobody; an unsettled token standard written up as ERC-20. All five closed, and all
+nineteen should-fix items closed with them.
 
 ## Reproduction state, measured
 
@@ -145,7 +175,8 @@ Re-running every probe against the current commit:
 | Check page probes, set one | 0 of 21 |
 | Check page probes, set two | 1 of 6 |
 | Airdrop page probes | 8 of 23 |
-| Contract probes | 15 of 20 |
+| Contract probes, round eleven | 15 of 20 |
+| Contract probes, round twelve | 5 of 7 |
 
 `./verify.sh` runs all of the above in one command and compares those counts against
 [`test/findings-baseline.json`](../test/findings-baseline.json), so a later fix that quietly reopens an
@@ -155,17 +186,26 @@ The one left in the Check set is the page correctly stating that no function nam
 matched, which is true and is not a defect: the finding was the *combination* with an unqualified "nobody owns
 it", and that half is fixed.
 
-The contract line reads backwards on purpose. These probes reproduce findings, so 5 of the 20 assertions now
-FAIL, and those five are the fixed ones. The 15 that still pass are the reviewer's checks on behaviour that was
-already correct.
+The contract lines read backwards on purpose. These probes reproduce findings, so the assertions that now
+FAIL are the fixed ones -- five from round eleven, two from round twelve. The rest are the reviewers' checks on
+behaviour that was already correct.
+
+`verify.sh` compares each probe file separately and **fails on a probe file the baseline has never heard of**.
+That is not hypothetical tidiness: round twelve's probe file sat in the repository unwatched, because the
+comparison named `AuditProbe.t.sol` specifically rather than every `test/Audit*.t.sol`.
 
 ## History
 
-Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5. Eleven rounds, each by a fresh model given the
-code and no other context. Three times a fix from one round became the next round's finding, which is the
+Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1. Twelve rounds, each by a fresh model given
+the code and no other context. Five times a fix from one round became the next round's finding, which is the
 reason the newest code is always reviewed first.
 
-The contract had been unchanged and clean for seven rounds. Round eleven ended that: S-12 and S-13 are real,
-and chasing S-12 turned up a further case the review had not asked about, so BulkSend is now v11. That means
-the contract is once again the newest code in the repository, reviewed by exactly one pass — mine. It should
-go through a round before it goes anywhere near mainnet, and that round should see v11.
+The contract had been unchanged and clean for seven rounds. Round eleven ended that, and round twelve found
+three more things in it, so BulkSend is now **v12**. That makes the contract once again the newest code in the
+repository, and v12 in particular has been reviewed by exactly one pass -- mine. It should go through a round
+before it goes anywhere near mainnet, and that round should see v12.
+
+Round twelve's own shape is the argument for that rule. Its single blocker and two of its three most serious
+should-fix items were written the night before it ran: a fix applied to one reader and not its twin, a CI job
+left red for eight commits, and a page committed but never deployed. None were subtle, and none would have
+been caught by thinking harder -- only by a check that runs. All three now have one.

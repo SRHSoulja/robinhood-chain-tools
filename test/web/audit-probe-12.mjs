@@ -152,7 +152,7 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
 // =========================================================================================================
 const NFT = '0x1111111111111111111111111111111111111111';
 const RUN_ME = A(0xdead);
-const BULK = '0x8a28d0487f2e10fb325e15b81445aa083a35e7fe';
+const BULK = '0xc2e4a9c4c9215600d1b348d02b63c6148d0ef481';
 const padAddr = (a) => '0x' + a.slice(2).padStart(64, '0');
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 

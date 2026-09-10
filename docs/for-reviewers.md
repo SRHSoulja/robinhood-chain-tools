@@ -3,12 +3,12 @@
 ## The thing that matters
 
 `src/BulkSend.sol`, about 300 lines. It is deployed at
-[`0x91949D7328387A3613b29E56f6979Ae893ccd23C`](https://explorer.testnet.chain.robinhood.com/address/0x91949D7328387A3613b29E56f6979Ae893ccd23C)
+[`0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481`](https://explorer.testnet.chain.robinhood.com/address/0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481)
 on Robinhood Chain testnet, verified, and its runtime bytecode is byte-for-byte equal to what this repository
 builds. Check that yourself:
 
     forge build
-    cast code 0x91949D7328387A3613b29E56f6979Ae893ccd23C --rpc-url https://rpc.testnet.chain.robinhood.com
+    cast code 0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481 --rpc-url https://rpc.testnet.chain.robinhood.com
     # compare with out/BulkSend.sol/BulkSend.json -> deployedBytecode.object
 
 The two pages under `web/` are what people actually use, and the live copies are byte-identical to the files
@@ -53,8 +53,18 @@ These are choices, not accidents, and a reviewer disagreeing with one is useful.
    refuses itself as a recipient in all three methods, and the page refuses it before parsing finishes, which
    is a cheaper fix than a privileged role.
 2. **The zero address is refused, never burned.** Strict mode reverts, lenient mode skips and logs.
-3. **Ambiguous ERC-20 results revert the whole batch, in both modes.** Reporting a possible payment as a skip
-   is worse than failing.
+3. **Ambiguous ERC-20 results revert the whole batch, in both modes, and a returned `false` is treated as
+   ambiguous even though the standard defines it.** Reporting a possible payment as a skip is worse than
+   failing. The `false` half of that is the part worth arguing with, and round twelve did argue with it: ERC-20
+   defines `false` as "I did not transfer", so a conforming token answering it has moved nothing, and skipping
+   that row is what lenient mode is for. That reasoning is correct about conforming tokens, and BulkSend has no
+   way to know it is holding one. `PaysThenLies20` in `test/RealTokens.sol` moves the balance and *then*
+   answers `false`; from inside the call there is nothing to tell it apart from a blocklist refusing a
+   recipient, short of reading every balance before and after, which costs more gas than the transfers. So the
+   two collapse into one case and the batch comes down, because a recipient who was paid must never be listed
+   as skipped -- that is how a re-run pays them twice. The cost of the choice is real and is the reviewer's
+   point: one blocklisted address anywhere in a lenient batch fails all of it. The page's own test run finds
+   those addresses first, and names them, before anything is signed.
 4. **The stipend is bounded, not free.** A caller can choose 100,000 to 5,000,000 gas per transfer, and
    nothing outside that. Unlimited per-transfer gas is strict mode by another name.
 5. **`localStorage` is a convenience, never a guarantee.** It is scoped to chain, account, token and standard,
@@ -111,16 +121,20 @@ which is the case worth monitoring for.
   stretch is the one worth monitoring, so a green badge on a dormant repository means the last run that
   happened rather than the state today. A failure also opens an issue, so it is visible without access to
   anyone's inbox.
-- Eleven adversarial review rounds, each by a fresh model with no prior context, all published unedited in
+- Twelve adversarial review rounds, each by a fresh model with no prior context, all published unedited in
   [`docs/`](.), in order: 8H/4M/3L, then 6H/5M/1L, then 4H/1M, then 6H/2M/1L, then 5H/2M/2L, then
   4 blocking/2/1, then 6 blocking/6/1, then 3 blocking/8/5, then 4 blocking/6/5, then 3 blocking/6/5. Every
   blocking finding is fixed. The counts are blocking / should-fix / inherent-limit, and the last group is not
   a backlog: those are the things a browser page cannot prove, written down so nobody has to rediscover them.
-- Four times, a fix from one round has been the next round's finding, and in the tenth round it was every
-  blocker: all three were written between the ninth round and the tenth, two of them on the same day. The
-  contract has been clean for seven rounds and has not changed since the third. **The unreviewed thing in this
-  repository is always whatever was written last**, which is worth knowing before trusting anything recent
-  here more than the rest.
+- Five times, a fix from one round has been the next round's finding. In the tenth it was every blocker: all
+  three were written between the ninth round and the tenth, two of them on the same day. In the twelfth the
+  only blocker was round eleven's B-4 surviving on the reader nobody re-checked, and two of the three most
+  serious should-fix items were also from that same night's work.
+- **The contract is no longer the settled part of this repository.** It was clean and unchanged for seven
+  rounds; round eleven found two real findings in it and round twelve found three more. It is now **v12**,
+  changed on three separate days, and only round twelve has seen any of that -- v12 itself has been seen by
+  nobody but me. **The unreviewed thing in this repository is always whatever was written last**, which is
+  worth knowing before trusting anything recent here more than the rest, and right now that is the contract.
 - Three times before that, a fix from one round has been the next round's finding. That is the most useful thing this
   history shows, and it is why recently changed code is listed first in the review scope rather than last.
 - No human audit firm has looked at this.

@@ -5,7 +5,57 @@ explorer. Nothing has been deployed to mainnet. Superseded addresses are left in
 [`deployments.testnet.json`](../deployments.testnet.json) as tombstones so any transaction referring to one
 can still be traced.
 
-## v9 — `0x91949D7328387A3613b29E56f6979Ae893ccd23C` (current)
+## v12 — `0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481` (current)
+
+Round twelve's contract findings, and one of them declined with its reason written down.
+
+- **`airdrop20` had no mirror of the "is this an NFT" guard.** `transferFrom(address,address,uint256)` is one
+  selector for both standards, and a conforming ERC-721 returns nothing, which the ERC-20 path reads as a
+  USDT-style success. An NFT collection pasted into the ERC-20 form therefore spent its token *ids* as amounts:
+  the NFTs left the wallet, and both the count and the `Airdrop20` event reported a token airdrop that never
+  happened. v11 closed this direction for `airdrop721` and left the mirror open.
+- **The "not an NFT" guard refused real collections.** It read a revert with empty returndata as proof that no
+  `ownerOf` existed. That is true of OpenZeppelin v5 and ERC721A and false of `require(cond);` with no reason
+  string, of Vyper's reference ERC-721, and of any bare `assert` -- all real ERC-721s. So a genuine collection
+  was refused outright whenever the first id in the chunk happened to be burned or unminted, and refused with a
+  message about the whole collection rather than that one row. It now tries a second id from the same list and
+  then `supportsInterface(0x80ac58cd)` before refusing, and only in the failure path, so nothing costs more.
+- **A returned `false` from an ERC-20 still takes the batch down, in both modes.** This one was argued the
+  other way and declined. The reasoning for changing it is good: the standard defines `false` as "I did not
+  transfer", so a conforming token answering it has moved nothing, and one blocklisted recipient should not
+  cost a 400-row lenient batch. But `PaysThenLies20` in this repository's own fixtures moves the balance and
+  *then* answers `false`, and from inside the call there is nothing to tell the two apart. Reporting a payment
+  that happened as a skip is how a re-run pays someone twice. The choice, its cost, and what would have to
+  change to revisit it are in [`for-reviewers.md`](for-reviewers.md) decision 3, and both halves are pinned by
+  tests.
+- Deployed and verified; runtime is 8,968 bytes, byte-for-byte equal to what this repository builds.
+
+## v11 — `0x8a28d0487F2E10fb325E15B81445aa083a35E7fE`
+
+The half of the same confusion the audit did not ask about. Refusing a token that *answers* closed the
+"returns false" shape in v10. A token that returns **nothing** is byte-for-byte what a conforming ERC-721
+transfer looks like from the caller's side, and USDT is exactly that shape. Measured before the guard existed:
+`airdrop721` pointed at a no-return ERC-20, with an "id" of `100e18`, moved 100 real tokens and reported
+`sent = 1`. So `airdrop721` began checking the shape of the contract before sending anything -- one staticcall
+per batch, not per row. It also closed a separate finding about a one-byte `STOP` contract counted as a
+delivery. The discrimination it used (an empty revert means no such function) was itself wrong for a class of
+real collections, which is what v12 fixes.
+
+## v10 — `0x240D8928d288E7d5c23dcF774Cf0a345bA4Af2b2`
+
+Round eleven's two contract findings, after seven rounds with none.
+
+- **The 721 and 1155 paths never read what came back.** The ERC-20 path refuses anything that is not exactly
+  empty or exactly `1`; the other two treated "the call did not revert" as delivered. So `airdrop721` pointed
+  at an ERC-20 that returns `false` reported `sent = 3, skipped = 0` with every balance still zero -- and with
+  that token approved, it read the token *ids as amounts* and moved real balances. A conforming 721/1155
+  transfer returns void, so anything coming back now reverts `AmbiguousResult`. Strict mode had the same hole
+  by a different door: a high-level call to a void function ignores what comes back.
+- **`ZERO_REASON` was the selector of an error this contract does not declare.** A blank row in a spreadsheet
+  produced "reverted with 0x9fabe1c1", in the one case where the contract knows the answer exactly. It is
+  `ZeroRecipient(i)` now, and it carries the row number.
+
+## v9 — `0x91949D7328387A3613b29E56f6979Ae893ccd23C`
 
 The third external audit's contract finding, and the one that mattered most in the whole series.
 

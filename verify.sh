@@ -55,8 +55,17 @@ count_probe() { node "$1" 2>/dev/null | grep -oE '^[0-9]+ demonstrated' | grep -
 now_airdrop="$(count_probe test/web/audit-probe.mjs)"
 now_check1="$(count_probe test/web/audit-probe-check.mjs)"
 now_check2="$(count_probe test/web/audit-probe-check2.mjs)"
-forge test --match-path test/AuditProbe.t.sol >/tmp/rh-probe-sol.txt 2>&1
-now_sol="$(grep -oE '[0-9]+ passed' /tmp/rh-probe-sol.txt | grep -oE '^[0-9]+' | tail -1)"
+rm -f /tmp/rh-probe-sol.txt
+probe_files=""
+for f in test/Audit*.t.sol; do
+  [ -e "$f" ] || continue
+  n="$(basename "$f" .t.sol)"
+  forge test --match-path "$f" >>"/tmp/rh-probe-sol.txt" 2>&1
+  c="$(forge test --match-path "$f" 2>/dev/null | grep -oE '[0-9]+ passed' | grep -oE '^[0-9]+' | tail -1)"
+  eval "now_probe_$n=\${c:-0}"
+  probe_files="$probe_files $n"
+done
+now_sol="${now_probe_AuditProbe:-0}"
 
 if [ ! -f "$BASELINE" ]; then
   say "  no baseline yet; writing one from this run. Check these numbers before trusting them."
@@ -91,7 +100,17 @@ check_set() {
 check_set "airdrop page" "$now_airdrop" "$was_airdrop" down
 check_set "check page, set one" "$now_check1" "$was_check1" down
 check_set "check page, set two" "$now_check2" "$was_check2" down
-check_set "contract" "$now_sol" "$was_sol" up
+for n in $probe_files; do
+  eval "now=\$now_probe_$n"
+  was="$(python3 -c "import json,sys;d=json.load(open('$BASELINE')).get('contract_probes',{});print(d.get('$n','none'))")"
+  if [ "$was" = "none" ]; then
+    say "  FAIL  contract probes $n: $now pass, and the baseline has never heard of this file."
+    say "        Add \"$n\" to contract_probes in $BASELINE, with the count this run should hold at."
+    fail=1
+  else
+    check_set "contract probes $n" "$now" "$was" up
+  fi
+done
 
 say ""
 if [ "$fail" -eq 0 ]; then

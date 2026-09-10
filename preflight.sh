@@ -57,6 +57,18 @@ if not page or page.group(1).lower() != man:
 if man not in tests.lower():
     print('  FAIL   client.test.mjs does not mention %s, so it is asserting against a different contract' % man); ok = False
 if ok: print('  ok     page, manifest and tests name the same BulkSend')
+
+# And the published documents, which drifted three deploys behind before anything noticed. The dated audit
+# reports are excluded on purpose: each was written against a particular deployment, and rewriting them would
+# be falsifying the record. Everything else that names a BulkSend must name the one that is live.
+tombstones = {v.lower() for k, v in json.load(open('deployments.testnet.json')).items()
+              if k.startswith('BulkSend_')}
+for f in ('README.md', 'docs/for-reviewers.md', 'docs/status.md', 'SECURITY.md'):
+    try: body = io.open(f, encoding='utf-8').read()
+    except FileNotFoundError: continue
+    for hit in sorted({h.lower() for h in re.findall(r'0x[0-9a-fA-F]{40}', body)} & tombstones):
+        print('  FAIL   %s names %s, a superseded BulkSend. The live one is %s.' % (f, hit, man)); ok = False
+if ok: print('  ok     no published document names a superseded BulkSend')
 sys.exit(0 if ok else 1)
 PY
 

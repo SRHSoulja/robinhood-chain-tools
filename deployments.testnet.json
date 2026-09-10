@@ -1,5 +1,5 @@
 {
- "BulkSend": "0x8a28d0487f2e10fb325e15b81445aa083a35e7fe",
+ "BulkSend": "0xc2e4a9c4c9215600d1b348d02b63c6148d0ef481",
  "OZ721": "0x5277956787c1a52c02d3e63d441ee2491a36c1ce",
  "A721": "0x05e9a41b225b76fa0bba1932a027b2b60ed38473",
  "OZ1155": "0x61e0dc59c4ca30f170791add9ac8395d3c86b1a7",
@@ -18,5 +18,6 @@
  "PolitelyDoesNothing": "0x7d69510a6d842ff7444af6310916c1022766f4a2",
  "OnChainArt": "0x73bcbabd0109038d221ec6e2c930ba9d0d73d593",
  "BulkSend_v9_prior": "0x91949d7328387a3613b29e56f6979ae893ccd23c",
- "BulkSend_v10_prior": "0x240d8928d288e7d5c23dcf774cf0a345ba4af2b2"
+ "BulkSend_v10_prior": "0x240d8928d288e7d5c23dcf774cf0a345ba4af2b2",
+ "BulkSend_v11_prior": "0x8a28d0487f2e10fb325e15b81445aa083a35e7fe"
 }
