@@ -9,3 +9,6 @@ echo "=== pages ==="
 [ -d node_modules ] || npm install --no-audit --no-fund
 node test/web/client.test.mjs
 node test/web/check.test.mjs
+echo
+echo "The live check (needs the network, so it is not part of this run):"
+echo "  node test/web/live-chain.mjs"
