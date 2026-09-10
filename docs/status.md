@@ -81,7 +81,8 @@ They sign with a testnet-only key that holds no mainnet balance and refuse to ru
 | the deployed pages match these files | `deploy/publish.sh` verifies the hash after publishing | ✅ |
 | ERC-1155 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding 2 of an edition | ✅ |
 | ERC-20 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding exactly 1.5, to the wei | ✅ |
-| any of it against a real wallet extension | **never** — every wallet in every test is written by this repository | ❌ |
+| any of it against a real wallet extension, automatically | **no** — every wallet in every test here is written by this repository | ❌ |
+| any of it against a real wallet extension, by hand | **yes, once** — the maintainer drove the page from a phone with MetaMask and it worked. That was against an earlier BulkSend, before v10, so it is evidence about the page and not about the contract now deployed. Not repeated since, deliberately: more of it is worth doing when the software is otherwise finished, not while it is still changing under the tester | ⚠️ |
 | behaviour on mainnet | **never, by design** | ❌ |
 
 ## Where the numbers come from

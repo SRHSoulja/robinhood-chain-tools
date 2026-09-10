@@ -147,7 +147,8 @@ if [ "$fail" -eq 0 ]; then
   say ""
   say "Not covered by any of the above, and not claimed to be:"
   say "  - the live scripts (they need the network): live-chain, live-send, live-wallet-batch"
-  say "  - anything against a real wallet extension"
+  say "  - anything against a real wallet extension. The maintainer has driven the page from a phone with"
+  say "    MetaMask once, by hand, against a pre-v10 contract. Nothing automatic covers it."
 else
   say "Something is wrong above. Nothing should be committed on this tree."
 fi
