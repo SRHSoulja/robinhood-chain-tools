@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-ZG8Knw/b24yHyBDkC6jiJWMbLd5bzOZdgkSCX8F5jxs='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-ooM7DB9PYhrOKe9mgevERlDuzMpuiyZwjgVrgbm1pLs='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -501,6 +501,16 @@
     return window.ethereum || null;
   }
   // Wallet errors have standard codes. Saying what happened beats a silent console rejection.
+  // A refusal is the ONE wallet answer that means "nothing happened", and it is the only one a pending record
+  // may be deleted on. Every other outcome -- a timeout, a dropped connection, a tab that died, an error this
+  // page cannot classify -- has to keep the record, because the request may still be in the wallet or already
+  // on the chain, and deleting the record is what offers those recipients up for a second payment.
+  // 4001 is the JSON-RPC code; ACTION_REJECTED is what ethers v6 turns it into. 5750 is a declined EIP-7702
+  // upgrade, which is also a definite no.
+  function isRejection(e) {
+    const c = e && (e.code ?? (e.info && e.info.error && e.info.error.code));
+    return c === 4001 || c === 'ACTION_REJECTED' || c === 5750;
+  }
   function walletError(e) {
     const c = e && (e.code ?? (e.info && e.info.error && e.info.error.code));
     if (c === 4001 || c === 'ACTION_REJECTED') return 'You cancelled that in your wallet.';
@@ -3014,16 +3024,46 @@
           } catch (e) { log('Stopped before batch ' + (Math.floor(i / bs) + 1) + ': ' + explainCallError(e) + '. The chain has changed since the test run, so nothing further was sent.', 'bad'); break; }
         }
         log('Batch ' + (Math.floor(i / bs) + 1) + ' of ' + Math.ceil(list.length / bs) + ': ' + chunk.length + ' recipients …');
-        const tx = await bulk[fn](...args, onThisChain());
-        // Written down before the wait: if this tab closes now, the next visit reads the receipt instead of
-        // assuming none of these were paid.
+        // Written down BEFORE the wallet is asked, not after it answers.
+        //
+        // The old comment said "written down before the wait", which was true about the window it named and
+        // silent about the window before it. Between pressing Send and the wallet's promise resolving, the
+        // user is in their wallet app -- on a phone that means this tab is in the background, and iOS and
+        // Android evict background tabs routinely. The wallet broadcasts, the tab dies, `tx` never arrives,
+        // and addPending never ran: nothing at all existed in localStorage for a batch that is on chain. The
+        // next visit offered every recipient again, and for ERC-20 and ERC-1155 that is a straight second
+        // payment out of the sender's balance. The page's own footer promised the opposite.
+        //
+        // So the record goes in first, with no hash, and the recovery path for exactly that shape already
+        // existed in reconcilePending and had never been reachable: "was sent to your wallet and never came
+        // back with a transaction ... until then those recipients are held back."
         const pid = newPid();
-        if (!addPending({ pid, run: ledgerKey(), chain: chainId(), bulk: bulkAddr, hash: tx.hash, at: Date.now(),
+        const planned = bulk.interface.encodeFunctionData(fn, args);
+        if (!addPending({ pid, run: ledgerKey(), chain: chainId(), bulk: bulkAddr, hash: null, at: Date.now(),
                           rows: rowsToJson(chunk), via: 'bulk', token: $('token').value.trim(), std: std(),
-                          call: { to: String(tx.to || '').toLowerCase(), data: String(tx.data || ''), value: String(tx.value || 0n), from: String(me || '').toLowerCase() } })) {
-          log('  this browser stopped saving. That batch is on its way and this page can no longer keep track of it, so nothing more will be sent. Check ' + tx.hash.slice(0, 12) + '… on the explorer before sending to these wallets again.', 'bad', tx.hash);
+                          call: { to: String(bulkAddr).toLowerCase(), data: planned, value: '0', from: String(me || '').toLowerCase() } })) {
+          log('  this browser will not save what has been sent, so nothing has been sent. Sending without that record is how a recipient gets paid twice.', 'bad');
           break;
         }
+        let tx;
+        try {
+          tx = await bulk[fn](...args, onThisChain());
+        } catch (err) {
+          // A refusal is a definite answer: the wallet moved nothing, so the record is removed and the rows
+          // go back. Anything else -- including no answer at all -- keeps the record, because "I could not
+          // tell" and "it did not happen" are different, and only one of them is safe to act on.
+          if (isRejection(err)) { dropPending(pid); }
+          else {
+            log('  that batch was handed to your wallet and this page did not get an answer. Those recipients '
+              + 'are held back until it can read the chain: reload with the same wallet on the same network, '
+              + 'and it will look for the transaction before offering them again.', 'bad');
+          }
+          throw err;
+        }
+        updatePending(pid, (ent) => {
+          ent.hash = tx.hash;
+          ent.call = { to: String(tx.to || '').toLowerCase(), data: String(tx.data || ''), value: String(tx.value || 0n), from: String(me || '').toLowerCase() };
+        });
         log('  sent, waiting …', '', tx.hash);
         // A multisig such as Safe hands back a request id and only executes once the other owners sign, so
         // waiting on it would hang forever. Stop after a while and say what is actually going on.
@@ -3086,14 +3126,30 @@
       const before = await holdingsOf(chunk).catch(() => new Map());
       log('Batch ' + (Math.floor(i / bs) + 1) + ' of ' + Math.ceil(list.length / bs) + ': ' + chunk.length + ' transfers, sent by your wallet as itself …');
       try {
+        // Written down before the wallet is asked, for the same reason as the bulk path above, and this path
+        // is the one where it matters most: the no-approval route is the phone route, and a phone is where a
+        // tab gets evicted while the user is in their wallet app. Without a record, a batch the wallet
+        // broadcast is invisible to the next visit and every recipient is offered again.
+        const pid = newPid();
+        if (!addPending({ pid, run: ledgerKey(), chain: chainId(), bulk: null, hash: null, callsId: null, at: Date.now(),
+                          rows: rowsToJson(chunk), via: 'wallet', token: $('token').value.trim(), std: std(),
+                          from: String(me || '').toLowerCase() })) {
+          log('  this browser will not save what has been sent, so nothing has been sent. Sending without that record is how a recipient gets paid twice.', 'bad');
+          break;
+        }
         let res;
         try {
           res = await eth.request({ method: 'wallet_sendCalls', params: [{ version: '2.0.0', chainId: hexChain(), from: me, atomicRequired: true, calls: chunk.map(directCall) }] });
         } catch (e1) {
+          // Every exit from this catch either rethrows or breaks, and each one has to decide the record's
+          // fate first. A refusal and a too-large batch both mean the wallet did nothing; anything else is
+          // unresolved and the record stays, holding those rows.
+          if (isRejection(e1)) dropPending(pid);
           const code = e1 && (e1.code ?? (e1.info && e1.info.error && e1.info.error.code));
           if (code === 5740 && !lenient()) {
             // You agreed to one transaction where either everything lands or nothing does. Splitting it here
             // would deliver half a list under a promise that said it would not, so nothing more is sent.
+            dropPending(pid);   // 5740 is the wallet declining to try; nothing was broadcast
             log('  your wallet says that batch is too large for it, and you chose "all or nothing", which only holds inside a single transaction. Nothing has been sent. Lower the recipients per transaction until the whole list fits in one, or choose "Keep going".', 'bad');
             break;
           }
@@ -3104,18 +3160,18 @@
             // agreement. Restarting from inside the send would also deadlock on the lock this run holds.
             const half = Math.max(2, Math.floor(chunk.length / 2));
             $('batch').value = String(half);
+            dropPending(pid);   // likewise: declined, not attempted
             log('  that batch was too large for your wallet, so nothing more was sent. The size is now ' + half + '. Press Send again and you will see a fresh check and confirmation for the new split.', 'warn');
             break;
           }
           throw e1;
         }
         const id = typeof res === 'string' ? res : (res && res.id);
-        if (!id) { log('  the wallet did not return a batch id, so this cannot be tracked. Check your wallet and the explorer before sending again.', 'bad'); break; }
-        const pid = newPid();
-        if (!addPending({ pid, run: ledgerKey(), chain: chainId(), bulk: null, hash: null, callsId: String(id), at: Date.now(), rows: rowsToJson(chunk), via: 'wallet', token: $('token').value.trim(), std: std(), from: String(me || '').toLowerCase() })) {
-          log('  this browser stopped saving, and that batch has already gone to your wallet. Nothing more will be sent. Check your wallet before sending to these wallets again.', 'bad');
+        if (!id) {
+          log('  the wallet did not return a batch id, so this cannot be followed. Those recipients are held back rather than offered again: without an id this page cannot tell whether the wallet sent it. Check your wallet and the explorer before sending to them again.', 'bad');
           break;
         }
+        updatePending(pid, (ent) => { ent.callsId = String(id); });
         const rcpt = await waitForCalls(id);
         if (rcpt.hash) updatePending(pid, (e) => { e.hash = rcpt.hash; });
         if (rcpt.state === 'failed' || rcpt.state === 'reverted') {

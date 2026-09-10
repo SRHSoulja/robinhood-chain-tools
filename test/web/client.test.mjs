@@ -103,7 +103,10 @@ function chainAnswer(O) {
           : { status: '0x1', gasUsed: '0x1', returnData: '0x', logs: [] })) }];
       }
       case 'wallet_getCallsStatus': return O.callsStatus || { status: 200, receipts: [{ transactionHash: '0x' + 'ab'.repeat(32), status: '0x1', logs: [] }] };
-      case 'eth_sendTransaction': sentYet = true; return '0x' + 'cd'.repeat(32);
+      case 'eth_sendTransaction': {
+        sentYet = true;
+        if (O.rejectSend) { const e = new Error('User rejected the request'); e.code = 4001; throw e; }
+        return '0x' + 'cd'.repeat(32); }
       // Ethers looks the transaction up after sending it, to build the object it hands back. Answering null
       // here leaves it polling forever, which is why a send used to appear to hang in these tests.
       case 'eth_getTransactionByHash': {
@@ -855,6 +858,58 @@ async function freshBrowser() {
     injected && injected.ambiguous === true, JSON.stringify(injected));
   check('T-H-01 control: the same receipt with one honest summary is read, not refused',
     injected && injected.honestAmbiguous === false && injected.honestSkipped === 1, JSON.stringify(injected));
+  await page.close();
+}
+
+// ---- B-2: the record exists while the wallet still has the request ------------------------------------
+{
+  // Between pressing Send and the wallet answering, the user is in their wallet app. On a phone that means
+  // this tab is in the background, and iOS and Android evict background tabs routinely. The wallet
+  // broadcasts, the tab dies, and nothing was ever written down -- so the next visit offers every recipient
+  // again, which for ERC-20 and ERC-1155 is a straight second payment.
+  const page = await open(browser, { slowMethod: { method: 'eth_sendTransaction', ms: 9000 } });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x41) + ',7\n' + A(0x42) + ',8\n');
+  const pend = () => page.evaluate(() => Object.keys(localStorage)
+    .filter((k) => k.startsWith('bulksend:pending:'))
+    .map((k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } })
+    .filter(Boolean));
+  check('B-2 nothing is pending before Send is pressed', (await pend()).length === 0);
+  await page.click('#send');
+  // Mid-flight: the wallet has the request and has not answered.
+  let mid = [];
+  for (let i = 0; i < 14; i++) { mid = await pend(); if (mid.length) break; await page.waitForTimeout(400); }
+  check('B-2 a pending record exists while the wallet still has the request',
+    mid.length === 1, JSON.stringify(mid).slice(0, 200));
+  check('B-2 and it carries no transaction hash yet, because there is not one',
+    mid.length === 1 && mid[0].hash === null, JSON.stringify(mid[0] || {}).slice(0, 200));
+  check('B-2 and it records the rows, so they can be held back',
+    mid.length === 1 && (mid[0].rows || []).length === 2, JSON.stringify((mid[0] || {}).rows || []).slice(0, 120));
+  check('B-2 and it records the call, so the next visit knows what was asked for',
+    mid.length === 1 && mid[0].call && /^0x[0-9a-f]+$/i.test(String(mid[0].call.data)) && mid[0].call.data.length > 10,
+    JSON.stringify((mid[0] || {}).call || {}).slice(0, 140));
+  // And once the wallet answers, the same record gains the hash rather than a second one appearing.
+  for (let i = 0; i < 40; i++) { const p = await pend(); if (p.length && p[0].hash) break; await page.waitForTimeout(500); }
+  const after = await pend();
+  check('B-2 the same record gains the hash when the wallet answers, rather than a second one appearing',
+    after.length === 1 && !!after[0].hash, JSON.stringify(after).slice(0, 200));
+  await page.close();
+}
+{
+  // A refusal is the one answer that means nothing happened, so the record goes away and the rows come back.
+  // Everything else keeps it.
+  const page = await open(browser, { rejectSend: true });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x43) + ',9\n');
+  await page.click('#send');
+  await page.waitForTimeout(2500);
+  const left = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('bulksend:pending:')).length);
+  check('B-2 a refused batch leaves no pending record, because nothing was sent', left === 0, 'records left: ' + left);
+  const logText = await text(page, '#log');
+  check('B-2 and the refusal is reported rather than swallowed',
+    /cancelled|rejected|did not go through/i.test(logText), logText.slice(-200));
   await page.close();
 }
 
