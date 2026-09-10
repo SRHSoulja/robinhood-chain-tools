@@ -140,6 +140,9 @@ function chainAnswer(O) {
       case 'eth_estimateGas': {
         // What one real transfer of this token costs. The page derives the per-recipient figure and the
         // batch cap from this single answer, so a test sets it to be a cheap collection or a dear one.
+        // The question is kept as well as the answer: a probe that encodes the wrong call just reverts, and
+        // a revert is indistinguishable from a token that will not answer unless you look at what was sent.
+        (O.probes = O.probes || []).push(params[0] || {});
         if (O.estimateGas === 'revert') { const e = new Error('execution reverted'); e.revertData = '0x'; throw e; }
         return '0x' + Number(O.estimateGas || 0x186a0).toString(16);
       }
@@ -2098,8 +2101,69 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
       await cap(page) === '200', await cap(page));
     check('and says so rather than claiming a measurement it does not have',
       /has not been measured yet/.test(await text(page, '#batchNote')), await text(page, '#batchNote'));
-    check('the plan calls that figure rough, because it is', (await text(page, '#plan')).includes('roughly'),
-      await text(page, '#plan'));
+    check('the plan calls that figure a bound, which is what an unmeasured one honestly is',
+      (await text(page, '#plan')).includes('at most'), await text(page, '#plan'));
+    await page.close();
+  }
+}
+
+// ---- the probe asks the right question for each kind of token -------------------------------------------
+// The measurement fails silently by design: a probe that cannot be answered leaves the page on its fallback,
+// which is the safe thing to do and is indistinguishable, from the outside, from a probe that was encoded
+// wrongly and reverted. Only the selector actually put on the wire separates the two, so that is what these
+// check. Without them, ERC-1155 and ERC-20 could have shipped never measuring anything and looking fine.
+{
+  const SEL = { safe721: '0x42842e0e', plain721: '0x23b872dd', safe1155: '0xf242432a', erc20: '0xa9059cbb' };
+  const asked = (o) => (o.probes || []).map((p) => String(p.data || '').slice(0, 10).toLowerCase());
+  const sent = (o, sel) => asked(o).includes(sel);
+
+  {
+    const o = { estimateGas: 90000 };
+    const page = await open(browser, o);
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, NFT, '721');
+    await setList(page, A(0x21) + ',7\n'); await page.waitForTimeout(900);
+    check('an NFT with the recipient check on is measured by safeTransferFrom, the call it will really make',
+      sent(o, SEL.safe721), asked(o).join(' '));
+    await page.uncheck('#safe'); await page.selectOption('#mode', 'strict'); await page.waitForTimeout(900);
+    check('and with the check off it is measured by the plain transfer, because that is the cheaper call',
+      sent(o, SEL.plain721), asked(o).join(' '));
+    await page.close();
+  }
+  {
+    const o = { estimateGas: 90000 };
+    const page = await open(browser, o);
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, ED, '1155');
+    await setList(page, A(0x22) + ',5,2\n'); await page.waitForTimeout(900);
+    check('an ERC-1155 is measured by its own five-argument safeTransferFrom, not the NFT one',
+      sent(o, SEL.safe1155) && !sent(o, SEL.safe721), asked(o).join(' '));
+    check('and the cap it produces is a real number rather than the untouched fallback',
+      await page.getAttribute('#batch', 'max') !== '200', await page.getAttribute('#batch', 'max'));
+    await page.close();
+  }
+  {
+    const o = { estimateGas: 90000 };
+    const page = await open(browser, o);
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, TOK, '20');
+    await setList(page, A(0x23) + ',1\n'); await page.waitForTimeout(900);
+    check('an ERC-20 is measured by transfer, which is the only one of the four it would answer',
+      sent(o, SEL.erc20), asked(o).join(' '));
+    await page.close();
+  }
+  {
+    // The probe must never be answered for the wrong token. Changing the collection has to re-ask.
+    const o = { estimateGas: 90000 };
+    const page = await open(browser, o);
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, NFT, '721');
+    await setList(page, A(0x24) + ',7\n'); await page.waitForTimeout(900);
+    const first = (o.probes || []).length;
+    await useToken(page, ED, '1155');
+    await setList(page, A(0x25) + ',5,2\n'); await page.waitForTimeout(900);
+    check('changing the token asks again rather than keeping the last token\'s number',
+      (o.probes || []).length > first && sent(o, SEL.safe1155), asked(o).join(' '));
     await page.close();
   }
 }

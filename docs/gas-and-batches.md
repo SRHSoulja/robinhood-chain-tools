@@ -164,9 +164,50 @@ derivation runs up to 5% light on a lazily-minted collection and up to 35% heavy
 The old table survives only as a stopgap for the second before the answer arrives, and the page says which
 of the two it is looking at rather than presenting a guess as a measurement.
 
+## The other two standards
+
+Same method, same window, same chain. ERC-20 is everywhere here (1,876 `Transfer` logs in 120 blocks, 398
+distinct contracts); ERC-1155 is rare (17 `TransferSingle` logs in 400 blocks, 10 contracts found across
+32,000 blocks). Of those, the ones with a holder whose transfer could actually be estimated: 29 and 6.
+
+| | gas per recipient | | | fits in one transaction |
+| --- | --- | --- | --- | --- |
+| | median | p90 | dearest | at the dearest |
+| ERC-20 | 30,975 | 57,318 | 57,414 | 557 |
+| ERC-1155 | 43,937 | 75,614 | 75,614 | 423 |
+
+The same mistake was waiting in both. The page assumed 32,000 gas for an ERC-20, and **9 of the 29 cost
+more**. The dearest are not obscure contracts either: `GameStop`, `Intel` and `Alibaba` Robinhood Tokens all
+cost 57,318 a recipient, close to double a plain ERC-20, and those tokenised equities are much of the reason
+this chain exists. For ERC-1155 the 57,000 assumption was closer and still wrong for 2 of the 6.
+
+Neither changes the cap. 200, the fallback, clears both with room: the dearest ERC-20 fits 557 in one
+transaction and the dearest ERC-1155 fits 423.
+
+Both change what the page says when it cannot measure. The fallbacks now hold the dearest token of each kind
+found alive on this chain, 57,500 for an ERC-20, 76,000 for an ERC-1155 and 153,000 for an NFT, so a figure
+derived from them is a real upper bound rather than a middling guess, and the plan calls it "at most". A
+measurement still gets called "about", because that is what it is.
+
+### Is the probe measuring the right thing?
+
+The probe estimates a standalone transfer; BulkSend makes the same transfer inside a loop, and for an ERC-20
+it goes through `transferFrom`, which also writes an allowance. So the derivation could in principle run
+light. Measured both ways on the same contract:
+
+| | standalone minus 21,000 | real cost inside a batch | the derivation runs |
+| --- | --- | --- | --- |
+| ERC-20 | 39,797 | 28,769 | 38% heavy |
+| ERC-1155 | 49,410 | 34,054 | 45% heavy |
+| ERC-721 | 51,984 | 38,610 | 35% heavy |
+| ERC721A | 53,944 | 56,618 | **5% light** |
+
+Only the lazily-minted case runs light, and by 5%. That is the entire reason the margin is 1.15 rather than
+1.0, and it is comfortably enough for the other three.
+
 ## What is still not settled
-- **ERC-1155 and ERC-20 have not had the same survey.** The 721 numbers here are from live collections; the
-  1155 and 20 numbers are still from tokens deployed for the purpose.
+- **The ERC-1155 sample is six.** That is every one that was findable and measurable, and it is not enough
+  to say much about the shape of the distribution, only about its top.
 - **A collection dearer than QUOTRONS can be deployed tomorrow.** No fixed cap survives that, which is the
   argument for deriving it from the token in front of you rather than from a table.
 - **The L1 data component moves.** Calldata carries a surcharge that counts against the same 32M limit. It is

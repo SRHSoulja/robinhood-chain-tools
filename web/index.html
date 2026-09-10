@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-ez6jbgBsgPQI1s0b0+QfQb6f/WYYGX/fSQGoUD5zWqI='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-ZtBUfyR0Yenn90dwO3aeSTIusMkkUKAz2rysQvKuLPM='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -289,9 +289,12 @@
   const PROBE_MARGIN = 1.15;     // measured both ways on one contract, the derivation can run 5% light
   let perRecipient = null;       // measured gas for one more recipient, null while unasked or unanswerable
   let gasProbeKey = null;        // chain|token|standard|check, so an answer is never read for another question
-  // When the chain will not answer, these are the old table. They are a stopgap for the moment before the
-  // measurement lands, not a claim: 19 of those 58 collections cost more than the 57,000 below.
-  const fallbackPer = () => (std() === '20' ? 32000 : (safeMode() || lenient()) ? 57000 : 37000);
+  // When the chain will not answer, these stand in. They are not an average, they are the dearest thing of
+  // that kind found alive on this chain, so a figure derived from them is a real upper bound and can be
+  // labelled as one. The old table held 32,000 for an ERC-20, which nine of the twenty-nine surveyed beat,
+  // the tokenised equities among them at 57,318 each. An average would be wrong half the time and would not
+  // say which half.
+  const fallbackPer = () => (std() === '20' ? 57500 : std() === '1155' ? 76000 : 153000);
   const gasPerRecipient = () => perRecipient || fallbackPer();
   // 200 is not a round number. It is the largest batch that the dearest collection measured on this chain
   // (152,843 gas a recipient) still fits inside one transaction, with about 4% to spare. It is what the page
@@ -1878,7 +1881,7 @@
       ['network', c.name],
       ['sent by', how],
       ['', n + ' recipients in ' + batches + ' transaction' + (batches === 1 ? '' : 's')],
-      [perRecipient ? 'about' : 'roughly', costLine(n)],
+      [perRecipient ? 'about' : 'at most', costLine(n)],
     ]);
     const strictSplit = !lenient() && batches > 1;
     if (strictSplit) ready = false;
@@ -1937,8 +1940,9 @@
       + (perRecipient
           ? 'This collection was measured rather than assumed: about ' + perRecipient.toLocaleString()
             + ' gas a wallet, so at most ' + cap + " fit inside one transaction's 32,000,000 gas. "
-          : 'This collection has not been measured yet, so this page will use at most ' + cap
-            + ' per transaction, the largest that fitted every one of 58 collections live on this chain. ')
+          : 'This collection has not been measured yet, so the figures above are the dearest token of its kind '
+            + 'found alive on this chain rather than this one, and this page will use at most ' + cap
+            + ' per transaction. ')
       + why;
     say('batchClamp', over
       ? 'You asked for ' + typed + '. This page will use ' + cap + ', which is as many as it will put in one transaction the way this send is set up.'
