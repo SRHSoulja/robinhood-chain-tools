@@ -290,8 +290,12 @@ async function open(_stale, opts = {}) {
     window.__asked = [];
     window.ethereum = {
       isMetaMask: true,
-      on(ev, fn) { (__listeners[ev] = __listeners[ev] || []).push(fn); },
-      removeListener(ev, fn) { __listeners[ev] = (__listeners[ev] || []).filter((f) => f !== fn); },
+      // Counted here rather than by patching after load, because the page captures its provider during
+      // connect and a wrapper installed later is not the object it registered on.
+      on(ev, fn) { window.__on = window.__on || {}; window.__on[ev] = (window.__on[ev] || 0) + 1;
+                   (__listeners[ev] = __listeners[ev] || []).push(fn); },
+      removeListener(ev, fn) { window.__off = window.__off || {}; window.__off[ev] = (window.__off[ev] || 0) + 1;
+                               __listeners[ev] = (__listeners[ev] || []).filter((f) => f !== fn); },
       async request({ method, params }) {
         window.__asked.push(method);
         if (method === 'wallet_sendCalls' || method === 'eth_sendTransaction') window.__sent.push((params || [])[0]);
@@ -2310,6 +2314,27 @@ async function freshBrowser() {
       await page.evaluate(() => document.querySelector('#manifest').disabled));
     await page.close();
   }
+}
+
+// ---- S-14: the wallet listeners are removed as well as added ---------------------------------------------
+// Registered on every successful connect and removed from nothing. Reconnecting ran each handler twice, and
+// one left on a provider the user had since replaced could still fire and clear the connection for a wallet
+// that was no longer in use.
+{
+  const page = await open(browser, { revokeWorks: true, swapAccounts: true });
+  await page.click('#connect'); await page.waitForTimeout(700);
+  const first = await page.evaluate(() => ({ on: window.__on || {}, off: window.__off || {} }));
+  check('S-14 connecting registers one of each wallet listener',
+    (first.on.chainChanged || 0) === 1 && (first.on.accountsChanged || 0) === 1, JSON.stringify(first));
+  // Connect again. Whatever the page does about the old provider, it must not end up holding two.
+  await page.evaluate(() => { const b = document.querySelector('#connect'); if (b) b.click(); });
+  await page.waitForTimeout(900);
+  const after = await page.evaluate(() => ({ on: window.__on || {}, off: window.__off || {} }));
+  const live = (ev) => (after.on[ev] || 0) - (after.off[ev] || 0);
+  check('S-14 and connecting a second time leaves one, not two',
+    live('chainChanged') <= 1 && live('accountsChanged') <= 1,
+    JSON.stringify(after) + ' live=' + live('chainChanged') + '/' + live('accountsChanged'));
+  await page.close();
 }
 
 await browser.close();

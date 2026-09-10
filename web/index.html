@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-KJjFK7xvDSx5kItSBlj0RWmIcbZDuQOemg6Rw8kajI0='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-g9MI420NZQc6KHiO4Hejw12tDY+8O86uv93NL3YuKOo='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -240,6 +240,16 @@
       + 'not press again first \u2014 a second press can raise a second prompt, and answering both sends both.', 'warn');
   };
   let badLines = 0, badLinesOk = false;
+  // Held so they can be taken off the provider they were put on, which is not always the current one.
+  const walletListeners = { eth: null, chainChanged: null, accountsChanged: null };
+  function dropWalletListeners() {
+    const w = walletListeners;
+    if (w.eth && typeof w.eth.removeListener === 'function') {
+      try { if (w.chainChanged) w.eth.removeListener('chainChanged', w.chainChanged); } catch (e) {}
+      try { if (w.accountsChanged) w.eth.removeListener('accountsChanged', w.accountsChanged); } catch (e) {}
+    }
+    w.eth = null; w.chainChanged = null; w.accountsChanged = null;
+  }
   let walletBatch = null;   // does the wallet run several calls as itself, in one transaction (EIP-5792)
   let walletBatchReady = false;   // 'ready' means it will prompt to upgrade the account before the first batch
   let gatedBy = null;       // the collection's creator transfer validator, if it has one
@@ -436,6 +446,7 @@
   // it can revoke, so say that rather than pretending the page can do it.
   async function disconnectWallet() {
     if (sending) { log('Not while an airdrop is going out.', 'warn'); return; }
+    dropWalletListeners();   // a handler left on a provider nobody is using can still fire
     if (wcProvider) { try { await wcProvider.disconnect(); } catch (e) {} wcProvider = null; }
     // Clearing our own variables is not disconnecting. The extension still has this site permitted, so the
     // next eth_requestAccounts returns the same account without ever prompting -- which is why "Change
@@ -550,8 +561,14 @@
       : (() => { for (const d of wallets.values()) if (d.provider === chosen) return String(d.info.name).slice(0, 24); return null; })();
     renderWalletChoice();
     if (eth && eth.on) {
-      eth.on('chainChanged', () => { if (sending) { stopFlag = true; log('The wallet changed network mid-airdrop. Stopping after this batch.', 'bad'); } });
-      eth.on('accountsChanged', async (accts) => {
+      // Kept so they can be taken off again. Registered on every successful connect and removed from nothing,
+      // these accumulated: reconnecting twice ran the handler twice, and one left on a provider the user had
+      // since replaced could still fire and clear the connection for a wallet that was no longer in use.
+      dropWalletListeners();
+      walletListeners.eth = eth;
+      walletListeners.chainChanged = () => { if (sending) { stopFlag = true; log('The wallet changed network mid-airdrop. Stopping after this batch.', 'bad'); } };
+      eth.on('chainChanged', walletListeners.chainChanged);
+      walletListeners.accountsChanged = async (accts) => {
         if (sending) { stopFlag = true; log('The wallet changed account mid-airdrop. Stopping after this batch.', 'bad'); return; }
         if (!accts || !accts.length) {
           me = null; signer = null; provider = null; connectedVia = null;
@@ -563,7 +580,8 @@
           renderWalletChoice();
           log('Switched to ' + shortAddr(me) + '.'); await detectWalletBatch(); refreshRevoke(); plan();
         } catch (e) { log('Could not read the new account: ' + String(e.shortMessage || e.message).slice(0, 90), 'bad'); }
-      });
+      };
+      eth.on('accountsChanged', walletListeners.accountsChanged);
     }
     await switchChain(); await detectWalletBatch(); refreshRevoke(); plan();
     reconcilePending(false).catch(() => {});
@@ -663,10 +681,20 @@
   //   - a wallet may answer without acting, so a resolved promise is not a switched network;
   //   - trusting that answer is the same mistake as trusting a receipt instead of reading the chain, which
   //     this page refuses to make about a transfer and was quietly making about the network.
-  const askWallet = (method, params) => Promise.race([
-    eth.request({ method, params }),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('the wallet did not answer')), 12000)),
-  ]);
+  // A race does not cancel the loser. When the timer wins, the request is still sitting in the wallet, so the
+  // caller has to know that it timed out rather than refused: firing the next request on top of it gets
+  // -32002 ("already pending") and reads as a refusal that never happened. The losing promise is also caught
+  // here, because an unhandled rejection arriving seconds later belongs to nothing the user is looking at.
+  const TIMED_OUT = Symbol('the wallet did not answer');
+  const askWallet = (method, params) => {
+    let timer = null;
+    const live = eth.request({ method, params });
+    live.catch(() => {});   // it may reject long after this race is decided; that is not an unhandled error
+    return Promise.race([
+      live.then((v) => { clearTimeout(timer); return v; }),
+      new Promise((_, reject) => { timer = setTimeout(() => { const e = new Error('the wallet did not answer'); e.timedOut = TIMED_OUT; reject(e); }, 12000); }),
+    ]);
+  };
   const walletChainId = async () => {
     try { return Number((await new ethers.BrowserProvider(eth).getNetwork()).chainId); } catch (e) { return null; }
   };
@@ -677,11 +705,15 @@
     // that answers 4902 does not have it and needs adding. A wallet that fails any other way has it and will
     // not be driven to it over a WalletConnect session -- telling that person how to add a network they
     // already added is the same wrong-turn as every other message this page has had to fix.
-    let missing = false;
+    let missing = false, stillWaiting = false;
     for (const [method, params] of [['wallet_switchEthereumChain', [{ chainId: hex }]],
                                     ['wallet_addEthereumChain', [addChainParams()]]]) {
+      // Never stack a second request on a first one the user has not answered. The wallet answers -32002 and
+      // the page would report a refusal that never happened.
+      if (stillWaiting) break;
       try { await askWallet(method, params); }
       catch (e) {
+        if (e && e.timedOut === TIMED_OUT) { stillWaiting = true; }
         const code = e && (e.code ?? (e.info && e.info.error && e.info.error.code));
         if (method === 'wallet_switchEthereumChain' && (code === 4902 || /unrecognized|not added|unsupported chain/i.test(String(e.message || '')))) missing = true;
       }
