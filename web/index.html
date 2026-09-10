@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-IM39t4xONitVYYmBX6GbW+jvysak/ELLMUBx1klhFw4='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-ZG8Knw/b24yHyBDkC6jiJWMbLd5bzOZdgkSCX8F5jxs='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -332,6 +332,12 @@
   // kind found alive on this chain, already an upper bound, and multiplying a bound by a margin invents a
   // number nothing supports. Either way what is quoted is a ceiling, which is why it is labelled "at most".
   const gasPerRecipient = () => (perRecipient ? Math.ceil(perRecipient * PROBE_MARGIN) : fallbackPer());
+  // Attached to every transaction this page asks a wallet to sign. Without it the eth_sendTransaction request
+  // carries no chainId at all, so a wallet that is on a different network than it reports signs rather than
+  // refusing -- and there is nothing this page can do afterwards to detect that. It costs nothing and turns
+  // an undetectable failure into a wallet-side refusal. It matters more on mainnet, where the same address
+  // is a different contract.
+  const onThisChain = () => ({ chainId: chainId() });
   // 200 is not a round number. It is the largest batch that the dearest collection measured on this chain
   // (152,843 gas a recipient) still fits inside one transaction, with about 4% to spare. It is what the page
   // falls back to when it could not measure. When it could, the token's own number decides, and a cheap
@@ -363,7 +369,15 @@
     // connected. Neither re-asked, because neither changed the key.
     const key = [chainId(), token.toLowerCase(), std(), safeMode() ? 's' : 'p', String(me),
                  row ? String(row.id) : '-', row ? String(row.amount) : '-'].join('|');
-    if (gasProbeKey === key || !me || !provider || !ethers.isAddress(token) || !row) return;
+    if (gasProbeKey === key) return;                    // the same question; the answer to it still stands
+    // The question is gone rather than changed -- the token was cleared, the wallet disconnected, the list
+    // emptied. The measurement and the refusal both described a token that is no longer being asked about,
+    // and "the answer was too small to be real" stayed on screen about it. Cleared, and the key with it, so
+    // the next real question is asked afresh.
+    if (!me || !provider || !ethers.isAddress(token) || !row) {
+      if (perRecipient !== null || probeRefused) { gasProbeKey = null; perRecipient = null; probeRefused = false; plan(); }
+      return;
+    }
     gasProbeKey = key; perRecipient = null; probeRefused = false;
     // Never held this token, so the estimate includes the cold write every real recipient will pay for.
     const bytes = crypto.getRandomValues(new Uint8Array(20));
@@ -503,6 +517,15 @@
   // ---- phone wallets, through WalletConnect ----
   // The bundle is served from our own origin rather than a third-party CDN: this page builds transactions, and
   // a signing page should not take its code from somewhere we do not control.
+  //
+  // ethers is the other half of that sentence and it IS loaded from cdnjs, which is worth stating plainly
+  // rather than leaving as an unexplained asymmetry. Two things make it defensible and neither applies to
+  // this bundle. The <script> tag carries a SHA-384 integrity attribute, so a substituted file does not
+  // execute at all -- the browser refuses it -- and the CSP names the exact file rather than the origin, so
+  // an injected <script src> cannot reach for a different library on the same host. WalletConnect is pulled
+  // in as an ES module at runtime, where SRI does not apply, so the only equivalent guarantee available for
+  // it is serving it ourselves against a digest this repository holds. Different mechanism, same standard:
+  // nothing this page executes may be swapped by whoever is hosting it.
   const WC_PROJECT_ID = 'c184dcd61665e5449c9daa02862f432d';
   const WC_BUNDLE = './wc.js';   // same origin on both hosts, so the import needs no CORS
   let wcProvider = null;
@@ -625,7 +648,11 @@
   });
   // A wallet that will not add a network on request leaves exactly one way forward: adding it by hand. So put
   // what that takes on the screen, selectable, instead of naming the network and wishing them luck.
-  function showManualNetwork(onChain, missing, overWalletConnect) {
+  // stillWaiting is a third state and it used to be folded into the second. A wallet that never answered was
+  // told the user it "would not switch", which is a claim about a decision the wallet has not made: the
+  // request is usually still sitting there, and the page cannot take it back. "I could not tell" and "it said
+  // no" are different sentences and this page's whole argument is that they must not share wording.
+  function showManualNetwork(onChain, missing, overWalletConnect, stillWaiting) {
     const box = $('msgTop');
     box.textContent = ''; box.className = 'msg bad';
     const c = cfg();
@@ -636,7 +663,13 @@
       row.appendChild(k); row.appendChild(v); return row;
     };
     const head = document.createElement('div');
-    head.textContent = missing
+    head.textContent = stillWaiting
+      ? ((onChain ? 'Your wallet is on chain ' + onChain + ' and has ' : 'Your wallet has ')
+         + 'not answered the request to switch to ' + c.name + '. It has not refused: the request is most '
+         + 'likely still waiting for you, and this page cannot take it back. Open your wallet and approve or '
+         + 'dismiss it \u2014 do not press Connect again first, because a second press can raise a second '
+         + 'prompt. If your wallet never showed it, one of these does the same job:')
+      : missing
       ? ((onChain ? 'Your wallet is on chain ' + onChain + ', and it ' : 'Your wallet ')
          + 'does not have ' + c.name + ' and would not add it when asked. Most phone wallets will not add a '
          + 'network over a WalletConnect scan at all. The quickest way round it:')
@@ -729,7 +762,7 @@
       }
       if (await walletChainId() === id) { provider = new ethers.BrowserProvider(eth); signer = await provider.getSigner(); return; }
     }
-    showManualNetwork(await walletChainId(), missing, eth === wcProvider);
+    showManualNetwork(await walletChainId(), missing, eth === wcProvider, stillWaiting);
     provider = new ethers.BrowserProvider(eth); signer = await provider.getSigner();
   }
   async function onSelectedChain() {
@@ -854,8 +887,14 @@
   function addressOn(line, col) {
     const t = String(line || '').trim();
     if (!t) return null;
-    const cells = col ? splitRow(t) : t.split(/[,\t; ]+/).filter(Boolean);
-    const raw = col ? cells[col.to] : cells[0];
+    // One way of cutting a line into cells, whether or not the file names its columns. splitRow implements
+    // RFC 4180 quoting and falls back to whitespace when a line yields a single cell, so it covers everything
+    // the old positional splitter did and the quoted files it did not. Two readers for one input is what
+    // S-8 was: `"0x…","1"` parsed correctly WITH a header row and was rejected line by line without one, and
+    // the message told the user their addresses were wrong when the quotes were the whole problem. These
+    // readers may differ in which column means what. They must never differ in how a line is cut.
+    const cells = splitRow(t);
+    const raw = col ? cells[col.to] : cells.filter(Boolean)[0];
     return (raw && ethers.isAddress(raw)) ? ethers.getAddress(raw) : null;
   }
   // Some addresses are not recipients. The zero address burns; BulkSend has no owner and no rescue function,
@@ -1118,7 +1157,7 @@
     // Bare wallets, no ids: that is how most people start. Offer to fill the ids in rather than flagging every line.
     if (s === '721') {
       const rowsIn = lines.map(l => l.trim()).filter((l, i) => l && !(i === lines.findIndex(x => x.trim()) && looksLikeHeading(l)));
-      const bareish = (l) => { const p = l.split(/[,\t; ]+/).filter(Boolean); return ethers.isAddress(p[0]) && (p.length === 1 || (p.length === 2 && /^x\d+$/i.test(p[1]))); };
+      const bareish = (l) => { const p = splitRow(l).filter(Boolean); return ethers.isAddress(p[0]) && (p.length === 1 || (p.length === 2 && /^x\d+$/i.test(p[1]))); };
       const bare = rowsIn.filter(bareish);
       if (rowsIn.length && bare.length === rowsIn.length) { offerToAssign(bare.length); return; }
       $('assign').style.borderColor = ''; $('assign').style.color = '';
@@ -1127,7 +1166,7 @@
       const t = line.trim(); if (!t) return;
       const isFirst = i === lines.findIndex((x) => x.trim());
       if (isFirst && looksLikeHeading(t)) { headers++; return; }
-      const parts = t.split(/[,\t;=]+|\s+/).filter(Boolean);
+      const parts = splitRow(t).filter(Boolean);   // S-8: the same cutter the named-column path uses
       const addr = parts[0];
       if (!ethers.isAddress(addr)) {
         // On the first line the honest answer is that it could be either thing, so say both. Choosing
@@ -1428,7 +1467,7 @@
     const t = String(line || '').trim();
     if (!t) return 0;
     if (std() !== '721') return 1;
-    const parts = col ? splitRow(t).filter(Boolean) : t.split(/[,\t;=]+|\s+/).filter(Boolean);
+    const parts = splitRow(t).filter(Boolean);
     const rest = parts.slice(1);
     // "0xA x3" -- the shape "Apply to the list" writes, and the shape the CSV quantity path produces.
     const mult = rest.find((x) => /^x\d+$/i.test(x));
@@ -1446,6 +1485,34 @@
       for (let k = 0, n = deliveriesOn(line, col); k < n; k++) out.push(a);
     }
     return out;
+  }
+  // The lines this page could NOT read an address on, by line number. walletsInBox drops them silently, which
+  // is right for counting deliveries and wrong for anything that rewrites the box: "Use these" replaced the
+  // list with only what walletsInBox returned, so a line with a mistyped checksum -- an ordinary paste error --
+  // was deleted along with the text the user typed, with no message and no undo. Worse, it was deleted BEFORE
+  // "Check list" would have flagged it, so the check afterwards reported a clean list. The picker's own
+  // comment says it must never shorten the recipient list to fit what was selected; this reached the same
+  // place by a different route.
+  function unreadableLinesInBox() {
+    const col = boxColumns();
+    const bad = [];
+    const lines = $('list').value.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;                       // a blank line is not an unreadable one
+      if (!addressOn(lines[i], col)) bad.push(i + 1);
+    }
+    return bad;
+  }
+  // One sentence for both places that rewrite the box, so they cannot drift apart.
+  function refuseForUnreadableLines(where, verb) {
+    const bad = unreadableLinesInBox();
+    if (!bad.length) return false;
+    const total = $('list').value.split(/\r?\n/).filter((l) => l.trim()).length;
+    const which = bad.length === 1 ? 'line ' + bad[0] : 'lines ' + bad.slice(0, 6).join(', ') + (bad.length > 6 ? ' and others' : '');
+    say(where, total + ' lines are in the box and ' + (total - bad.length) + ' of them have a wallet address on '
+      + 'them. ' + verb + ' would rewrite the box and ' + which + ' would go with it. Fix or remove '
+      + (bad.length === 1 ? 'that line' : 'those lines') + ' first.', 'bad');
+    return true;
   }
   function updatePickCount() {
     const need = walletsInBox().length;
@@ -1492,6 +1559,10 @@
     }
     const wallets = walletsInBox();
     if (!wallets.length) { say('pickMsg', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
+    // Before the count check, because the count is computed from walletsInBox too: a shortfall from an
+    // unreadable line is invisible to it, so the user was never told the list they see and the list being
+    // paired are different lengths.
+    if (refuseForUnreadableLines('pickMsg', '"Use these"')) return;
     const chosen = pick.ids.map(String).filter((id) => pick.chosen.has(id));
     if (!chosen.length) { say('pickMsg', 'Nothing is chosen yet. Click the ones you want to send.', 'bad'); return; }
     if (chosen.length !== wallets.length) {
@@ -1651,9 +1722,15 @@
   // One list, built once: already-delivered removed, then ordered. The test run and the send both use this,
   // so what is simulated is exactly what is sent.
   function workingList() { const r = dropAlreadyDelivered(rows); return { list: orderForDelivery(r.list), skippedBefore: r.skippedBefore, heldBack: r.heldBack }; }
-  function forgetRun() {
-    try { localStorage.removeItem(runKey()); } catch (e) {}
-    const rk = runKey(); const left = loadPending().filter(e => e.run === rk);
+  // Under the run's lock, like every other change to what a run has delivered. The file's own comment three
+  // hundred lines below says "Every change to what a run has delivered goes through here", and this one did
+  // not: it removed the key outright while another tab could be mid-send on that same run. What it does is
+  // what the button advertises, so this is not a wrong outcome -- it is the one write that was outside the
+  // discipline that keeps the others correct, which is how the next one gets written outside it too.
+  async function forgetRun() {
+    const rk = runKey();
+    await withRunLock(rk, () => { try { localStorage.removeItem(rk); } catch (e) {} return true; });
+    const left = loadPending().filter(e => e.run === rk);
     if (left.length) log('There ' + (left.length === 1 ? 'is still 1 batch' : 'are still ' + left.length + ' batches') + ' from this run that the chain has not confirmed. Those recipients stay held back: forgetting the record does not make an unread transaction disappear.', 'warn');
   }
 
@@ -1757,13 +1834,18 @@
     const rawLines = $('list').value.split(/\r?\n/);
     const firstReal = rawLines.findIndex(x => x.trim());
     const lines = rawLines.map(l => l.trim()).filter((l, i) => l && !(i === firstReal && looksLikeHeading(l)));
-    const all = lines.map(l => l.split(/[,\t; ]+/).filter(Boolean));
-    const parsed = all.filter(p => ethers.isAddress(p[0]) && p.length > 1);
+    // Through addressOn and the shared cutter, like every other reader of this box. Reading cell 0 meant that
+    // on a file headed `label,address,tokenId` -- which readHeader has always allowed -- Shuffle announced it
+    // would drop N lines "that have no id yet" about lines that all had ids.
+    const wcol = boxColumns();
+    const all = lines.map(l => ({ line: l, addr: addressOn(l, wcol), cells: splitRow(l).filter(Boolean) }));
+    const parsed = all.filter(p => p.addr && p.cells.length > 1);
     if (parsed.length < 2) { log('Put at least two lines with an id or amount in the box first.', 'bad'); return; }
     if (parsed.length !== all.length) { log('Shuffle would drop ' + (all.length - parsed.length) + ' line' + (all.length - parsed.length === 1 ? '' : 's') + ' that have no id yet. Assign ids first, or finish the list.', 'bad'); return; }
     if (s === '20' && !confirm('This will move the amounts between wallets at random. Amounts stay the same, but who gets what changes. Continue?')) return;
-    const wallets = parsed.map(p => ethers.getAddress(p[0]));
-    const rest = shuffled(parsed.map(p => p.slice(1)));
+    const wallets = parsed.map(p => p.addr);
+    // Everything on the line except the address itself, wherever the address sits.
+    const rest = shuffled(parsed.map(p => p.cells.filter((c) => !(ethers.isAddress(c) && ethers.getAddress(c) === p.addr))));
     $('list').value = wallets.map((w, i) => [w, ...rest[i]].join(',')).join('\n');
     log('Shuffled: the same wallets and the same ' + (s === '20' ? 'amounts' : 'ids') + ', paired at random.', 'ok');
     parseList();
@@ -1817,7 +1899,8 @@
     if (sending) return;
     const drop = new Set((window.__snapContracts || []).map(a => a.toLowerCase()));
     if (!drop.size) return;
-    const kept = $('list').value.split(/\r?\n/).filter(l => { const a = l.trim().split(/[,\t; ]+/)[0]; return !(a && drop.has(a.toLowerCase())); });
+    const dcol = boxColumns();
+    const kept = $('list').value.split(/\r?\n/).filter(l => { const a = addressOn(l, dcol); return !(a && drop.has(a.toLowerCase())); });
     $('list').value = kept.join('\n'); log(drop.size + ' contract addresses removed.', 'ok');
     $('dropContracts').style.display = 'none'; window.__snapContracts = []; parseList();
   });
@@ -1834,6 +1917,10 @@
     const token = $('token').value.trim();
     if (!ethers.isAddress(token) || !me) { say('msgList', 'Connect a wallet and enter the token address first.', 'bad'); return; }
     if (std() === '20') { log('For a token, write the amount after each address; there are no ids to assign.', 'warn'); return; }
+    // Assign rewrites the box from the lines it could read, exactly as "Use these" did, so it needs the same
+    // refusal. Reached by a different route and with the same consequence: a recipient dropped from an
+    // airdrop without a word, before anything would have flagged the line.
+    if (refuseForUnreadableLines('msgList', 'Assign')) return;
     // Each line may carry its own quantity ("0xabc… x3"); the rest use the "how many each" field.
     const perWallet = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
     const wants = [];
@@ -1841,7 +1928,7 @@
     for (const line of $('list').value.split(/\r?\n/)) {
       const addr = addressOn(line, col);
       if (!addr) continue;
-      const p = line.trim().split(/[,\t; ]+/).filter(Boolean);
+      const p = splitRow(line.trim()).filter(Boolean);
       const m = p.slice(1).find(x => /^x\d+$/i.test(x));
       const q = m ? wholeNumber(m.slice(1)) : perWallet;
       if (q === null || q > 1000) { say('msgList', 'One line asks for "' + String(m).slice(0, 12) + '", which is not a workable number. Fix it and try again.', 'bad'); return; }
@@ -1980,7 +2067,7 @@
     const n = loadDelivered().size;
     if (!n) { say('msgSend', 'There is nothing recorded for this collection and account yet.', 'warn'); return; }
     if (!confirm('Forget that ' + n + ' recipient' + (n === 1 ? ' was' : 's were') + ' already delivered for this collection?\n\nThis does not clear the form. It removes the protection that stops you sending to them a second time.')) return;
-    forgetRun(); say('msgSend', 'Record cleared. These recipients can be sent to again.', 'warn'); log('Cleared the record of what was already delivered for this collection and account.', 'warn');
+    (async () => { await forgetRun(); say('msgSend', 'Record cleared. These recipients can be sent to again.', 'warn'); log('Cleared the record of what was already delivered for this collection and account.', 'warn'); })();
   });
 
   // ---- revoke the operator approval once an airdrop is done ----
@@ -1988,8 +2075,8 @@
     try {
       if (!(await onSelectedChain())) return;
       const token = $('token').value.trim();
-      if (std() === '20') { const t = new ethers.Contract(token, ERC20_ABI, signer); const tx = await t.approve(cfg().bulk, 0n); log('Revoking the allowance …', '', tx.hash); await tx.wait(); }
-      else { const t = new ethers.Contract(token, ERC721_ABI, signer); const tx = await t.setApprovalForAll(cfg().bulk, false); log('Revoking BulkSend as operator …', '', tx.hash); await tx.wait(); }
+      if (std() === '20') { const t = new ethers.Contract(token, ERC20_ABI, signer); const tx = await t.approve(cfg().bulk, 0n, onThisChain()); log('Revoking the allowance …', '', tx.hash); await tx.wait(); }
+      else { const t = new ethers.Contract(token, ERC721_ABI, signer); const tx = await t.setApprovalForAll(cfg().bulk, false, onThisChain()); log('Revoking BulkSend as operator …', '', tx.hash); await tx.wait(); }
       log('Revoked. BulkSend can no longer move anything of yours.', 'ok'); refreshRevoke();
     } catch (e) { log('Could not revoke: ' + explainCallError(e), 'bad'); }
   }));
@@ -2766,14 +2853,14 @@
         const t = new ethers.Contract(token, ERC20_ABI, signer); const total = rows.reduce((a, r) => a + r.amount, 0n);
         const current = await t.allowance(me, bulk).catch(() => 0n);
         if (current >= total) { log('Already approved for this amount.', 'ok'); return; }
-        if (current > 0n) { const z = await t.approve(bulk, 0n); log('Clearing the previous allowance first, which some tokens require …', '', z.hash); await z.wait(); }
-        const tx = await t.approve(bulk, total);
+        if (current > 0n) { const z = await t.approve(bulk, 0n, onThisChain()); log('Clearing the previous allowance first, which some tokens require …', '', z.hash); await z.wait(); }
+        const tx = await t.approve(bulk, total, onThisChain());
         log('Approving exactly ' + ethers.formatUnits(total, decimals) + ', the batch total, not unlimited …', '', tx.hash); await tx.wait();
         log('Approved. Any allowance left over after skipped wallets can be revoked from your wallet.', 'ok');
       } else {
         const t = new ethers.Contract(token, ERC721_ABI, signer);
         if (await t.isApprovedForAll(me, bulk)) { log('Already approved for this collection.', 'ok'); return; }
-        const tx = await t.setApprovalForAll(bulk, true); log('Approving BulkSend as operator for this collection …', '', tx.hash); await tx.wait();
+        const tx = await t.setApprovalForAll(bulk, true, onThisChain()); log('Approving BulkSend as operator for this collection …', '', tx.hash); await tx.wait();
         log('Approved. Revoke it from your wallet or the explorer when the airdrop is done.', 'ok');
       }
     } catch (e) { log('Approval failed: ' + explainCallError(e), 'bad'); }
@@ -2927,7 +3014,7 @@
           } catch (e) { log('Stopped before batch ' + (Math.floor(i / bs) + 1) + ': ' + explainCallError(e) + '. The chain has changed since the test run, so nothing further was sent.', 'bad'); break; }
         }
         log('Batch ' + (Math.floor(i / bs) + 1) + ' of ' + Math.ceil(list.length / bs) + ': ' + chunk.length + ' recipients …');
-        const tx = await bulk[fn](...args);
+        const tx = await bulk[fn](...args, onThisChain());
         // Written down before the wait: if this tab closes now, the next visit reads the receipt instead of
         // assuming none of these were paid.
         const pid = newPid();

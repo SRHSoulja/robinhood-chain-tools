@@ -275,7 +275,12 @@ async function open(_stale, opts = {}) {
     // Holds one method open, so a test can act while a send is genuinely mid-flight rather than before or
     // after it. Nothing else about the answer changes.
     if (opts.slowMethod && method === opts.slowMethod.method) await new Promise((r) => setTimeout(r, opts.slowMethod.ms));
-    try { return { ok: true, result: answer(method, params) }; }
+    // Awaited, not just called. `result: answer(...)` put a never-resolving Promise inside an object and
+    // returned the object immediately; Playwright cannot serialise a Promise, so the page got
+    // `{ok:true, result:undefined}` straight away and `hangOnAddChain` -- the option whose whole purpose is a
+    // wallet that never answers -- behaved exactly like `silentAddChain`. The test built on it therefore
+    // asserted the wrong sentence for years and passed. Awaiting makes the hang real.
+    try { return { ok: true, result: await answer(method, params) }; }
     catch (e) { return { ok: false, code: e.code || 3, message: String(e.message || e), data: e.revertData }; }
   });
   if (opts.noLocks) await page.addInitScript(() => { Object.defineProperty(navigator, 'locks', { get: () => undefined, configurable: true }); });
@@ -850,6 +855,107 @@ async function freshBrowser() {
     injected && injected.ambiguous === true, JSON.stringify(injected));
   check('T-H-01 control: the same receipt with one honest summary is read, not refused',
     injected && injected.honestAmbiguous === false && injected.honestSkipped === 1, JSON.stringify(injected));
+  await page.close();
+}
+
+// ---- S-18: every signature names the chain it is for ---------------------------------------------------
+{
+  // Without a chainId in the request, a wallet that is on a different network than it reports signs rather
+  // than refusing, and nothing this page can do afterwards detects it. It matters most on mainnet, where the
+  // same address is a different contract.
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x41) + ',7\n');
+  await page.click('#send');
+  for (let i = 0; i < 40; i++) {
+    if (await page.evaluate(() => window.__sent.length > 0)) break;
+    await page.waitForTimeout(500);
+  }
+  const sent = await page.evaluate(() => window.__sent.map((t) => (t && t.chainId !== undefined ? String(t.chainId) : null)));
+  check('S-18 every transaction sent to the wallet names the chain it is for',
+    sent.length > 0 && sent.every((c) => c !== null), JSON.stringify(sent));
+  check('S-18 and the chain it names is the one selected',
+    sent.every((c) => c !== null && Number(c) === 46630), JSON.stringify(sent));
+  await page.close();
+}
+
+// ---- S-8: one input, one way of cutting it into cells --------------------------------------------------
+{
+  // `"0x…","1"` parsed correctly WITH a header row and was rejected line by line without one, because the
+  // header path used splitRow (RFC 4180) and the positional path used a bare regex. The page tells users
+  // that exports from Etherscan, Safe, thirdweb, Dune, OpenSea and disperse are read as they come, several
+  // of those quote their fields, and deleting the header row is an ordinary thing to do.
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+
+  // The plan is where the count lives; msgList only speaks when the file names its columns.
+  const reads = async (list) => {
+    await setList(page, list);
+    return { plan: await text(page, '#plan'), problems: await text(page, '#problems') };
+  };
+  const quoted = '"' + A(0x111) + '","1"\n"' + A(0x222) + '","2"\n';
+  let r = await reads(quoted);
+  check('S-8 a quoted file with no header row is read, not rejected line by line',
+    /2 recipients/.test(r.plan) && !/not a wallet address/.test(r.problems),
+    r.plan.slice(0, 160) + ' || ' + r.problems.slice(0, 160));
+
+  r = await reads('"address","tokenId"\n' + quoted);
+  check('S-8 and the same file with its header row reads the same way',
+    /2 recipients/.test(r.plan) && !/not a wallet address/.test(r.problems),
+    r.plan.slice(0, 160) + ' || ' + r.problems.slice(0, 160));
+
+  // The old positional splitter's own behaviour has to survive, or this is a trade rather than a fix.
+  r = await reads(A(0x111) + ' 1\n' + A(0x222) + ' 2\n');
+  check('S-8 a whitespace-separated paste still reads', /2 recipients/.test(r.plan), r.plan.slice(0, 160));
+  r = await reads(A(0x111) + '=1\n' + A(0x222) + '=2\n');
+  check("S-8 and disperse's `address=amount` still reads", /2 recipients/.test(r.plan), r.plan.slice(0, 160));
+  r = await reads(A(0x111) + ',1\n' + A(0x222) + ',2\n');
+  check('S-8 and a plain comma-separated list still reads', /2 recipients/.test(r.plan), r.plan.slice(0, 160));
+  await page.close();
+}
+
+// ---- S-7: nothing rewrites the box while a line on it cannot be read -----------------------------------
+{
+  const page = await open(browser, { approved: true, ownedIds: [11, 12, 13] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  // The middle line has a broken checksum: an ordinary paste error, and a real address a user would expect
+  // to be told about rather than to lose.
+  const bad = '0xAbCdEf0123456789AbCdEf0123456789AbCdEf01';   // right length, wrong capitals
+  await page.fill('#list', A(0x111) + '\n' + bad + '\n' + A(0x222) + '\n');
+  await page.waitForTimeout(300);
+  const before = await page.evaluate(() => document.querySelector('#list').value);
+  await page.click('#pick'); await page.waitForTimeout(6000);
+  await page.click('#pickAll'); await page.waitForTimeout(400);
+  await page.click('#pickUse'); await page.waitForTimeout(700);
+  const after = await page.evaluate(() => document.querySelector('#list').value);
+  check('S-7 "Use these" does not silently delete the line it could not read',
+    after === before, JSON.stringify({ before, after }));
+  check('S-7 and it says which line is in the way',
+    /have a wallet address on them|Fix or remove/.test(await text(page, '#pickMsg')), (await text(page, '#pickMsg')).slice(0, 220));
+  await page.close();
+}
+
+// ---- S-18: Shuffle and "remove contracts" read the address column, not cell 0 --------------------------
+{
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  // readHeader has always allowed the address column to be anywhere. Shuffle looked at cell 0, so on this
+  // perfectly ordinary file it announced it would drop every line "that have no id yet" -- about lines that
+  // all had ids.
+  await setList(page, 'label,address,tokenId\nalice,' + A(0x111) + ',1\nbob,' + A(0x222) + ',2\n');
+  await page.click('#shuffle'); await page.waitForTimeout(600);
+  const log = await text(page, '#log');
+  check('S-18 Shuffle does not claim a labelled file has no ids',
+    !/no id yet/.test(log), log.slice(-220));
+  check('S-18 and it actually shuffles it',
+    /Shuffled/.test(log), log.slice(-220));
+  const box = await page.evaluate(() => document.querySelector('#list').value);
+  check('S-18 both wallets survive the shuffle',
+    box.toLowerCase().includes(A(0x111)) && box.toLowerCase().includes(A(0x222)), box);
   await page.close();
 }
 
@@ -1890,21 +1996,37 @@ async function freshBrowser() {
 // and the page said nothing. A wallet can also answer yes and do nothing. Both are now caught the only way
 // that works: ask, wait with a limit, then read the chain back and believe that instead of the answer.
 {
-  for (const [what, opts] of [
-    ['never answers', { walletChain: '0x1', hangOnAddChain: true }],
-    ['answers yes and does nothing', { walletChain: '0x1', silentAddChain: true }],
+  const ANY_WAY_OUT = /does not have|would not switch|has not answered/;
+  for (const [what, opts, want] of [
+    ['never answers', { walletChain: '0x1', hangOnAddChain: true }, /has not answered/],
+    ['answers yes and does nothing', { walletChain: '0x1', silentAddChain: true }, /does not have|would not switch/],
   ]) {
     const page = await open(browser, opts);
     await page.click('#connect');
     for (let i = 0; i < 80; i++) {
-      if (/does not have|would not switch/.test(await text(page, '#msgTop'))) break;
+      if (ANY_WAY_OUT.test(await text(page, '#msgTop'))) break;
       await page.waitForTimeout(500);
     }
     const msg = (await text(page, '#msgTop')).replace(/\s+/g, ' ');
     check('a wallet that ' + what + ' still gets the user somewhere',
-      /does not have|would not switch/.test(msg) && /add-chain/.test(msg), what + ' -> ' + msg.slice(0, 160));
+      ANY_WAY_OUT.test(msg) && /add-chain/.test(msg), what + ' -> ' + msg.slice(0, 160));
+    check('S-9 and is told what actually happened, not what did not (' + what + ')',
+      want.test(msg), what + ' -> ' + msg.slice(0, 200));
     check('and the network details are there as a fallback (' + what + ')',
       msg.includes('46630') && msg.includes('rpc.testnet.chain.robinhood.com'), msg.slice(-160));
+    await page.close();
+  }
+  {
+    // The distinction is the point, so it is asserted in both directions: a wallet that never answered must
+    // NOT be described as having refused, and one that refused must not be described as still thinking.
+    const page = await open(browser, { walletChain: '0x1', hangOnAddChain: true });
+    await page.click('#connect');
+    for (let i = 0; i < 80; i++) { if (ANY_WAY_OUT.test(await text(page, '#msgTop'))) break; await page.waitForTimeout(500); }
+    const msg = (await text(page, '#msgTop')).replace(/\s+/g, ' ');
+    check('S-9 a wallet that never answered is not reported as having refused',
+      !/would not switch|would not add/.test(msg), msg.slice(0, 200));
+    check('S-9 and the user is told not to press Connect again first',
+      /do not press Connect again first/i.test(msg), msg.slice(0, 240));
     await page.close();
   }
 }

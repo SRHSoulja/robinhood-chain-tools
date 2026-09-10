@@ -975,6 +975,11 @@
   const HEX = /^0x([0-9a-fA-F]{2})*$/;
   const CALL_FIELDS = new Set(['to', 'data', 'value', 'capabilities']);
   const HEX_QTY = /^0x(0|[1-9a-fA-F][0-9a-fA-F]*)$/;
+  // What JSON-RPC accepts as an address: twenty bytes of hex, any capitalisation. Deliberately NOT
+  // ethers.isAddress, which also enforces the EIP-55 checksum: a wallet given a lowercase address sends to it
+  // without complaint, so refusing one here would be this page inventing a problem. The checksum matters when
+  // a MIXED-case address fails it, and that is a different sentence, said separately.
+  const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
   const TX_FIELDS = new Set(['from', 'to', 'data', 'input', 'value', 'gas', 'gasPrice', 'maxFeePerGas',
     'maxPriorityFeePerGas', 'nonce', 'chainId', 'type', 'accessList']);
 
@@ -1045,7 +1050,8 @@
       if (c.capabilities !== undefined && (typeof c.capabilities !== 'object' || c.capabilities === null || Array.isArray(c.capabilities)))
         schema.push('Call ' + (i + 1) + ' has capabilities that are ' + typeName(c.capabilities) + ' rather than an object.');
       if (bad) invalid++;
-      calls.push({ to: (typeof c.to === 'string' && /^0x[0-9a-fA-F]{40}$/.test(c.to)) ? c.to : null,
+      calls.push({ to: ADDR_RE.test(String(c.to)) ? c.to : null,
+                   toGiven: c.to === undefined ? undefined : c.to,
                    data: HEX.test(data) ? data : '0x', from: null,
                    value: (c.value !== undefined && HEX_QTY.test(String(c.value))) ? c.value : undefined,
                    capabilities: c.capabilities, invalid: bad });
@@ -1063,6 +1069,8 @@
       },
       calls, notes: note, kindName: 'wallet_sendCalls',
       declaredChain: o.chainId === undefined ? null : o.chainId,
+      declaredFrom: ADDR_RE.test(String(o.from)) ? ethers.getAddress(o.from) : null,
+      senderUnreadable: o.from !== undefined && !ADDR_RE.test(String(o.from)) ? typeName(o.from) : null,
       conflictingSenders: (o.from && conflicting) ? conflicting : 0,
       schemaProblems: schema, invalidMembers: invalid,
       // Kept, not dropped. Capabilities are how a wallet is permitted to change what a request means, so one
@@ -1096,9 +1104,16 @@
     return {
       envelope: null,
       calls: [{
-        to: o.to || null,
+        // Validated with the same regex readEnvelope uses. `o.to || null` let "0x1234" and {"evil":1} through,
+        // and an unreadable destination then fell into the no-destination branch and was reported as a
+        // contract being created. Telling someone their transaction creates a contract is a wrong answer, not
+        // a cautious one. ethers.isAddress also enforces the checksum, which JSON-RPC does not, so a real
+        // address a wallet would send to without complaint used to produce the same wrong sentence.
+        to: ADDR_RE.test(String(o.to)) ? o.to : null,
+        // Kept even when unusable, so the renderer can tell "no destination given" from "given, unreadable".
+        toGiven: o.to === undefined ? undefined : o.to,
         data: readable && given !== undefined ? given : '0x',
-        from: o.from || null,
+        from: ADDR_RE.test(String(o.from)) ? o.from : null,
         // A hex quantity per JSON-RPC, and the reader forty lines below already refuses a decimal here with
         // the comment that explains why: "1" is not one wei, and a decimal that looks like a small number is
         // exactly the shape something else reads as a very different amount. This path took it as given and
@@ -1120,6 +1135,13 @@
       }],
       notes: note, kindName: 'eth_sendTransaction',
       invalidMembers: readable ? 0 : 1,
+      // The one name every reader reports its declared sender under, for the same reason declaredChain
+      // exists: the "names a different sender than the box" warning was derived only from an envelope, and
+      // this reader produces none, so an eth_sendTransaction whose `from` differed from the box changed who
+      // the answer was about and said nothing. Who is asking decides what most contracts do.
+      declaredFrom: ADDR_RE.test(String(o.from)) ? ethers.getAddress(o.from) : null,
+      // And a `from` that is present but not an address must not silently become the sender.
+      senderUnreadable: o.from !== undefined && !ADDR_RE.test(String(o.from)) ? typeName(o.from) : null,
       // The one name every reader reports its declared network under. It used to be carried on the envelope
       // for wallet_sendCalls and on the call for a transaction, and the renderer only knew about the first --
       // so a transaction that took the batch path had its chain read by nobody, which is exactly the finding
@@ -1228,7 +1250,11 @@
           // the sender that is described. A request that names its own sender is authoritative; the box fills
           // in only where a call names none.
           const label = many ? 'Request ' + (ri + 1) + ' of ' + reqs.length + ': ' : '';
-          const envSender = env && env.from ? ethers.getAddress(env.from) : null;
+          // From `declaredFrom`, which every reader sets, rather than from the envelope, which only one shape
+          // has. Derived from the envelope alone, the "names a different sender than the box" warning covered
+          // wallet_sendCalls and not eth_sendTransaction -- so a transaction whose `from` differed from the
+          // box silently changed who the answer was about. Who is asking decides what most contracts do.
+          const envSender = reqs[ri].declaredFrom || (env && env.from ? ethers.getAddress(env.from) : null);
           const uiSender = from;
           // The reader has already discarded anything a wallet would not honour. What is left is the
           // request's own sender, or, where it named none, the address in the box, said out loud as such.
@@ -1310,6 +1336,15 @@
               + short(envSender) + ' is what has been used here, and a wallet given this would either do the same or refuse it outright. '
               + 'Treat a request that says two different things about who is signing as one to look at closely.'));
           }
+          // A `from` that is present and not an address must not become the sender in silence. It used to:
+          // {"from":"nonsense"} produced "Simulated as one sequence, as nonsense, against the chain as it is
+          // now", with an unreadable sender used as the sender.
+          if (reqs[ri].senderUnreadable) {
+            cards.push(note('bad', label + 'this request names a sender that is not an address',
+              'Its `from` is ' + reqs[ri].senderUnreadable + ' rather than an address, so it has not been used. '
+              + (uiSender ? 'The address in the box, ' + short(uiSender) + ', is who this has been read as.'
+                          : 'Nothing has been read as the sender, and who is asking decides what most contracts do.')));
+          }
           if (envSender && uiSender && envSender.toLowerCase() !== uiSender.toLowerCase()) {
             cards.push(note('warn', label + 'the request names a different sender than the box',
               'The request says ' + short(envSender) + ' and the box says ' + short(uiSender) + '. The request wins, because that is who would actually send it.'));
@@ -1325,7 +1360,9 @@
                   : 'The request does not ask for these to happen together, so some may land and others may not.'));
 
           // B-04: only a list where every call can be simulated may earn an all-calls verdict.
-          const simulatable = calls.every((c) => ethers.isAddress(String(c.to || '')));
+          // ADDR_RE, not ethers.isAddress: a lowercase address is one a wallet sends to and one this page can
+          // simulate, and refusing to simulate over a checksum would be inventing a limit that is not there.
+          const simulatable = calls.every((c) => ADDR_RE.test(String(c.to || '')));
           let ordered = null, orderedErr = null;
           if (simulatable) {
             try { ordered = await simulateInOrder(calls); }
@@ -1333,8 +1370,18 @@
             if (stale(seq)) return;
           }
           if (!simulatable) {
+            // Which of the two it is, rather than naming only the innocent one. An entry with an unreadable
+            // destination is a malformed request; an entry with none is a contract creation; they are not
+            // the same thing to tell somebody.
+            const anyUnreadable = calls.some((c) => !ADDR_RE.test(String(c.to || '')) && c.toGiven !== undefined && String(c.toGiven) !== '');
+            const anyMissing = calls.some((c) => c.toGiven === undefined || String(c.toGiven) === '');
             cards.push(note('bad', label + 'this cannot be checked as a sequence',
-              'At least one entry has no destination this page can simulate, such as a contract being created. Running the others in order would leave that one out, and a verdict with a member missing is not a verdict.'));
+              (anyUnreadable && anyMissing
+                ? 'One entry has a destination that is not an address and another has none at all.'
+                : anyUnreadable
+                ? 'At least one entry has a destination that is not an address, so it cannot be simulated. That is a malformed request, not an entry that creates a contract.'
+                : 'At least one entry has no destination this page can simulate, such as a contract being created.')
+              + ' Running the others in order would leave that one out, and a verdict with a member missing is not a verdict.'));
           } else if (ordered) {
             const bad = ordered.findIndex((r) => !r.ok);
             if (bad >= 0) cards.push(note('bad', label + 'run in order, call ' + (bad + 1) + ' fails',
@@ -1360,12 +1407,24 @@
             // Before the address is looked at. An entry with a perfectly good `to` and calldata that cannot
             // be read still cannot be described, and describing it anyway is how empty calldata gets reported
             // as a fact about a transaction that carried some.
-            const noTo = !ethers.isAddress(String(c.to || ''));
+            // Two different things, and they used to share one sentence. An entry with NO `to` really is a
+            // contract creation. An entry whose `to` is "0x1234" or {"evil":1} is a malformed destination,
+            // and telling that person their transaction creates a contract is a wrong answer rather than a
+            // cautious one. A third case sits between them: twenty good bytes whose EIP-55 capitalisation is
+            // wrong, which a wallet would send to without complaint.
+            const toGiven = c.toGiven;
+            const noTo = !ADDR_RE.test(String(c.to || ''));
+            const toUnreadable = noTo && toGiven !== undefined && String(toGiven) !== '';
+            const badChecksum = !noTo && !ethers.isAddress(String(c.to));
             if (c.invalid || noTo) {
               cards.push(card(title, [
                 c.invalid ? note('bad', 'This could not be read as a call', c.invalid
                   + ' It is shown here at its own position so the list you see is the list you pasted.') : null,
-                noTo ? note('bad', 'This call has no destination this page can read',
+                toUnreadable ? note('bad', 'This call\u2019s destination is not an address',
+                  'It is ' + JSON.stringify(String(toGiven)).slice(0, 44) + ', which is not twenty bytes of hex. Nothing has been '
+                  + 'simulated and nothing is described below. A request that creates a contract carries no '
+                  + 'destination at all; this one carries an unreadable one, which is a different thing.') : null,
+                noTo && !toUnreadable ? note('bad', 'This call has no destination this page can read',
                   'An entry with no `to` is usually a contract being created, and this page cannot tell you what that contract would do.') : null,
                 kv([['Destination', String(c.to || '(none given)')], ['Value', c.value ? String(c.value) : '0'], ['Length', String(Math.max(0, (String(c.data).length - 2) / 2)) + ' bytes']]),
                 h('pre', { text: (String(c.data).slice(2).match(/.{1,64}/g) || []).join('\n') }),
@@ -1381,6 +1440,12 @@
             const sentence = p.unknown || p.empty ? null : describeCall(p, { target: t });
             cards.push(card(title, [
               h('p', { class: 'lede', text: sentence || (p.empty ? 'A plain transfer of ETH.' : p.unknown ? 'A call this page cannot name: ' + p.selector : p.signature) }),
+              // Twenty good bytes whose capitalisation fails EIP-55. A wallet sends to it without complaint,
+              // so this is a warning about the source of the address rather than a refusal to read it.
+              badChecksum ? note('warn', 'This destination\u2019s capitalisation does not match its checksum',
+                'The address is the right length and a wallet would send to it, but the mix of capitals in it is not the one '
+                + 'EIP-55 gives that address. That usually means it was retyped or edited by hand somewhere. Check it against '
+                + 'wherever you got it before signing.') : null,
               sentence ? readingCaption(t) : null,
               h('div', {}, [
                 sim ? h('span', { class: 'pill ' + (sim.ok ? 'ok' : 'bad'), text: sim.ok ? 'would succeed' : 'would fail' }) : null,

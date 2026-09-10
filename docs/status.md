@@ -15,7 +15,7 @@ Two things have to be true before that changes, and both are currently false:
 
 | | state |
 | --- | --- |
-| a review round with no release blockers | **not met** — round twelve found one, now fixed. The round that finds none has not happened |
+| a review round with no release blockers | **not met** — round twelve found one, now fixed, along with every one of its 18 should-fix items. The round that finds none has not happened |
 | explicit permission from the maintainer, given after that round | **not given** |
 
 Neither alone is enough. The deployer holds about 0.002 mainnet ETH that someone else sent, which is enough
@@ -114,7 +114,7 @@ B-1 is the same defect as round eleven's B-4, surviving on the reader nobody re-
 single-call path and the batch renderer kept reading `env.chainId`, a field only a `wallet_sendCalls` envelope
 has. Both readers now report their declared network under one name and the renderer reads that name.
 
-### Should be fixed — 6 closed, 1 declined with its reason, 11 open
+### Should be fixed — 17 closed, 1 declined with its reason, 0 open
 
 | | | |
 | --- | --- | --- |
@@ -124,18 +124,24 @@ has. Both readers now report their declared network under one name and the rende
 | S-4 | `airdrop20` on an ERC-721 spends amounts as token ids | closed in v12 |
 | S-5 | `_mustBeNft` refuses a bare-`require` ERC-721; probes `ids[0]` only | closed in v12 |
 | S-6 | one `false` answer reverts the whole lenient ERC-20 batch | **declined**, reason below |
-| S-7 | "Use these" silently deletes unreadable list lines | open |
-| S-8 | a quoted CSV works with a header row and fails without one | open |
-| S-9 | "would not switch" reported for a wallet that never answered | open |
-| S-10 | `readTransaction` validates neither `to` nor `from` | open |
-| S-11 | `arrivalsFromReceipt` reads the live account | open |
-| S-12 | `readBatchReceipt` reads the live form during reconciliation | open |
-| S-13 | the quoted cost carries none of the 1.35 margin; docs still say 1.15 | open |
-| S-14 | Send does not check the `signing` guard | open |
-| S-15 | the publish gate checks `script-src` and no other directive | open |
-| S-16 | origin-wide `cdnjs` grant; ethers from a third-party CDN | open |
-| S-17 | `integrity.yml` hashes bodies, so a header regression on `/` passes | open |
-| S-18 | six small items, grouped | open |
+| S-7 | "Use these" silently deletes unreadable list lines | closed |
+| S-8 | a quoted CSV works with a header row and fails without one | closed |
+| S-9 | "would not switch" reported for a wallet that never answered | closed |
+| S-10 | `readTransaction` validates neither `to` nor `from` | closed |
+| S-11 | `arrivalsFromReceipt` reads the live account | closed |
+| S-12 | `readBatchReceipt` reads the live form during reconciliation | closed |
+| S-13 | the quoted cost carries none of the 1.35 margin; docs still say 1.15 | closed |
+| S-14 | Send does not check the `signing` guard | closed |
+| S-15 | the publish gate checks `script-src` and no other directive | closed |
+| S-16 | origin-wide `cdnjs` grant; ethers from a third-party CDN | closed |
+| S-17 | `integrity.yml` hashes bodies, so a header regression on `/` passes | closed |
+| S-18 | six small items, grouped | closed |
+
+Every one of the other seventeen is closed, and each was closed against the probe or the test that
+demonstrated it rather than against an argument that it should now be fine. Four of them needed a test written
+first, because the fix could not otherwise be told from a belief: S-12 and S-14 were reasoned from source with
+no probe, S-9's existing test asserted the wrong sentence, and S-13's probe read the measurement rather than
+the figure the page works from.
 
 **S-6, declined.** The reviewer's reasoning is sound: ERC-20 defines `false` as "I did not transfer", so a
 conforming token answering it has moved nothing, and one blocklisted recipient should not cost a 400-row
@@ -177,6 +183,7 @@ Re-running every probe against the current commit:
 | Airdrop page probes | 8 of 23 |
 | Contract probes, round eleven | 15 of 20 |
 | Contract probes, round twelve | 5 of 7 |
+| Round twelve browser probes | 0 of 10 |
 
 `./verify.sh` runs all of the above in one command and compares those counts against
 [`test/findings-baseline.json`](../test/findings-baseline.json), so a later fix that quietly reopens an

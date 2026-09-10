@@ -40,7 +40,12 @@ for t in tokens:
 
 # And the host sources are an allowlist, not whatever is there. An addition is loud, and a deliberate one is
 # a one-line commit to this file rather than a change nobody sees.
-ALLOWED_SOURCES = {"'self'", "https://static.cloudflareinsights.com", "https://cdnjs.cloudflare.com"}
+# A CSP source expression may carry a path, and this one does. Granting the cdnjs ORIGIN meant any injection
+# point that could add a <script src> got to pick any file on cdnjs, including builds of libraries chosen for
+# what they do. The SRI is what protects the bytes and it still does; this reduces the grant from an origin to
+# one file, and costs nothing. Note the trailing filename: a path that ends in a file matches that file only.
+ALLOWED_SOURCES = {"'self'", "https://static.cloudflareinsights.com",
+                   "https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"}
 extra = {t for t in tokens if not t.startswith("'sha256-")} - ALLOWED_SOURCES
 if extra:
     raise SystemExit(
