@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-TAFd7zbeTD8pD+nleuN4VmoLi5LsD4T9zISMrgFRh1g='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-kcUDYYRD0XICUGXcCZDAhABi6EDweZDL2bwgHR1nNGI='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -286,9 +286,18 @@
   // is. Everything below falls out of that one answer.
   const TX_BASE = 21000;         // a standalone estimate carries it; a batch pays it once, not per recipient
   const BATCH_ROOM = 30000000;   // of the chain's 32,000,000 (ArbGasInfo.maxTxGasLimit), leaving the batch its own
-  const PROBE_MARGIN = 1.15;     // measured both ways on one contract, the derivation can run 5% light
+  // 1.15 covered the one direction I had measured: standalone against in-batch on four contracts, where the
+  // derivation ran 35-45% heavy on three and 5% light on a lazily-minted one. It did not cover the direction
+  // I had not. The probe measures a transfer made BY THE OWNER; BulkSend makes it AS AN OPERATOR, and a
+  // collection using the OperatorFilterer pattern charges a cold call into a registry on the operator path
+  // and nothing at all on the owner path. That is 5,000-10,000 gas on a base of ~40,000, so 12-25%, against
+  // a 15% margin. Collections with a transfer validator are already detected and routed away; this pattern
+  // is not detectable from outside, so the margin has to carry it. Against the 58 collections surveyed, 1.35
+  // still leaves 56 of them the full 400.
+  const PROBE_MARGIN = 1.35;
   let perRecipient = null;       // measured gas for one more recipient, null while unasked or unanswerable
-  let gasProbeKey = null;        // chain|token|standard|check, so an answer is never read for another question
+  let gasProbeKey = null;        // everything the answer depends on, so one is never read for another question
+  let probeRefused = false;      // the chain answered, and the answer was not believable
   // When the chain will not answer, these stand in. They are not an average, they are the dearest thing of
   // that kind found alive on this chain, so a figure derived from them is a real upper bound and can be
   // labelled as one. The old table held 32,000 for an ERC-20, which nine of the twenty-nine surveyed beat,
@@ -308,14 +317,27 @@
     'function safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes data)',
     'function transfer(address to, uint256 amount)',
   ];
+  // The row the probe would measure: the lowest id, because that is the one that goes out first and the rest
+  // follow it. Found without sorting, because this runs on every re-plan and the list can be long.
+  function probeRow() {
+    if (!rows.length) return null;
+    if (std() === '20') return rows[0];
+    let best = rows[0];
+    for (const r of rows) if (r.id !== undefined && best.id !== undefined && r.id < best.id) best = r;
+    return best;
+  }
   async function probeGas() {
     const token = $('token').value.trim();
-    const key = [chainId(), token.toLowerCase(), std(), safeMode() ? 's' : 'p'].join('|');
-    if (gasProbeKey === key || !me || !provider || !ethers.isAddress(token) || !rows.length) return;
-    gasProbeKey = key; perRecipient = null;
-    // The lowest id, because that is the one that goes out first and the rest follow it. On a lazily-minted
-    // collection the first transfer is the dear one and every later transfer lands on the record it left.
-    const row = orderForDelivery(rows)[0];
+    const row = probeRow();
+    // Everything the answer depends on belongs in the key. It used to hold the chain, the token, the standard
+    // and the receiver check, and not the row that was measured or the account it was measured for. So
+    // replacing the list with different ids of the same collection kept the old number and sized the cap for
+    // a list no longer being sent, and switching accounts kept a number measured for a wallet no longer
+    // connected. Neither re-asked, because neither changed the key.
+    const key = [chainId(), token.toLowerCase(), std(), safeMode() ? 's' : 'p', String(me),
+                 row ? String(row.id) : '-', row ? String(row.amount) : '-'].join('|');
+    if (gasProbeKey === key || !me || !provider || !ethers.isAddress(token) || !row) return;
+    gasProbeKey = key; perRecipient = null; probeRefused = false;
     // Never held this token, so the estimate includes the cold write every real recipient will pay for.
     const bytes = crypto.getRandomValues(new Uint8Array(20));
     const fresh = ethers.getAddress('0x' + [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(''));
@@ -332,7 +354,14 @@
       const g = Number(await new ethers.JsonRpcProvider(cfg().rpc).estimateGas({ from: me, to: token, data }));
       if (gasProbeKey !== key) return;                       // the question changed while we were asking it
       if (!Number.isFinite(g) || g <= TX_BASE) return;
-      perRecipient = g - TX_BASE;
+      const per = g - TX_BASE;
+      // Bounded in both directions, which it was not. An enormous answer drives the cap to 1 and is harmless.
+      // A tiny one was not harmless: 21,001 gas yields one gas a recipient and a cap of 400, which is TWICE
+      // the un-measured fallback and the top of the whole range, printed as "measured rather than assumed:
+      // about 1 gas a wallet". Nothing that moves a token costs a few gas, so an answer below a quarter of
+      // the cheapest thing of its kind found alive on this chain is a node being wrong, not a measurement.
+      if (per < fallbackPer() / 4) { probeRefused = true; plan(); return; }
+      perRecipient = per;
       plan();
     } catch (e) { /* a token that will not answer keeps the fallback, and the test run is still the real check */ }
   }
@@ -1940,9 +1969,13 @@
       + (perRecipient
           ? 'This collection was measured rather than assumed: about ' + perRecipient.toLocaleString()
             + ' gas a wallet, so at most ' + cap + " fit inside one transaction's 32,000,000 gas. "
-          : 'This collection has not been measured yet, so the figures above are the dearest token of its kind '
-            + 'found alive on this chain rather than this one, and this page will use at most ' + cap
-            + ' per transaction. ')
+          : (probeRefused
+              ? 'The chain answered when asked what this collection costs, and the answer was too small to be '
+                + 'real, so it has not been used. The figures above are the dearest token of its kind found '
+                + 'alive on this chain instead, and this page will use at most ' + cap + ' per transaction. '
+              : 'This collection has not been measured yet, so the figures above are the dearest token of its '
+                + 'kind found alive on this chain rather than this one, and this page will use at most ' + cap
+                + ' per transaction. '))
       + why;
     say('batchClamp', over
       ? 'You asked for ' + typed + '. This page will use ' + cap + ', which is as many as it will put in one transaction the way this send is set up.'

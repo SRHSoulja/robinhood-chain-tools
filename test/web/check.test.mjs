@@ -82,8 +82,9 @@ function answer(O) {
   };
 }
 
-async function open(browser, opts = {}) {
+async function open(_stale, opts = {}) {
   const ans = answer(opts);
+  await freshBrowser();
   const page = await browser.newPage({ viewport: { width: 1100, height: 1600 } });
   const errs = []; page.on('pageerror', (e) => errs.push(String(e).slice(0, 200)));
   page.on('dialog', (d) => (opts.promptWith ? d.accept(opts.promptWith) : d.dismiss()));
@@ -155,7 +156,19 @@ const CSP_PAGES = [['../../web/check.html', '../../web/check.js']];
   }
 }
 
-const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+// One browser for fifty pages is more than this machine will reliably carry: a headless Chromium does not
+// hand everything back when a page closes, and somewhere past the fortieth the next newPage cannot be
+// allocated and the whole run dies with an error that names whichever test happened to be next. That reads
+// like a broken test rather than an exhausted browser, and it cost most of an evening. So the browser is
+// recycled every so often. Nothing about what is under test changes; only how much is asked of one process.
+const LAUNCH = { headless: true, args: ['--no-sandbox'] };
+let browser = await chromium.launch(LAUNCH);
+let pagesOpened = 0;
+async function freshBrowser() {
+  if (++pagesOpened % 10) return;
+  try { await browser.close(); } catch (e) {}
+  browser = await chromium.launch(LAUNCH);
+}
 
 // ---- what was pasted -------------------------------------------------------
 {

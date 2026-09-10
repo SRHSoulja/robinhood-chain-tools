@@ -391,7 +391,39 @@
   }
 
   // ---------- saying what a call does, in a sentence ----------
+  // 2^200 was a threshold picked to catch 2^256-1, and it catches almost nothing else: an approval of 2^199
+  // is unlimited against every token that has ever existed and used to get no warning at all. Where the
+  // supply is known, that is the honest comparison; where it is not, 2^128 is still far beyond any real one
+  // (a token with eighteen decimals and a trillion units is about 2^100) while being reachable by an
+  // approval meant to be forever.
   const UNLIMITED = (v) => { try { const n = BigInt(v); return n >= (1n << 200n); } catch (e) { return false; } };
+  const BEYOND_ANY_SUPPLY = 1n << 128n;
+  function unlimitedFor(v, token) {
+    try {
+      const n = BigInt(v);
+      if (n <= 0n) return false;
+      const sup = token && token.supply !== undefined && token.supply !== null ? BigInt(token.supply) : null;
+      if (sup && sup > 0n) return n >= sup;
+      return n >= BEYOND_ANY_SUPPLY;
+    } catch (e) { return false; }
+  }
+  // Every shape that grants a standing allowance, and where the spender and the amount sit in each. Warning
+  // on the selector meant `increaseAllowance` -- the standard route on tokens that make a bare approve
+  // awkward -- and `permit` -- how an allowance is granted from a signature, with no transaction to inspect
+  // beforehand -- both rendered as ordinary grey prose. The two most dangerous shapes had the weakest
+  // treatment because the check was written for the one that is easiest to name.
+  const APPROVAL_SHAPES = {
+    'approve(address,uint256)': { spender: 0, amount: 1, how: '' },
+    'increaseAllowance(address,uint256)': { spender: 0, amount: 1,
+      how: 'It is granted through increaseAllowance rather than approve, which is the usual route on tokens that make a bare approve awkward, and it is the same standing permission. ' },
+    'permit(address,address,uint256,uint256,uint8,bytes32,bytes32)': { spender: 1, amount: 2,
+      how: 'It is granted from a signature, so there is no separate approval transaction of your own to find afterwards. ' },
+  };
+  const unlimitedApproval = (p, token) => {
+    const sh = p && p.signature ? APPROVAL_SHAPES[p.signature] : null;
+    if (!sh || !p.args) return null;
+    return unlimitedFor(p.args[sh.amount], token) ? { spender: p.args[sh.spender], how: sh.how } : null;
+  };
   function fmtAmount(v, token) {
     if (UNLIMITED(v)) return 'an unlimited amount';
     if (token && token.decimals !== null && token.decimals !== undefined) {
@@ -530,7 +562,7 @@
       rows.push(h('div', { class: 'move' }, [
         h('div', { text: sentence || (p.unknown ? 'A call this page cannot name: ' + p.selector : p.signature) }),
         h('div', { class: 'mut mono', text: 'to ' + short(String(c.to || '?')) + (c.value ? '  with ' + ethers.formatEther(c.value) + ' ETH' : '') }),
-        (p.signature === 'approve(address,uint256)' && UNLIMITED(p.args[1]))
+        unlimitedApproval(p, t && t.token)
           ? h('div', { class: 'bad', text: 'This inner call is an unlimited approval.' }) : null,
         (p.signature === 'setApprovalForAll(address,bool)' && p.args[1])
           ? h('div', { class: 'bad', text: 'This inner call hands over a whole collection.' }) : null,
@@ -844,8 +876,11 @@
   // batch and a call carried inside another all say the same things about the same bytes.
   function callWarnings(parsed, target, sim, from) {
     const w = [];
-    if (parsed.signature === 'approve(address,uint256)' && UNLIMITED(parsed.args[1]))
-      w.push(['bad', 'This is an unlimited approval', 'It lets ' + short(parsed.args[0]) + ' take that token out of your wallet at any point in the future, in any amount, without asking again. Approving only what you are spending right now costs the same gas.']);
+    const unl = unlimitedApproval(parsed, target && target.token);
+    if (unl)
+      w.push(['bad', 'This is an unlimited approval', 'It lets ' + short(unl.spender)
+        + ' take that token out of your wallet at any point in the future, in any amount, without asking again. '
+        + unl.how + 'Approving only what you are spending right now costs the same gas.']);
     if (parsed.signature === 'setApprovalForAll(address,bool)' && parsed.args[1])
       w.push(['bad', 'This hands over the whole collection', 'Not one NFT: every one you hold now and every one you ever hold in this collection, until you revoke it.']);
     if (parsed.signature && /^(transferOwnership|renounceOwnership|upgradeTo)/.test(parsed.signature))
@@ -1018,6 +1053,10 @@
       if (k === 'calls') note.push('This transaction carries a `calls` array. That belongs to wallet_sendCalls, not to sending a transaction, so a wallet would either ignore it or refuse the request. What is described below is the transaction itself, not what is inside that array.');
       else note.push('Unrecognised field `' + String(k).slice(0, 24) + '` on this transaction, ignored.');
     }
+    if (o.value !== undefined && !HEX_QTY.test(String(o.value)))
+      note.push('This transaction\u2019s `value` is ' + JSON.stringify(String(o.value)).slice(0, 24) + ', which is not the hex quantity '
+        + 'this field has to carry. No ETH amount is shown below, because what a wallet would make of it is not one answer: '
+        + 'it may refuse the request, or read it as a very different amount than it looks like.');
     // `0x` is what a transaction with no calldata carries. It is not what a transaction whose calldata could
     // not be read carries, and substituting one for the other turns "I cannot read this" into "there is
     // nothing here": an unlimited approve that lost its 0x on the way through a chat window was being
@@ -1031,7 +1070,12 @@
         to: o.to || null,
         data: readable && given !== undefined ? given : '0x',
         from: o.from || null,
-        value: o.value,
+        // A hex quantity per JSON-RPC, and the reader forty lines below already refuses a decimal here with
+        // the comment that explains why: "1" is not one wei, and a decimal that looks like a small number is
+        // exactly the shape something else reads as a very different amount. This path took it as given and
+        // stated an exact ETH figure from it. What a wallet would do with such a value is genuinely
+        // ambiguous, which is the reason to report it rather than to pick a reading.
+        value: (o.value === undefined || HEX_QTY.test(String(o.value))) ? o.value : undefined,
         // The chain a request names is part of what it means. It used to be listed as a field this page
         // knows and then read by nobody, so a request for another chain was answered, in full and in green,
         // about whichever chain this page happened to be set to.
@@ -1123,14 +1167,14 @@
     const parsedInput = readInput($('input').value);
     const fromRaw = $('from').value.trim();
     const from = ethers.isAddress(fromRaw) ? ethers.getAddress(fromRaw) : null;
-    if (fromRaw && !from) { say('That sender address is not a valid address.', 'bad'); return; }
+    if (fromRaw && !from) { say('That sender address is not a valid address.', 'bad'); out(); return; }
     const seq = ++lookupSeq; activeLookup = seq;
     const askedOn = chainId();
     $('go').disabled = true; $('net').disabled = true;
     for (const b of document.querySelectorAll('.ex')) b.disabled = true;
     try {
-      if (parsedInput.kind === 'empty') { say('Paste something first.', 'warn'); return; }
-      if (parsedInput.kind === 'bad') { say(parsedInput.why, 'bad'); return; }
+      if (parsedInput.kind === 'empty') { say('Paste something first.', 'warn'); out(); return; }
+      if (parsedInput.kind === 'bad') { say(parsedInput.why, 'bad'); out(); return; }
       if (parsedInput.kind === 'tx') return await showTransaction(parsedInput.hash, from, seq);
       if (parsedInput.kind === 'address') return await showAddress(parsedInput.address, seq);
       if (parsedInput.kind === 'batch') {
@@ -1337,13 +1381,13 @@
             return;
           }
         }
-        if (!ethers.isAddress(parsedInput.to || '')) { say('That call has no valid "to" address in it.', 'bad'); return; }
+        if (!ethers.isAddress(parsedInput.to || '')) { say('That call has no valid "to" address in it.', 'bad'); out(); return; }
         return await showCall(ethers.getAddress(parsedInput.to), parsedInput.data, from || (ethers.isAddress(parsedInput.from || '') ? ethers.getAddress(parsedInput.from) : null), parsedInput.value, seq);
       }
       if (parsedInput.kind === 'data') {
         // Calldata alone says what is being asked for but not of whom, and the answer depends on both.
         const to = prompt('Which contract is that call going to? Paste its address.\n\nThe same calldata means different things at different contracts.');
-        if (!to || !ethers.isAddress(to.trim())) { say('A preview needs the contract the call is going to. Paste it into the box as {"to":"0x…","data":"0x…"} if it is easier.', 'warn'); return; }
+        if (!to || !ethers.isAddress(to.trim())) { say('A preview needs the contract the call is going to. Paste it into the box as {"to":"0x…","data":"0x…"} if it is easier.', 'warn'); out(); return; }
         return await showCall(ethers.getAddress(to.trim()), parsedInput.data, from, null, seq);
       }
     } catch (e) {

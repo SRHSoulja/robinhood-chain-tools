@@ -242,10 +242,11 @@ const WC_DIR = (() => {
   return pathToFileURL(join(d, 'index.html')).href;
 })();
 
-async function open(browser, opts = {}) {
+async function open(_stale, opts = {}) {
   const answer = chainAnswer(opts);
   // Web Locks are shared between the tabs of one browser profile, not between browser contexts. A test that
   // wants two tabs has to put them in one context; two contexts are two profiles and share nothing.
+  if (!opts.ctx) await freshBrowser();
   const page = opts.ctx ? await opts.ctx.newPage() : await browser.newPage({ viewport: { width: 1200, height: 1400 } });
   const errs = [];
   page.on('pageerror', (e) => errs.push(String(e).slice(0, 160)));
@@ -360,7 +361,17 @@ const CSP_PAGES = [['../../web/index.html', null]];
 
 // --allow-file-access-from-files: the page imports its phone-wallet connector as a module from its own
 // directory, which a file:// origin otherwise refuses. Nothing here is ever served over the network.
-const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--allow-file-access-from-files'] });
+// Recycled every so often, for the reason written out in check.test.mjs: one headless Chromium will not
+// carry a hundred pages on a shared machine, and when it stops being able to allocate one the run dies
+// naming whichever test was next rather than the browser that ran out.
+const LAUNCH = { headless: true, args: ['--no-sandbox', '--allow-file-access-from-files'] };
+let browser = await chromium.launch(LAUNCH);
+let pagesOpened = 0;
+async function freshBrowser() {
+  if (++pagesOpened % 10) return;
+  try { await browser.close(); } catch (e) {}
+  browser = await chromium.launch(LAUNCH);
+}
 
 // ---- H-04: a real CSV reader ------------------------------------------------
 {
