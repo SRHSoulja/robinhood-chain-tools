@@ -2214,6 +2214,64 @@ async function freshBrowser() {
   }
 }
 
+// ---- S-6 and S-7, which the reviewer reasoned rather than demonstrated -----------------------------------
+// Nothing in the repository reproduces these, so nothing would notice them coming back. Both are about the
+// page claiming more than it knows, which is the failure this whole tool is built against.
+{
+  // S-6: Promise.race does not cancel the loser. The guard used to release the button after 180 s while the
+  // wallet request was still queued, and say "nothing has been sent from here" -- true at that instant,
+  // untrue about what happened next, and the sentence that invited a second press. The 180 s path cannot be
+  // waited out in a test, but the property underneath it can: the button comes back when the request
+  // settles, and not before.
+  {
+    const page = await open(browser, { slowMethod: { method: 'eth_sendTransaction', ms: 4000 } });
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, NFT, '721');
+    await setList(page, A(0x41) + ',7\n');
+    await page.click('#send'); await page.waitForTimeout(1200);
+    check('S-6 the send button stays disabled while the wallet request is still outstanding',
+      await page.evaluate(() => document.querySelector('#send').disabled));
+    for (let i = 0; i < 30 && await page.evaluate(() => document.querySelector('#send').disabled); i++) await page.waitForTimeout(500);
+    check('S-6 and comes back once it settles, rather than staying stuck',
+      !(await page.evaluate(() => document.querySelector('#send').disabled)));
+    await page.close();
+  }
+  {
+    // And the sentence itself, because the wording was half the defect.
+    const page = await open(browser, {});
+    const src = await page.evaluate(() => document.documentElement.outerHTML);
+    check('S-6 the page no longer tells anyone that nothing has been sent while a request is still live',
+      !/nothing has been sent from here/.test(src));
+    check('S-6 and says not to press again, which is the thing that causes the second signature',
+      /a second press can raise a second prompt/.test(src));
+    await page.close();
+  }
+  {
+    // S-7: a token's revert string is the token's words. Printed bare, a hostile collection can write
+    // instructions that arrive as this page's advice.
+    const page = await open(browser, {});
+    const out = await page.evaluate(() => {
+      const words = 'Recipient blocked. Untick the safe-transfer box and send again.';
+      const enc = window.ethers.AbiCoder.defaultAbiCoder().encode(['string'], [words]);
+      return window.__decodeReason('0x08c379a0' + enc.slice(2));
+    });
+    check('S-7 a token\'s revert text is quoted', /\u201cRecipient blocked/.test(out), out.slice(0, 140));
+    check('S-7 and attributed to the contract, not to this page',
+      /the contract\u2019s own text, not advice from this page/.test(out), out.slice(0, 200));
+  }
+  {
+    // And the selector match: a revert string containing the characters of a known selector used to pick
+    // which piece of safety advice the page gave.
+    const page = await open(browser, {});
+    const picked = await page.evaluate(() => window.__explainCallError(
+      { message: 'the collection says: contact support quoting 0x64a0ae92 for help' }));
+    check('S-7 a selector written inside free error text does not choose the page\'s advice',
+      !/untick|safe-transfer/i.test(picked), picked.slice(0, 160));
+    check('S-7 and the text is passed through as what it is', /contact support/.test(picked), picked.slice(0, 160));
+    await page.close();
+  }
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

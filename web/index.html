@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-QoCa5m4RKjw0HUv3azFeBGuh62B0HTTHp3UO7dME1zo='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-ArhqNeJvgtLyhwq0qlnD4+YovqxkZehgbsDv/FJMKHc='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -3065,17 +3065,17 @@
   function explainCallError(e) {
     const data = e?.data || e?.info?.error?.data || e?.error?.data || (typeof e?.value === 'string' ? e.value : null);
     if (typeof data === 'string' && data.startsWith('0x') && data.length >= 10) return decodeReason(data);
-    const msg = String(e?.shortMessage || e?.message || e);
-    // Only where a selector can really be: the front of a hex payload. Matching it as a substring of free
-    // text let a contract put the characters of an error selector into its revert string and choose which
-    // piece of safety advice this page would give.
-    const low = msg.toLowerCase();
-    const payloads = (low.match(/0x[0-9a-f]{8,}/g) || []).map((h) => h.slice(0, 10));
-    for (const sel of Object.keys(KNOWN)) if (payloads.includes(sel)) return KNOWN[sel];
-    for (const sel of Object.keys(OURS)) if (payloads.includes(sel)) return OURS[sel];
-    return msg.slice(0, 220);
+    // No selector matching here, on purpose. A real selector arrives in `e.data` and the branch above reads
+    // it. Looking for one in the message meant reading attacker-controlled text: a token that writes
+    // "0x64a0ae92" into its own revert string could make this page recommend unticking the safe-transfer box,
+    // and an NFT sent that way to a contract that cannot hold it is stuck for good. Narrowing the match to
+    // the front of a hex payload does not help, because a selector written into a sentence is exactly that.
+    // Where the data is missing this page does not know which error it is, and says what it was told instead
+    // of guessing which safety advice to give.
+    return String(e?.shortMessage || e?.message || e).slice(0, 220);
   }
   window.__decodeReason = decodeReason;   // used by the page's own checks
+  window.__explainCallError = explainCallError;
   window.__readBatchReceipt = readBatchReceipt;
   window.__loadPendingForTest = loadPending;
   window.__arrivalsFromReceipt = arrivalsFromReceipt;
