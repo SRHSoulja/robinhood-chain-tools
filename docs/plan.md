@@ -53,6 +53,7 @@ exist only for whoever configured them.
 | **Covers** | the cause of B-1, S-1, S-2 and S-5 |
 | **Why here** | It decides the full contract change set, so the contract is deployed once. |
 | **Done when** | `docs/readers.md` lists, for each shared input, every function that reads it and what each does with it; and a test asserts the ones that must agree do agree. |
+| **Status** | **map done** ([`readers.md`](readers.md)). It settled the v13 change set as B-1 alone, and turned up a third instance of the count-lines-not-wallets defect in `applyWeight` that round thirteen did not find. Tests land with the fixes in Phase 4. |
 
 Two shared inputs, and this round found a disagreement in both:
 
