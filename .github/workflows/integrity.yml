@@ -75,6 +75,39 @@ jobs:
             echo "  ok    $host redirects and sends HSTS"
           done
 
+          # The body hash checked further down cannot see a header change, because the CSP header is generated
+          # by deploy/publish.sh from the meta tag at publish time and lives in the worker, not in web/*.html.
+          # So a worker republished without `frame-ancestors 'none'` -- the one directive a meta tag cannot
+          # express -- passed every check in this file. That is not hypothetical: rhcheck's worker went out
+          # without the header from secure() at all, and the green runs here did not notice, because the only
+          # responses this file checked for CSP were the /x/ ones.
+          for host in rhairdrop.gmgnrepeat.com rhcheck.gmgnrepeat.com; do
+            page="$([ "$host" = "rhairdrop.gmgnrepeat.com" ] && echo web/index.html || echo web/check.html)"
+            csp="$(curl -sI --max-time 25 "https://$host/" | tr -d '\r' | grep -i '^content-security-policy:' | cut -d' ' -f2-)"
+            [ -n "$csp" ] || { echo "https://$host/ sent no Content-Security-Policy header at all"; exit 1; }
+            case "$csp" in
+              *"frame-ancestors 'none'"*) ;;
+              *) echo "https://$host/ has a CSP with no frame-ancestors 'none'; the page can be framed"; exit 1 ;;
+            esac
+            # The header must carry the hash of the script in THIS repository. A worker serving an older page
+            # with an older policy is a drift this file exists to catch, and the body hash below only catches
+            # it when the body is also stale.
+            want="$(grep -o "sha256-[A-Za-z0-9+/=]*" "$page" | head -1)"
+            [ -n "$want" ] || { echo "$page names no script hash"; exit 1; }
+            case "$csp" in
+              *"$want"*) ;;
+              *) echo "https://$host/ CSP does not name $page's script hash ($want)"; exit 1 ;;
+            esac
+            # 'unsafe-inline' is legitimate in style-src and never in script-src, so this looks at the one
+            # directive rather than the whole policy.
+            script_src="$(printf '%s' "$csp" | tr ';' '\n' | grep -i 'script-src' || true)"
+            case "$script_src" in
+              *unsafe-inline*|*unsafe-eval*|*strict-dynamic*|*unsafe-hashes*)
+                echo "https://$host/ script-src carries an unsafe token: $script_src"; exit 1 ;;
+            esac
+            echo "  ok    $host sends a CSP with frame-ancestors none, this repository's hash, and no unsafe script-src token"
+          done
+
           # /cdn-cgi/* is Cloudflare's, answered before any Worker, so nothing in this repository can put a
           # header on it. SECURITY.md says so explicitly. This asserts the state that sentence describes, and
           # will fail if zone-level HSTS is ever turned on -- at which point the sentence needs updating too.

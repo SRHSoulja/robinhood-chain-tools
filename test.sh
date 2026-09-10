@@ -14,6 +14,13 @@ node test/web/client.test.mjs
 node test/web/check.test.mjs
 
 echo
+echo "=== the publish gate ==="
+# The gate that decides whether a Content-Security-Policy may be published. It used to live inside
+# deploy/publish.sh, where the only way to exercise it was to publish -- so it was never run against a policy
+# it was supposed to refuse.
+./test/csp-gate.test.sh
+
+echo
 echo "=== the reviewers' probes (a FAILING probe is a finding that is fixed) ==="
 forge test --match-path 'test/Audit*.t.sol' 2>&1 | grep -E "^Suite result|^Ran " || true
 echo

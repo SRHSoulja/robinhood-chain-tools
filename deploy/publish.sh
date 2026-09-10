@@ -88,48 +88,7 @@ assert len(blocks) == 1, "expected exactly one inline script, found %d" % len(bl
 print("sha256-" + base64.b64encode(hashlib.sha256(blocks[0].encode()).digest()).decode())
 PY
 )"
-python3 - "$SRC" "$CSP_HASH" <<'PY'
-import re, sys
-path, want = sys.argv[1], sys.argv[2]
-html = open(path, encoding="utf-8").read()
-m = re.search(r'(<meta http-equiv="Content-Security-Policy" content=")([^"]*)(">)', html)
-assert m, "no CSP meta tag"
-policy = m.group(2)
-# This checks; it does not repair. A publisher that edits the file it is about to ship is a publisher that
-# ships bytes no commit contains, which is exactly what the dirty-tree guard above exists to prevent.
-# Presence is not the invariant. A policy naming this hash *and* an older one still authorizes the older
-# inline script, so what is required is that the hash set in script-src is exactly this one.
-src = re.search(r"script-src ([^;]*)", policy)
-if not src:
-    raise SystemExit("the page's CSP has no script-src")
-hashes = sorted(t for t in src.group(1).split() if t.startswith("'sha256-"))
-if hashes != ["'%s'" % want]:
-    raise SystemExit(
-        "the page's CSP must name exactly one script hash, its own.\n  script-src hashes: %s\n  this page's script: '%s'\nRun web/sync.sh and commit the result."
-        % (", ".join(hashes) or "(none)", want))
-# Naming the right hash is not the same as being a safe policy. A script-src can carry this exact hash and
-# still authorize everything, so the rest of the directive is checked too.
-NEVER = ("'unsafe-inline'", "'unsafe-eval'", "'strict-dynamic'", "'unsafe-hashes'", "*")
-tokens = src.group(1).split()
-for t in tokens:
-    if t in NEVER:
-        raise SystemExit(
-            "the page's CSP script-src contains %s, which this project does not publish.\n"
-            "  'strict-dynamic' in particular makes every host source below it irrelevant: any script the\n"
-            "  hashed inline script inserts would load from anywhere, which is the whole thing the hash buys."
-            % t)
-
-# And the host sources are an allowlist, not whatever is there. An addition is loud, and a deliberate one is
-# a one-line commit to this file rather than a change nobody sees.
-ALLOWED_SOURCES = {"'self'", "https://static.cloudflareinsights.com", "https://cdnjs.cloudflare.com"}
-extra = {t for t in tokens if not t.startswith("'sha256-")} - ALLOWED_SOURCES
-if extra:
-    raise SystemExit(
-        "the page's CSP script-src names sources this script does not know: %s\n"
-        "  If that is deliberate, add it to ALLOWED_SOURCES in deploy/publish.sh in the same commit, so the\n"
-        "  change is reviewable rather than silent." % ", ".join(sorted(extra)))
-print("  CSP: one hash, its own; no unsafe token; no source outside the allowlist")
-PY
+python3 deploy/csp-gate.py "$SRC" "$CSP_HASH"
 
 # The page is inlined into the worker as a string constant, so the worker serves it from the edge with no
 # origin request at all. Everything the page needs beyond that is fetched by the browser.

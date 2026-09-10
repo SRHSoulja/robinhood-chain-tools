@@ -50,6 +50,16 @@ for suite in client check; do
 done
 
 say ""
+say "=== the publish gate: can a weaker policy get out ==="
+if ./test/csp-gate.test.sh >/tmp/rh-csp.txt 2>&1; then
+  say "  $(grep -E '^[0-9]+ passed' /tmp/rh-csp.txt | tail -1), every weakening refused"
+else
+  say "  FAIL  the CSP gate let something through; see /tmp/rh-csp.txt"
+  grep -E '^  FAIL' /tmp/rh-csp.txt | sed 's/^/      /'
+  fail=1
+fi
+
+say ""
 say "=== the probes: is everything that was fixed still fixed ==="
 count_probe() { node "$1" 2>/dev/null | grep -oE '^[0-9]+ demonstrated' | grep -oE '^[0-9]+' | tail -1; }
 now_airdrop="$(count_probe test/web/audit-probe.mjs)"
