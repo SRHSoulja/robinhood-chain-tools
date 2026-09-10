@@ -2168,6 +2168,41 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '
   }
 }
 
+// ---- round eleven, B-1: a wallet's word never releases a paid recipient ---------------------------------
+// Everywhere else this page says the same thing: do not believe the answer, read the chain. Here it believed
+// the answer, in the one direction that cannot be undone. Two shapes, both demonstrated by the auditor: a
+// numeric 500 and the string 'FAILED', which no version of EIP-5792 defines, each arriving alongside a
+// receipt that shows the transfer succeeding. Deleting the pending record is what makes those recipients
+// payable again, so neither may produce a state that deletes it.
+{
+  const paidReceipt = [{ transactionHash: '0x' + 'ab'.repeat(32), status: '0x1', blockNumber: '0x1000', logs: [] }];
+  for (const [label, status] of [['a numeric 500', 500], ["the string 'FAILED'", 'FAILED']]) {
+    const page = await open(browser, { walletBatch: true, callsStatus: { status, receipts: paidReceipt } });
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, NFT, '721');
+    await setList(page, A(0x31) + ',7\n');
+    await page.click('#send'); await page.waitForTimeout(4000);
+    const lg = (await text(page, '#log')).replace(/\s+/g, ' ');
+    check('B-1 (' + label + ') the page does not claim nothing moved while holding a receipt that says it did',
+      !/nothing in it moved/.test(lg), lg.slice(-220));
+    check('B-1 (' + label + ') and those recipients stay held rather than becoming payable again',
+      await page.evaluate(() => !document.querySelector('#review').textContent.includes('Review held rows')),
+      await text(page, '#review'));
+    await page.close();
+  }
+  // And the honest case still works: a real failure, with no receipt contradicting it, still releases.
+  {
+    const page = await open(browser, { walletBatch: true, callsStatus: { status: 500, receipts: [] } });
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, NFT, '721');
+    await setList(page, A(0x32) + ',8\n');
+    await page.click('#send'); await page.waitForTimeout(4000);
+    check('B-1 a batch that really did revert, with nothing contradicting it, still says so',
+      /reverted in full/.test((await text(page, '#log')).replace(/\s+/g, ' ')), (await text(page, '#log')).slice(-200));
+    await page.close();
+  }
+}
+
 await browser.close();
 console.log(results.join('\n'));
 console.log('\n' + pass + ' passed, ' + fail + ' failed');

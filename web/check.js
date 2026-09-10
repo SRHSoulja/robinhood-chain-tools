@@ -404,6 +404,15 @@
   function describeCall(parsed, ctx) {
     const t = ctx.target || {};
     const nft = t.standard === 'ERC-721' || t.standard === 'ERC-1155';
+    // Three states, not two. `standard` is null whenever supportsInterface and decimals() both went
+    // unanswered, which covers plenty of unverified NFTs and covers everything when a node is flaky. Folding
+    // null in with "not an NFT" wrote the ERC-20 sentence for a contract nobody had established was one,
+    // while the argument labels three functions away correctly said "token id or amount". The page already
+    // knew that it did not know; only the sentence a reader actually reads was pretending otherwise.
+    const unsure = !t.standard;
+    const eitherWay = ' This contract has not said which standard it follows, so that number is a token id '
+      + 'or amount and this page cannot tell you which. One is a single item, the other is a quantity of '
+      + 'them, and it will not guess between them.';
     const what = t.token && t.token.name ? t.token.name : (t.name || 'this contract');
     const who = (a) => short(a);
     const amt = (v) => fmtAmount(v, t.token);
@@ -411,10 +420,12 @@
     switch (parsed.signature) {
       case 'transfer(address,uint256)': return 'Send ' + amt(a[1]) + ' to ' + who(a[0]) + '.';
       case 'transferFrom(address,address,uint256)':
-        return nft ? 'Move ' + what + ' #' + a[2] + ' from ' + who(a[0]) + ' to ' + who(a[1]) + '.'
+        return unsure ? 'Move ' + String(a[2]) + ' of ' + what + ' from ' + who(a[0]) + ' to ' + who(a[1]) + '.' + eitherWay
+             : nft ? 'Move ' + what + ' #' + a[2] + ' from ' + who(a[0]) + ' to ' + who(a[1]) + '.'
                    : 'Move ' + amt(a[2]) + ' from ' + who(a[0]) + ' to ' + who(a[1]) + '.';
       case 'approve(address,uint256)':
-        return nft ? 'Let ' + who(a[0]) + ' move ' + what + ' #' + a[1] + '. It stays allowed until you take it back.'
+        return unsure ? 'Let ' + who(a[0]) + ' take ' + String(a[1]) + ' of your ' + what + ', now and at any time in the future, until you take it back.' + eitherWay
+             : nft ? 'Let ' + who(a[0]) + ' move ' + what + ' #' + a[1] + '. It stays allowed until you take it back.'
                    : 'Let ' + who(a[0]) + ' spend ' + amt(a[1]) + ' of your ' + what + ', now and at any time in the future, until you take it back.';
       case 'increaseAllowance(address,uint256)': return 'Let ' + who(a[0]) + ' spend ' + amt(a[1]) + ' more of your ' + what + '.';
       case 'decreaseAllowance(address,uint256)': return 'Reduce what ' + who(a[0]) + ' may spend of your ' + what + ' by ' + amt(a[1]) + '.';
@@ -649,7 +660,13 @@
     if (stale(seq)) return;
     if (!tx && !rc) { say('No transaction with that hash on ' + cfg().name + '. It may be on the other network, or not mined yet.', 'bad'); out(); return; }
     const target = tx && tx.to ? await readAddress(tx.to) : null;
-    const parsed = tx ? parseData(tx.data, target && target.abi) : { empty: true };
+    // `empty` is this page's word for "this transaction really carried no calldata". Using it for "I could
+    // not read the calldata" says the opposite of the truth, and the renderer cannot tell them apart: a node
+    // that returns the receipt but not the body (ethers batches both into one HTTP request, and a pruning
+    // node drops the body while keeping the receipt) produced "A plain transfer of ETH, with no contract
+    // call" printed directly above a movements list showing an unlimited approval. A false all-clear built
+    // out of a missing answer is the one thing this page exists to not do.
+    const parsed = tx ? parseData(tx.data, target && target.abi) : { bodyMissing: true };
     const ctx = { target };
     // An airdrop moves a different contract than the one it calls, so read that one for its name.
     if (parsed && parsed.args && parsed.name && parsed.name.startsWith('airdrop') && ethers.isAddress(String(parsed.args[0] || ''))) {
@@ -675,17 +692,25 @@
     say('');
     out(
       card(null,
-        h('p', { class: 'lede', text: sentence || (parsed.empty ? 'A plain transfer of ETH, with no contract call.' : parsed.unknown ? 'A call this page cannot name: the contract has published no source and the function is not a standard one.' : parsed.signature) }),
+        h('p', { class: 'lede', text: sentence || (parsed.bodyMissing ? 'This node returned the receipt for that transaction but not the transaction itself, so what it was asked to do cannot be read.' : parsed.empty ? 'A plain transfer of ETH, with no contract call.' : parsed.unknown ? 'A call this page cannot name: the contract has published no source and the function is not a standard one.' : parsed.signature) }),
         sentence ? readingCaption(target) : null,
+        parsed.bodyMissing ? note('warn', 'What is below is only what the receipt says',
+          'The receipt is real and so is everything it announced moving, which is shown below. What is missing is the '
+          + 'call itself: which contract was asked, which function, and with what arguments. Do not read the absence of '
+          + 'that as "nothing was called". Try another node, or the explorer, before concluding anything.') : null,
         h('div', {}, [
-          h('span', { class: 'pill ' + (failed ? 'bad' : 'ok'), text: failed ? 'failed' : rc ? 'succeeded' : 'not mined yet' }),
+          h('span', { class: 'pill ' + (failed ? 'bad' : (parsed.bodyMissing ? '' : 'ok')),
+                       text: failed ? 'failed' : rc ? (parsed.bodyMissing ? 'executed without reverting' : 'succeeded') : 'not mined yet' }),
           tx && tx.value > 0n ? h('span', { class: 'pill warn', text: ethers.formatEther(tx.value) + ' ETH attached' }) : null,
           parsed.source ? h('span', { class: 'pill', text: 'read against ' + parsed.source }) : null,
         ]),
         failed && why ? note('bad', 'Why it failed', why) : null,
         kv([
           ['From', link(tx ? tx.from : rc.from, short(tx ? tx.from : rc.from))],
-          ['To', tx && tx.to ? h('span', {}, link(tx.to, short(tx.to)), document.createTextNode(' '), h('span', { class: 'mut', text: (target && (target.token && target.token.name || target.name)) || (target && target.isContract ? 'a contract' : 'a wallet') })) : 'a new contract'],
+          // "a new contract" is what an absent `to` means on a transaction that was read. On one that was not
+          // read it means nothing at all, and saying it invents a third false statement for the headline.
+          ['To', tx && tx.to ? h('span', {}, link(tx.to, short(tx.to)), document.createTextNode(' '), h('span', { class: 'mut', text: (target && (target.token && target.token.name || target.name)) || (target && target.isContract ? 'a contract' : 'a wallet') }))
+                : parsed.bodyMissing ? 'not known: this node did not return the transaction' : 'a new contract'],
           tx ? ['Function', mono(parsed.signature || (parsed.empty ? 'none' : parsed.selector))] : null,
           rc ? ['Gas paid', ethers.formatEther(fee) + ' ETH' + (ethUsd ? '  (about $' + (Number(ethers.formatEther(fee)) * ethUsd).toFixed(4) + ')' : '')] : null,
           rc ? ['Block', String(rc.blockNumber)] : null,
@@ -993,11 +1018,31 @@
       if (k === 'calls') note.push('This transaction carries a `calls` array. That belongs to wallet_sendCalls, not to sending a transaction, so a wallet would either ignore it or refuse the request. What is described below is the transaction itself, not what is inside that array.');
       else note.push('Unrecognised field `' + String(k).slice(0, 24) + '` on this transaction, ignored.');
     }
-    const data = typeof o.data === 'string' ? o.data : (typeof o.input === 'string' ? o.input : '0x');
+    // `0x` is what a transaction with no calldata carries. It is not what a transaction whose calldata could
+    // not be read carries, and substituting one for the other turns "I cannot read this" into "there is
+    // nothing here": an unlimited approve that lost its 0x on the way through a chat window was being
+    // answered with "No calldata: this is a plain transfer of ETH" and a green verdict, about bytes that
+    // were never in the box. The reader thirty lines above this one already refuses that input by name.
+    const given = typeof o.data === 'string' ? o.data : (typeof o.input === 'string' ? o.input : undefined);
+    const readable = given === undefined || HEX.test(String(given));
     return {
       envelope: null,
-      calls: [{ to: o.to || null, data: HEX.test(data) ? data : '0x', from: o.from || null, value: o.value }],
+      calls: [{
+        to: o.to || null,
+        data: readable && given !== undefined ? given : '0x',
+        from: o.from || null,
+        value: o.value,
+        // The chain a request names is part of what it means. It used to be listed as a field this page
+        // knows and then read by nobody, so a request for another chain was answered, in full and in green,
+        // about whichever chain this page happened to be set to.
+        chainId: o.chainId === undefined ? null : o.chainId,
+        invalid: readable ? null : 'Its calldata is not whole bytes of hex, so what it would run cannot be read. '
+          + 'Nothing has been simulated and nothing is described below: reading it as empty calldata would '
+          + 'describe a plain transfer of ETH, which is not what is in the box. A hex string that lost its '
+          + '"0x", or that is one character short, does this.',
+      }],
       notes: note, kindName: 'eth_sendTransaction',
+      invalidMembers: readable ? 0 : 1,
     };
   }
 
@@ -1151,7 +1196,7 @@
             }
             if (want !== chainId()) {
               cards.push(note('bad', label + 'this request is for a different network',
-                'It names chain ' + want + (CHAINS[want] ? ' (' + CHAINS[want].name + ')' : '') + ', and this page is set to '
+                'Its chainId is ' + String(env.chainId) + ', which is chain ' + want + (CHAINS[want] ? ' (' + CHAINS[want].name + ')' : '') + ', and this page is set to '
                 + chainId() + ' (' + cfg().name + '). Nothing in it has been checked: the same address is a different contract on a different chain, and an answer from the wrong one is worse than none.'));
               continue;
             }
@@ -1210,6 +1255,16 @@
           for (let i = 0; i < calls.length && i < 20; i++) {
             const c = calls[i];
             const title = label + 'call ' + (i + 1) + ' of ' + calls.length;
+            // Before the address is looked at. An entry with a perfectly good `to` and calldata that cannot
+            // be read still cannot be described, and describing it anyway is how empty calldata gets reported
+            // as a fact about a transaction that carried some.
+            if (c.invalid) {
+              cards.push(card(title, [
+                note('bad', 'This could not be read as a call', c.invalid),
+                kv([['Destination', String(c.to || '(none given)')], ['Value', c.value ? String(c.value) : '0']]),
+              ]));
+              continue;
+            }
             if (!ethers.isAddress(String(c.to || ''))) {
               cards.push(card(title, [
                 c.invalid
@@ -1259,6 +1314,29 @@
         return;
       }
       if (parsedInput.kind === 'call') {
+        // A single call skips the batch renderer, so the check that lives there has to live here too.
+        const cid = parsedInput.chainId;
+        if (cid !== null && cid !== undefined) {
+          let want = null;
+          if (HEX_QTY.test(String(cid))) { try { want = Number(BigInt(cid)); } catch (e) { want = null; } }
+          if (want === null || !Number.isSafeInteger(want)) {
+            say('');
+            out(note('bad', 'That request names a network this page cannot read',
+              'Its chainId is ' + JSON.stringify(String(cid)).slice(0, 40) + ', which is not the hex string this kind '
+              + 'of request has to carry. Nothing in it has been checked: an unreadable network is not the same as no '
+              + 'network, and guessing which one was meant would mean answering about the wrong chain.'));
+            return;
+          }
+          if (want !== chainId()) {
+            say('');
+            out(note('bad', 'That request is for a different network',
+              'Its chainId is ' + String(cid) + ', which is chain ' + want + (CHAINS[want] ? ' (' + CHAINS[want].name + ')' : '')
+              + ', and this page is set to ' + chainId() + ' (' + cfg().name + '). Nothing in it has been checked: the '
+              + 'same address is a different contract on a different chain, and an answer from the wrong one is worse '
+              + 'than none. Switch the network above and ask again to check it.'));
+            return;
+          }
+        }
         if (!ethers.isAddress(parsedInput.to || '')) { say('That call has no valid "to" address in it.', 'bad'); return; }
         return await showCall(ethers.getAddress(parsedInput.to), parsedInput.data, from || (ethers.isAddress(parsedInput.from || '') ? ethers.getAddress(parsedInput.from) : null), parsedInput.value, seq);
       }

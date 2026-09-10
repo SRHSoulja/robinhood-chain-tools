@@ -8,7 +8,8 @@ import { pathToFileURL } from 'node:url';
 
 const PAGE = pathToFileURL(new URL('../../web/check.html', import.meta.url).pathname).href;
 const A = (n) => '0x' + n.toString(16).padStart(40, '0');
-const NFT = A(0x721), TOK = A(0x20), PROXY = A(0x9), IMPL = A(0x99), WALLET = A(0xeee), NASTY = A(0xbad);
+const NFT = A(0x721), TOK = A(0x20), PROXY = A(0x9), IMPL = A(0x99), WALLET = A(0xeee), NASTY = A(0xbad)
+const MYSTERY = A(0x5150);   // a contract whose standard cannot be settled: no supportsInterface, no decimals
 const ME = A(0xdead);
 
 let pass = 0, fail = 0; const results = [];
@@ -35,6 +36,7 @@ function answer(O) {
       case 'eth_getCode': {
         if ((O.codeUnreadable || []).map((x) => x.toLowerCase()).includes(p0)) throw new Error('node unavailable');
         if (p0 === NFT || p0 === TOK) return codeWith([SEL.mint, SEL.pause]);
+        if (p0 === MYSTERY) return codeWith([SEL.mint]);
         if (p0 === NASTY) return codeWith([SEL.mint, SEL.blacklist, SEL.setFee]);
         if (p0 === PROXY) return '0x363d3d373d3d3d363d73' + IMPL.slice(2) + '5af43d82803e903d91602b57fd5bf3';
         if (p0 === IMPL) return codeWith([SEL.mint]);
@@ -756,6 +758,81 @@ const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }
   check('and it says plainly that this is not a verdict on the request',
     !/every call succeeds/.test(t) || /not a verdict on the request/.test(t), t.slice(0, 600));
   await page.close();
+}
+
+// ---- round eleven, the four blocking findings on this page ---------------------------------------------
+// Each of these was answered confidently and wrongly, in the sentence a non-technical reader actually reads.
+{
+  const MAXW = 'f'.repeat(64);
+  const approveMax = '095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + MAXW;
+
+  // B-2: an unlimited approve that lost its 0x was answered "No calldata: this is a plain transfer of ETH",
+  // in green. `data` was replaced with '0x' and the page simulated bytes that were never in the box.
+  {
+    const page = await open(browser, {});
+    const t = await ask(page, JSON.stringify({ to: TOK, data: approveMax }), ME, 3500);
+    check('B-2 calldata that is not readable hex is never reported as no calldata',
+      !/No calldata: this is a plain transfer of ETH/.test(t), t.slice(0, 200));
+    check('B-2 and it gets no verdict, because nothing was simulated', !/would succeed/.test(t), t.slice(0, 200));
+    check('B-2 and the page says what is wrong with it',
+      /not whole bytes of hex/.test(t), t.slice(0, 300));
+    await page.close();
+  }
+
+  // B-4: the chain a request names is part of what it means. It was listed as a field the page knows and
+  // then read by nobody, so a request for chain 1 was answered in full against 46630.
+  {
+    const page = await open(browser, {});
+    const t = await ask(page, JSON.stringify({ method: 'eth_sendTransaction',
+      params: [{ from: ME, to: TOK, data: '0x' + approveMax, chainId: '0x1' }] }), ME, 3500);
+    check('B-4 a request naming another chain is refused, not answered', !/would succeed/.test(t), t.slice(0, 200));
+    check('B-4 and the refusal names the chainId it carried and the one this page is set to',
+      /different network/.test(t) && /0x1\b/.test(t) && /46630/.test(t), t.slice(0, 320));
+    await page.close();
+  }
+
+  // B-3: a node that returns the receipt but not the transaction. `{empty:true}` is this page's word for
+  // "carried no calldata", and it was being used for "could not be read", which is the opposite.
+  {
+    const h3 = '0x' + 'ab'.repeat(32);
+    const page = await open(browser, { tx: null, receipt: {
+      transactionHash: h3, transactionIndex: '0x0', blockHash: '0x' + '11'.repeat(32), blockNumber: '0x1000',
+      from: ME, to: TOK, cumulativeGasUsed: '0x5208', gasUsed: '0x5208', effectiveGasPrice: '0x989680',
+      contractAddress: null, logsBloom: '0x' + '00'.repeat(256), status: '0x1', type: '0x2', logs: [] } });
+    const t = await ask(page, h3, ME, 3500);
+    check('B-3 the page answers at all, rather than throwing and rendering nothing', t.length > 40, JSON.stringify(t.slice(0, 80)));
+    check('B-3 a transaction whose body could not be read is never called a plain transfer of ETH',
+      !/plain transfer of ETH/.test(t), t.slice(0, 300));
+    check('B-3 and the page says the body is what is missing',
+      /receipt for that transaction but not the transaction itself/.test(t), t.slice(0, 300));
+    check('B-3 and it does not invent a destination it never read', !/a new contract/.test(t), t.slice(0, 300));
+    check('B-3 and the verdict narrows to what a receipt can prove',
+      !/succeeded/.test(t) || /executed without reverting/.test(t), t.slice(0, 300));
+    await page.close();
+  }
+
+  // B-5: three states reduced to two. `standard` is null when supportsInterface and decimals both go
+  // unanswered, and null was folded in with "not an NFT", so the ERC-20 sentence got written for a contract
+  // nobody had established was one -- while the argument labels beside it said "token id or amount".
+  {
+    const page = await open(browser, {});
+    const t = await ask(page, JSON.stringify({ to: MYSTERY,
+      data: '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + '1'.padStart(64, '0') }), ME, 3500);
+    const lede = t.split('The arguments')[0] || t;
+    check('B-5 an unsettled standard is not written up as an ERC-20 allowance',
+      !/spend 1 of your/.test(lede), lede.slice(0, 260));
+    check('B-5 and the sentence uses the same words its own argument labels use',
+      /token id or amount/.test(lede), lede.slice(0, 260));
+    await page.close();
+  }
+  {
+    const page = await open(browser, {});
+    const t = await ask(page, JSON.stringify({ to: MYSTERY, data: '0x23b872dd'
+      + ME.slice(2).padStart(64, '0') + A(0x2222).slice(2).padStart(64, '0') + '7'.padStart(64, '0') }), ME, 3500);
+    check('B-5 and a transferFrom on one is not read as an amount either',
+      /token id or amount/.test(t.split('The arguments')[0] || t), t.slice(0, 260));
+    await page.close();
+  }
 }
 
 await browser.close();

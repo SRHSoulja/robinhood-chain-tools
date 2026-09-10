@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-ZtBUfyR0Yenn90dwO3aeSTIusMkkUKAz2rysQvKuLPM='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com 'sha256-TAFd7zbeTD8pD+nleuN4VmoLi5LsD4T9zISMrgFRh1g='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -2865,12 +2865,22 @@
   // Only 400 and 500 mean nothing moved. Everything else is held.
   function readCallsStatus(st) {
     const raw = st && st.status;
+    // EIP-5792 defines numeric codes; the earlier draft used the strings PENDING and CONFIRMED. 'FAILED' is
+    // in neither, and it used to be mapped to 400 here, which is the one reading that hands recipients back
+    // to be paid a second time. A value no version of the specification defines is a value this page cannot
+    // read, and the line below already says what to do with those.
     const code = typeof raw === 'number' ? raw
-      : raw === 'CONFIRMED' ? 200 : raw === 'PENDING' ? 100 : raw === 'FAILED' ? 400 : null;
+      : raw === 'CONFIRMED' ? 200 : raw === 'PENDING' ? 100 : null;
     const receipts = (st && st.receipts) || [];
     const hash = receipts.length ? receipts[receipts.length - 1].transactionHash : null;
+    // The evidence that contradicts the wallet arrives in the same answer as the wallet's claim. A batch
+    // reported as failed, alongside a receipt that succeeded, is a wallet disagreeing with the chain, and the
+    // chain is the half that can be checked. Only 'failed' and 'reverted' release rows for re-payment, so a
+    // contradiction must never produce either: it produces the state that holds them and says so.
+    const contradicted = receipts.some((r) => r && (r.status === '0x1' || r.status === 1));
     if (code === null) return { state: 'unknown', hash };
     if (code >= 600) return { state: 'partial', hash };
+    if (code >= 400 && contradicted) return { state: 'partial', hash, contradicted: true };
     if (code >= 500) return { state: 'reverted', hash };
     if (code >= 400) return { state: 'failed', hash };
     if (code >= 200) {
