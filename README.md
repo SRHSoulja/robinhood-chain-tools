@@ -14,6 +14,11 @@ community. Both are free, both are open source, and neither takes a fee.
 
 ---
 
+**What is tested and what is still open:** [docs/status.md](docs/status.md) is the current state of the
+project in one place: which suites run and what each one actually proves, what has never been tested and is
+marked so, every finding from the last review with open or closed beside it, and the two conditions that have
+to be true before this touches mainnet. Every number in it is reproducible by the command printed next to it.
+
 **What a batch costs:** [docs/gas-and-batches.md](docs/gas-and-batches.md) is every gas figure this tool
 relies on, measured on the chain rather than estimated: what one recipient costs for each kind of token, what
 a thousand-piece airdrop costs at each batch size, where one transaction stops (819 recipients, 32.2M gas),
