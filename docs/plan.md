@@ -25,9 +25,13 @@
 > bytecode step last, the probes in preflight's address check), the fork suite, the deploy, the on-chain
 > B-1 refusal, the nine files, and all four live scripts read back from the explorer. What remains:
 >
-> 7. `./deploy/publish.sh airdrop` and `check`, then the live bytes compared to the repository.
-> 8. Round fourteen against v13: the prompt is drafted, pointed at the guard first, then the Check page's
->    error reader, then the reader map. Refresh the harness clone, launch, triage when the report completes.
+> 7. **Done.** Both pages published from `790c9b5`; live bytes identical to the repository (the publisher's own
+>    post-publish check, and an independent fetch).
+> 8. **Round fourteen is running** against `790c9b5` and v13, launched the evening of 10 September 2026 in the
+>    usual way (a fresh `claude -p` in the harness directory, outside this repository, reading `PROMPT.md`).
+>    The prompt points it at the guard first, then the Check page's error reader, then the reader map, and
+>    names the three harness weaknesses left open on purpose. Triage when `AUDIT.md` completes: publish the
+>    report as written, close every blocker against its probe, and only then does the mainnet question exist.
 >
 > **Deferred on purpose, and written down so it is not forgotten:** the four live scripts and the on-chain
 > B-1 script sign with `cast send --private-key`, which puts a testnet-only key in a process argument list
