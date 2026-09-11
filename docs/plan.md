@@ -48,6 +48,13 @@
 >     changing the mainnet placeholder.
 >     The runbook is [`real-wallet-run.md`](real-wallet-run.md); `deploy/mint-fixtures.sh <address>` mints the
 >     fixtures. Needs the maintainer's wallet address and an hour of their time; testnet gas only.
+>     **Done, 11 September 2026.** Four runs from the maintainer's own wallet against the published page and
+>     v13: ERC-721 `0x36d11da8…`, ERC-1155 `0x860ccb24…`, ERC-20 `0x8114062…` from a browser wallet, and
+>     ERC-721 `0x448db323…` from a phone over WalletConnect with the tab backgrounded. Every hash read back from
+>     the explorer and the chain agrees with the page. Two minor findings, both fixed the same day: the ERC-20
+>     confirmation line showed base units; reconciliation, triggered by the phone re-establishing its session
+>     mid-send, called a batch lost that landed a second later. Gate 12 is proven by the same phone run: the
+>     send path took its hash from the wallet and its receipt from the page's RPC.
 >  11. **An explorer that answers this origin on mainnet** (round seventeen S-8). Today the mainnet explorer
 >     answers the worker's passthrough with a Cloudflare managed challenge, so on mainnet Assign's fallback,
 >     holder snapshots and Check's source verification and revert reasons would all be dark. An API key, an

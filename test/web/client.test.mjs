@@ -2419,6 +2419,24 @@ async function freshBrowser() {
   await page.close();
 }
 
+// ---- an ERC-20 amount in a confirmation is shown in the token's units, not base units ------------------
+// Gate 10, run 3, from the maintainer's own log: "0x51e0…D01 x1500000000000000000 through 0x51E0…D03
+// x1500000000000000000". The CSV beside it said 1.5. Same reader, same units.
+{
+  const page = await open(browser, { approved: true });
+  const dialogs = [];
+  page.removeAllListeners('dialog');
+  page.on('dialog', (d) => { dialogs.push(d.message()); d.dismiss(); });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, TOK, '20');
+  await setList(page, A(0xd01) + ',1.5\n' + A(0xd02) + ',2.25\n');
+  for (let i = 0; i < 40; i++) { if (!(await page.evaluate(() => document.querySelector('#send').disabled))) break; await page.waitForTimeout(300); }
+  await page.click('#send'); await page.waitForTimeout(4000);
+  const d = dialogs.join(' ') + ' ' + (await text(page, '#log'));
+  check('gate-10 an ERC-20 confirmation line shows 1.5 and 2.25, not base units', /x1\.5 through .* x2\.25/.test(d) && !/x1500000000000000000/.test(d), d.slice(0, 400));
+  await page.close();
+}
+
 // ---- an address in a confirmation must show both ends -------------------------------
 // From a screenshot of the real confirmation dialog: "transaction 1: 4 recipients, 0x000000... id 103
 // through 0x000000... id 106". The two ends of the range rendered identically, because the shortener kept

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-iXf7FoukqmaVS2zyetrbTGGDnPPtzvDnr3RD5hVNO/8='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-8yDU96giaT5JBBG4S4+UkTCH30rjWdnzplMZJr4hQV4='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -3204,7 +3204,10 @@
       const bs = batchSize(), batches = Math.ceil(finalList.length / bs);
       const sigs = path === 'wallet' ? batches : batches;
       const name = ($('tokenInfo').textContent || '').split('(')[0].trim().slice(0, 40) || 'this collection';
-      const show = (r) => r ? (shortAddr(r.to) + (r.id !== undefined ? ' id ' + r.id : '') + (r.amount !== undefined && std() !== '721' ? ' x' + r.amount : '')) : '';
+      const show = (r) => r ? (shortAddr(r.to) + (r.id !== undefined ? ' id ' + r.id : '')
+        + (r.amount !== undefined && std() !== '721' ? ' x' + (std() === '20' ? ethers.formatUnits(r.amount, decimals) : r.amount) : '')) : '';
+      // Gate 10 finding: this line showed an ERC-20 amount in base units (x1500000000000000000) while the CSV
+      // beside it said 1.5. Same reader, same units, as the CSV.
       // Settled: which rows, in what order, in which transaction. Write it down, show it, and hand the
       // same thing to the confirmation, so what is agreed to is what goes out.
       const head = std() === '1155' ? 'transaction,position,address,tokenId,amount' : std() === '721' ? 'transaction,position,address,tokenId' : 'transaction,position,address,amount';
