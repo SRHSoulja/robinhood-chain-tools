@@ -178,8 +178,8 @@ moved".
 ## Build, test, deploy
 
     forge build
-    forge test                 # 82 contract tests
-    npm install && npm test    # 166 browser tests, every answer mocked, no network
+    forge test                 # 110 contract tests, plus 29 reviewer probes of which 9 must fail
+    npm install && npm test    # 441 browser tests, every answer mocked, no network
     ./test.sh                  # all of it
 
 The browser tests drive the real pages in headless Chromium and answer every RPC, explorer and price request
@@ -195,7 +195,9 @@ to the file in this repository:
 Contracts, testnet only:
 
     export RH_RPC=https://rpc.testnet.chain.robinhood.com
-    forge script script/Deploy.s.sol:DeployBulkSend --rpc-url $RH_RPC --private-key $PK --broadcast
+    export RH_DEPLOYER_PK=...          # from the environment, never an argument: arguments are readable by every process
+    forge script script/Deploy.s.sol:DeployBulkSend --rpc-url $RH_RPC --broadcast   # the script refuses any chain but 46630
+    unset RH_DEPLOYER_PK
     forge verify-contract <address> src/BulkSend.sol:BulkSend --chain-id 46630 --rpc-url $RH_RPC \
       --verifier blockscout --verifier-url https://explorer.testnet.chain.robinhood.com/api/
 

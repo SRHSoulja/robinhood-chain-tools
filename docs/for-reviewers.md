@@ -19,8 +19,8 @@ here:
 
 ## Running everything
 
-    forge test                    # 82 contract tests
-    npm install && npm test       # 166 browser tests, all answers mocked, no network
+    forge test                    # 110 contract tests, plus 29 reviewer probes of which 9 must fail
+    npm install && npm test       # 441 browser tests, all answers mocked, no network
     ./test.sh                     # both of the above
 
 The browser tests answer every RPC, explorer and price request from the test file itself, so a failure is the
@@ -121,20 +121,23 @@ which is the case worth monitoring for.
   stretch is the one worth monitoring, so a green badge on a dormant repository means the last run that
   happened rather than the state today. A failure also opens an issue, so it is visible without access to
   anyone's inbox.
-- Twelve adversarial review rounds, each by a fresh model with no prior context, all published unedited in
-  [`docs/`](.), in order: 8H/4M/3L, then 6H/5M/1L, then 4H/1M, then 6H/2M/1L, then 5H/2M/2L, then
-  4 blocking/2/1, then 6 blocking/6/1, then 3 blocking/8/5, then 4 blocking/6/5, then 3 blocking/6/5. Every
-  blocking finding is fixed. The counts are blocking / should-fix / inherent-limit, and the last group is not
-  a backlog: those are the things a browser page cannot prove, written down so nobody has to rediscover them.
-- Five times, a fix from one round has been the next round's finding. In the tenth it was every blocker: all
-  three were written between the ninth round and the tenth, two of them on the same day. In the twelfth the
-  only blocker was round eleven's B-4 surviving on the reader nobody re-checked, and two of the three most
-  serious should-fix items were also from that same night's work.
+- Thirteen adversarial review rounds, each by a fresh model with no prior context, all published unedited in
+  [`docs/`](.). Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2. Every blocking finding
+  is fixed, and every should-fix from the last three rounds is closed or declined with its reason written
+  down. The inherent-limit lists are not a backlog: those are the things a browser page cannot prove, written
+  down so nobody has to rediscover them.
+- Six times, a fix from one round has been the next round's finding. In the tenth it was every blocker. In
+  the twelfth the only blocker was round eleven's B-4 surviving on the reader nobody re-checked. In the
+  thirteenth the contract blocker was round twelve's own new guard, and six of its nine findings were one
+  reader being taught something its twin was not. [`readers.md`](readers.md) exists because of that: every
+  reader of each shared input, listed, and a commit that fixes one names the others.
 - **The contract is no longer the settled part of this repository.** It was clean and unchanged for seven
-  rounds; round eleven found two real findings in it and round twelve found three more. It is now **v12**,
-  changed on three separate days, and only round twelve has seen any of that -- v12 itself has been seen by
-  nobody but me. **The unreviewed thing in this repository is always whatever was written last**, which is
-  worth knowing before trusting anything recent here more than the rest, and right now that is the contract.
+  rounds; round eleven found two real findings in it, round twelve three more, and round thirteen found that
+  round twelve's guard was not the mirror it claimed to be. The source is now **v13**; the chain still runs
+  v12 until v13 is deployed, and v13 has been through every mechanical check here -- 100% branch coverage,
+  invariants over random sequences, Slither, a fork suite against 20 real mainnet collections and 20 real
+  tokens -- and through no reviewer. **The unreviewed thing in this repository is always whatever was written
+  last**, and right now that is the contract.
 - Three times before that, a fix from one round has been the next round's finding. That is the most useful thing this
   history shows, and it is why recently changed code is listed first in the review scope rather than last.
 - No human audit firm has looked at this.

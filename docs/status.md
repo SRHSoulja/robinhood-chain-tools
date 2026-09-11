@@ -1,6 +1,7 @@
 # What is tested, what is not, and what is still open
 
-Last updated 10 September 2026, against BulkSend **v12** and round twelve.
+Last updated 10 September 2026, against BulkSend **v12 on chain and v13 in the source, built and not yet
+deployed**, and round thirteen.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -15,7 +16,7 @@ Two things have to be true before that changes, and both are currently false:
 
 | | state |
 | --- | --- |
-| a review round with no release blockers | **not met** — round twelve found one, now fixed, along with every one of its 18 should-fix items. The round that finds none has not happened |
+| a review round with no release blockers | **not met** — round thirteen found two, both fixed, along with every one of its seven should-fix items. The round that finds none has not happened |
 | explicit permission from the maintainer, given after that round | **not given** |
 
 Neither alone is enough. The deployer holds about 0.002 mainnet ETH that someone else sent, which is enough
@@ -26,11 +27,18 @@ nonce is 0.
 
 ```
 ./test.sh                              # everything below except the live scripts
-forge test                             #  93 contract tests, plus 27 reviewer probes of which 7 must FAIL
-node test/web/client.test.mjs          # 301 airdrop page tests
-node test/web/check.test.mjs           # 116 Check page tests
+forge test                             # 110 contract tests, plus 29 reviewer probes of which 9 must FAIL
+node test/web/client.test.mjs          # 319 airdrop page tests
+node test/web/check.test.mjs           # 122 Check page tests
 ./test/csp-gate.test.sh                #  21 checks that a weaker published CSP is refused
+forge test --match-path 'test/fork/MainnetGuards.t.sol'   # the paste guards against 20 real mainnet
+                                       #   collections and 20 real tokens, on a read-only fork
 ```
+
+The 110 include `test/Invariants.t.sol`: a handler drives all three paths with random lists, 2,304 calls per
+run, and after every one the contract must still satisfy *sent + skipped == rows*, *sent means it moved*, and
+*BulkSend holds nothing*. Branch coverage of `src/BulkSend.sol` is 100% (58 of 58); it was 82% before v13's
+tests were written, and the missing arms were all on the ERC-1155 and ERC-20 paths.
 
 `./verify.sh` runs all of that, plus every probe file, and compares the probe counts against
 [`test/findings-baseline.json`](../test/findings-baseline.json). It **fails on a probe file the baseline has
@@ -41,7 +49,7 @@ kept rather than deleted, because they are the only thing that can tell a fix fr
 
 All green as of the commit above, run with four other agents on the same machine.
 
-Three further scripts need the network and are deliberately outside `npm test`, because a test that depends on
+Four further scripts need the network and are deliberately outside `npm test`, because a test that depends on
 a chain being up is not a test you want gating a commit:
 
 ```
@@ -52,7 +60,7 @@ node test/web/live-send-all.mjs        # real ERC-1155 and ERC-20 airdrops, bala
 ```
 
 All four were last run green against BulkSend **v12** on 10 September 2026: 4, 10, 12 and 18 checks, 44 in
-total. Between them, every one of the three standards has been delivered on chain through the current
+total. **None has run against v13**, because v13 is not deployed; that is the next thing that happens. Between them, every one of the three standards has been delivered on chain through the current
 contract and the balances read back afterwards -- three NFTs to three fresh addresses, three recipients each
 holding 2 of an ERC-1155 edition, and three each holding exactly 1.5 of an ERC-20, to the wei.
 
@@ -77,7 +85,9 @@ They sign with a testnet-only key that holds no mainnet balance and refuse to ru
 | a batch of ERC-721 really lands | `live-send.mjs`, on chain, three fresh addresses | ✅ |
 | the no-approval path really works with no approval | `live-wallet-batch.mjs`, on chain, BulkSend approved for nothing before or after | ✅ |
 | the gas probe gets a sane answer from a real chain | `live-chain.mjs`, four token types | ✅ |
-| deployed bytecode matches what this repository builds | v12, byte-identical, 8,968 bytes, and verified on the explorer (not partially, compiler 0.8.36) | ✅ |
+| deployed bytecode matches what this repository builds | **no, deliberately, for now**: the chain runs v12 (8,968 bytes, verified) and this source builds v13 (9,437 bytes). CI's bytecode step is red for exactly this reason until v13 is deployed | ❌ |
+| the paste guards agree with real mainnet contracts | `test/fork/MainnetGuards.t.sol` on a read-only fork: 20 real collections refused by the ERC-20 guard and accepted by the NFT guard, 20 real tokens accepted; v12's guard let 20 of 20 through | ✅ |
+| the contract's properties hold over random sequences, all three standards | `test/Invariants.t.sol`, 2,304 calls, 0 reverts | ✅ |
 | the deployed pages match these files | `deploy/publish.sh` verifies the hash after publishing | ✅ |
 | ERC-1155 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding 2 of an edition | ✅ |
 | ERC-20 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding exactly 1.5, to the wei | ✅ |
@@ -113,79 +123,73 @@ a distribution, only its top, and the file says so.
 
 ## Open findings
 
-Round twelve, 10 September 2026, against `59e979f`. The full report is
-[`audit-2026-09-10-twelfth-external.md`](audit-2026-09-10-twelfth-external.md), published unedited. One
-blocking finding, eighteen should-fix, six inherent limits.
+Round thirteen, 10 September 2026, against `f4f5ca6`. The full report is
+[`audit-2026-09-10-thirteenth-external.md`](audit-2026-09-10-thirteenth-external.md), published unedited.
+Two blocking findings, seven should-fix, one inherent limit.
 
 Reproduction is by the reviewer's own probes, which are in the repository and can be re-run:
 
 ```
-node test/web/audit-probe.mjs          # the airdrop page
+node test/web/audit-probe.mjs          # the airdrop page, round eleven
 node test/web/audit-probe-check.mjs    # the Check page
 node test/web/audit-probe-check2.mjs   # the Check page, second set
 node test/web/audit-probe-12.mjs       # round twelve
+node test/web/audit-probe-13.mjs       # round thirteen
 forge test --match-path 'test/Audit*.t.sol'
 ```
 
 A finding is marked closed only when the probe that demonstrated it stops reproducing.
 
-### Blocks release — closed
+### Blocks release — 2, both closed
 
 | | | |
 | --- | --- | --- |
-| B-1 | a transaction naming another chain is read against this one | closed |
+| B-1 | `_mustNotBeNft` probed one id where its twin probed three; NFTs spent as ERC-20 amounts | closed in **v13**, built, not yet deployed |
+| B-2 | nothing written down until the wallet answers; a batch lost with the tab is paid twice | closed |
 
-B-1 is the same defect as round eleven's B-4, surviving on the reader nobody re-checked: the fix went onto the
-single-call path and the batch renderer kept reading `env.chainId`, a field only a `wallet_sendCalls` envelope
-has. Both readers now report their declared network under one name and the renderer reads that name.
+B-1 was proven on chain against v12, not only in a test: one transaction recorded two ERC-721 `Transfer`
+events and an `Airdrop20(sent 2, skipped 1)`. v13 makes the guard the same shape as its twin and then goes
+one further: it also asks `isApprovedForAll(address,address)`, which every ERC-721 and ERC-1155 must have and
+no ERC-20 has, so the answer no longer depends on which ids the sender typed. The same paste against v13 is
+refused with `IsAnNft` in the test suite; it will be refused on chain when v13 is deployed, and that is the
+check that closes it.
 
-### Should be fixed — 17 closed, 1 declined with its reason, 0 open
+B-2 is closed by writing the pending record *before* the wallet is asked and dropping it only on a definite
+rejection. Its probe had to be repaired first: it answered a two-value function with one value, so the page
+never signed and the probe measured nothing.
+
+### Should be fixed — 7, all closed
 
 | | | |
 | --- | --- | --- |
-| S-1 | `tests` CI red for 8 commits; browser suites and bytecode check skipped | closed |
-| S-2 | the live Check page was not this repository's | closed |
-| S-3 | deployed runtime ≠ what this source builds | closed — **v12** deployed and verified |
-| S-4 | `airdrop20` on an ERC-721 spends amounts as token ids | closed in v12 |
-| S-5 | `_mustBeNft` refuses a bare-`require` ERC-721; probes `ids[0]` only | closed in v12 |
-| S-6 | one `false` answer reverts the whole lenient ERC-20 batch | **declined**, reason below |
-| S-7 | "Use these" silently deletes unreadable list lines | closed |
-| S-8 | a quoted CSV works with a header row and fails without one | closed |
-| S-9 | "would not switch" reported for a wallet that never answered | closed |
-| S-10 | `readTransaction` validates neither `to` nor `from` | closed |
-| S-11 | `arrivalsFromReceipt` reads the live account | closed |
-| S-12 | `readBatchReceipt` reads the live form during reconciliation | closed |
-| S-13 | the quoted cost carries none of the 1.35 margin; docs still say 1.15 | closed |
-| S-14 | Send does not check the `signing` guard | closed |
-| S-15 | the publish gate checks `script-src` and no other directive | closed |
-| S-16 | origin-wide `cdnjs` grant; ethers from a third-party CDN | closed |
-| S-17 | `integrity.yml` hashes bodies, so a header regression on `/` passes | closed |
-| S-18 | six small items, grouped | closed |
+| S-1 | every headed CSV refused by "Use these" and "Assign" | closed, plus a third instance in `applyWeight` the round did not find |
+| S-2 | `deliveriesOn` took the column map and never read it | closed |
+| S-3 | CI ran none of `verify.sh`, the CSP gate or `preflight.sh` | closed; proven by reopening a finding on a branch and watching CI go red |
+| S-4 | a low estimate understated the quoted cost about 3x while labelled "at most" | closed: "about" for the measurement, a real ceiling row |
+| S-5 | Check simulated a call whose calldata it could not read | closed |
+| S-6 | `SECURITY.md`'s "approves the exact batch total" false for ERC-721 and ERC-1155 | closed |
+| S-7 | 9 of the contract's 15 errors reached the user as a bare selector | closed on the airdrop page in the round; **closed on the Check page afterwards**, where the same three newest errors were still unnamed, and `preflight.sh` now reads both pages |
 
-Every one of the other seventeen is closed, and each was closed against the probe or the test that
-demonstrated it rather than against an argument that it should now be fine. Four of them needed a test written
-first, because the fix could not otherwise be told from a belief: S-12 and S-14 were reasoned from source with
-no probe, S-9's existing test asserted the wrong sentence, and S-13's probe read the measurement rather than
-the figure the page works from.
+Six of the seven were one reader being taught something its twin was not, and the round said so. The
+answer is [`readers.md`](readers.md): every function that reads the recipient box and the contract's two
+paste guards, listed, so a fix to one is checked against the others, and the rule that a commit fixing a
+reader names its twins.
 
-**S-6, declined.** The reviewer's reasoning is sound: ERC-20 defines `false` as "I did not transfer", so a
-conforming token answering it has moved nothing, and one blocklisted recipient should not cost a 400-row
-lenient batch. It is declined because this repository's own fixture disproves the premise — `PaysThenLies20`
-moves the balance and *then* answers `false`, and from inside the call nothing separates it from a refusal
-short of reading every balance before and after. Reporting a payment that happened as a skip is how a re-run
-pays someone twice. The choice, its cost, and what would have to change to revisit it are written up in
-[`for-reviewers.md`](for-reviewers.md) decision 3, and both halves are pinned by tests, so a later round that
-wants to change it has to say what new information separates the two shapes.
+### Inherent limits — 1
 
-Three of the four most serious findings in this round were process failures from the same night the code was
-written: a fix applied to one path and not its twin, CI red for eight commits because deliberately-failing
-probe files were added and the watcher never run, and a page committed but never deployed. None of them were
-subtle. All three now have an automatic guard, in `preflight.sh` and `verify.sh`.
+I-1: one RPC endpoint is the sole witness for every "arrived", "skipped" and "held" verdict. That cannot be
+engineered away in a browser page; it is disclosed, not solved.
 
-### Inherent limits — 6, acknowledged not fixed
+### Round twelve, 10 September 2026 — all closed, one declined
 
-Things that cannot be engineered away in a browser, listed in the report's own section. Pretending otherwise
-would be its own defect, so they are recorded rather than closed.
+Kept for the record. The full report is
+[`audit-2026-09-10-twelfth-external.md`](audit-2026-09-10-twelfth-external.md). One blocker (a transaction
+naming another chain read against this one: round eleven's B-4 surviving on the reader nobody re-checked),
+seventeen should-fix closed, and S-6 declined with its reason: a returned `false` from an ERC-20 still reverts
+the whole lenient batch, because this repository's own fixture `PaysThenLies20` moves the balance and *then*
+answers `false`, and reporting a payment that happened as a skip is how a re-run pays someone twice. The
+choice is written up in [`for-reviewers.md`](for-reviewers.md) decision 3 and pinned by tests in both
+directions.
 
 ### Round eleven, 9 September 2026 — all closed
 
@@ -206,9 +210,11 @@ Re-running every probe against the current commit:
 | Check page probes, set one | 0 of 21 |
 | Check page probes, set two | 1 of 6 |
 | Airdrop page probes | 8 of 23 |
-| Contract probes, round eleven | 15 of 20 |
+| Contract probes, round eleven | 14 of 20 |
 | Contract probes, round twelve | 5 of 7 |
+| Contract probes, round thirteen | 1 of 2, and the 1 is a control that passes either way |
 | Round twelve browser probes | 0 of 10 |
+| Round thirteen browser probes | 0 of 6 |
 
 `./verify.sh` runs all of the above in one command and compares those counts against
 [`test/findings-baseline.json`](../test/findings-baseline.json), so a later fix that quietly reopens an
@@ -219,7 +225,7 @@ matched, which is true and is not a defect: the finding was the *combination* wi
 it", and that half is fixed.
 
 The contract lines read backwards on purpose. These probes reproduce findings, so the assertions that now
-FAIL are the fixed ones -- five from round eleven, two from round twelve. The rest are the reviewers' checks on
+FAIL are the fixed ones -- six from round eleven, two from round twelve, one from round thirteen. The rest are the reviewers' checks on
 behaviour that was already correct.
 
 `verify.sh` compares each probe file separately and **fails on a probe file the baseline has never heard of**.
@@ -228,14 +234,16 @@ comparison named `AuditProbe.t.sol` specifically rather than every `test/Audit*.
 
 ## History
 
-Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1. Twelve rounds, each by a fresh model given
-the code and no other context. Five times a fix from one round became the next round's finding, which is the
-reason the newest code is always reviewed first.
+Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2. Thirteen rounds, each by a fresh model
+given the code and no other context. Six times a fix from one round became the next round's finding, which
+is the reason the newest code is always reviewed first.
 
-The contract had been unchanged and clean for seven rounds. Round eleven ended that, and round twelve found
-three more things in it, so BulkSend is now **v12**. That makes the contract once again the newest code in the
-repository, and v12 in particular has been reviewed by exactly one pass -- mine. It should go through a round
-before it goes anywhere near mainnet, and that round should see v12.
+The contract had been unchanged and clean for seven rounds. Round eleven ended that, round twelve found three
+more things in it, and round thirteen found that round twelve's own guard was not the mirror it claimed to be.
+BulkSend is now **v13 in the source and v12 on the chain**. v13 has been through every mechanical check this
+repository has -- 100% branch coverage, invariants, Slither, the fork suite against real mainnet contracts --
+and through no reviewer. It should go through a round before it goes anywhere near mainnet, and that round
+should see v13 deployed.
 
 Round twelve's own shape is the argument for that rule. Its single blocker and two of its three most serious
 should-fix items were written the night before it ran: a fix applied to one reader and not its twin, a CI job
