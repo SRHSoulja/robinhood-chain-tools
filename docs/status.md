@@ -41,6 +41,7 @@ forge test                             # 111 contract tests, plus 29 reviewer pr
 node test/web/client.test.mjs          # 355 airdrop page tests
 node test/web/check.test.mjs           # 129 Check page tests
 ./test/csp-gate.test.sh                #  21 checks that a weaker published CSP is refused
+node test/worker.test.mjs              #  23 checks on the Worker's mainnet explorer translation, offline
 forge test --match-path 'test/fork/MainnetGuards.t.sol'   # the paste guards against 20 real mainnet
                                        #   collections and 20 real tokens, on a read-only fork
 ```

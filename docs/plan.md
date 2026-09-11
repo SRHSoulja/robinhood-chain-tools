@@ -2,15 +2,13 @@
 
 > ## Start here
 >
-> **State on 11 September 2026, evening, commit `0f3daf1`.** Round seventeen found no release blocker, the first
-> round to do so; its four fixable should-fix items are closed and its report is published. Gate 10, the
-> real-wallet run, is done from the maintainer's own wallet (four runs, two wallets, three standards, every hash
-> read back from the explorer), and both findings it produced are closed and published. Both pages are
-> byte-identical live; CI `tests` and `integrity` are green. **What remains before the mainnet question:**
-> gate 9 (a production RPC) and gate 11 (an explorer that answers this origin on mainnet), both from research
-> in progress, then round eighteen on Opus against that commit as the final review, then the deploy of v13
-> (about 0.0003 ETH) only on the maintainer's explicit word. Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3,
-> 5, 1, 2, 4, 5, 1, 0.
+> **State on 11 September 2026, night, commit `7eae0f6`.** Every gate before the mainnet question is now done:
+> round seventeen found no blocker; gate 10 (four real-wallet runs) is done with both findings fixed; gate 9
+> (three RPC endpoints per chain, probed in order, monitored) and gate 11 (the mainnet explorer through the
+> Worker via Blockscout's PRO API behind a bound key, read live) are done; gate 12 was proven by the phone run.
+> Both pages are byte-identical live. **What remains:** round eighteen on Opus against this state as the final
+> review of the code that would go to mainnet, then the deploy of v13 (about 0.0003 ETH) only on the
+> maintainer's explicit word. Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0.
 >
 > - **BulkSend v13 is DEPLOYED on testnet** at `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (tx `0x5cb0037f…`), byte-identical
 >   at 9,752 bytes, fully verified. The on-chain B-1 reproduction against it reverts `IsAnNft`
@@ -82,7 +80,12 @@
 >      use, so the Worker needs a translation layer for four paths and the airdrop page must route through the
 >      Worker on mainnet. The spec is [`gate-11-explorer.md`](gate-11-explorer.md). Sonnet-sized work from that
 >      spec, then one verify, a publish with the key bound, and the integrity step that fails on the
->      `{"error":"upstream"}` envelope closes this gate.
+>      `{"error":"upstream"}` envelope closes this gate. **Done, 11 September 2026, late:** built from the spec
+>      (a Sonnet pass; `deploy/render-worker.py`, `test/worker.test.mjs` with 23 offline assertions), verified,
+>      published with the key bound, and read live through both Workers: a real mainnet collection's holders
+>      (100 a page, paging), its verification record with a 90-entry ABI, a holder's inventory of 1,535 NFTs
+>      netted from transfer history, a transaction's record; no key marker in any response. The integrity
+>      workflow now reads that holders page four times a day and refuses the envelope.
 >  12. **The send path must not depend on the wallet's RPC** (round seventeen S-8, second item). S-3's fix
 >     takes the hash from `eth_sendTransaction` and waits on this page's RPC; gate 9's production endpoint
 >     then covers every read the page makes. Proven by the S-3 regression and by one real-wallet send under
