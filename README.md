@@ -183,7 +183,7 @@ moved".
 
     forge build
     forge test                 # 111 contract tests, plus 29 reviewer probes of which 9 must fail
-    npm install && npm test    # 450 browser tests, every answer mocked, no network
+    npm install && npm test    # 477 browser tests, every answer mocked, no network
     ./test.sh                  # all of it
 
 The browser tests drive the real pages in headless Chromium and answer every RPC, explorer and price request
@@ -246,9 +246,9 @@ purpose: a probe reproduces a defect, so a probe that fails is a defect that is 
 
 ## Reviews
 
-Six internal review passes and fourteen adversarial review rounds, each by a fresh model given the code and no
-other context and asked to break it. The first thirteen rounds' blocking findings are fixed; round fourteen's
-findings and their closure state are published unedited in
+Six internal review passes and seventeen adversarial review rounds, each by a fresh model given the code and
+no other context and asked to break it. Every blocking finding from the first sixteen rounds is fixed against
+its own reproduction, and the seventeenth found none. All of it is published unedited in
 [`docs/`](docs/) including the parts that are unflattering: a page that answered "this is a plain transfer of
 ETH", in green, for an unlimited approval whose `0x` prefix had been lost; a bug dismissed in a code comment
 as deliberate that was a double-payment path; a page printing safety conclusions from function names; a build

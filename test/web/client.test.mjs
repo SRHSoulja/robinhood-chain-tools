@@ -112,6 +112,9 @@ function chainAnswer(O) {
       // Ethers looks the transaction up after sending it, to build the object it hands back. Answering null
       // here leaves it polling forever, which is why a send used to appear to hang in these tests.
       case 'eth_getTransactionByHash': {
+        // Round seventeen S-3: the wallet's own RPC broadcast the transaction and then answers the lookup
+        // with an error (a rate-limited endpoint, a node a block behind). The page must not depend on it.
+        if (O.txByHashThrows) { const e = new Error('Internal JSON-RPC error.'); e.code = -32603; throw e; }
         const h = String(params[0] || '0x' + 'cd'.repeat(32));
         return {
           hash: h, blockHash: '0x' + '11'.repeat(32), blockNumber: '0x1000', transactionIndex: '0x0',
@@ -285,6 +288,12 @@ async function open(_stale, opts = {}) {
       if (opts.delayNextRpcMs) {
         const ms = opts.delayNextRpcMs; opts.delayNextRpcMs = 0;
         await new Promise((resolve) => setTimeout(resolve, ms));
+      }
+      // A slow method is slow on this path too. Since round seventeen S-3 the send waits for its receipt on
+      // the page's own RPC rather than through the wallet, so a receipt delay declared for a test has to hold
+      // here or the Stop and interrupted-send tests see a batch finish before they can act.
+      if (opts.slowMethod && (Array.isArray(body) ? body : [body]).some((r) => r && r.method === opts.slowMethod.method)) {
+        await new Promise((resolve) => setTimeout(resolve, opts.slowMethod.ms));
       }
       const one = (r) => { try { const result = answer(r.method, r.params || []); return { jsonrpc: '2.0', id: r.id, result }; }
                            catch (e) { return { jsonrpc: '2.0', id: r.id, error: { code: e.code || 3, message: String(e.message || 'execution reverted'), data: e.revertData } }; } };
@@ -1061,6 +1070,44 @@ async function freshBrowser() {
     /not a whole number/.test(await text(page, '#msgList')), await text(page, '#msgList'));
   check('round-15 B-02 a refused named quantity leaves the source bytes unchanged',
     (await val(page, '#list')) === before, await val(page, '#list'));
+  await page.close();
+}
+
+// ---- round 17 S-1: "How many each" is the seventh input Assign captures before it waits ---------------
+{
+  const opts = { approved: true, ownedIds: [71, 72, 73, 74] };
+  const page = await open(browser, opts);
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const list = A(0x811) + '\n' + A(0x812) + '\n';
+  await page.fill('#list', list);
+  await page.fill('#each', '1');
+  opts.delayNextRpcMs = 1200;
+  await page.click('#assign');
+  await page.fill('#each', '3');   // changed while the holdings read is in flight
+  await page.waitForTimeout(2200);
+  const finalList = await val(page, '#list');
+  const msg = await text(page, '#msgList');
+  check('round-17 S-1 a "how many each" change during the wait stops Assign and leaves the box as typed',
+    finalList === list && /how many each/.test(msg), JSON.stringify({ finalList, msg: msg.slice(0, 160) }));
+  check('round-17 S-1 and Send is not armed on the stale quantity', await page.$eval('#send', (b) => b.disabled), 'send enabled');
+  await page.close();
+}
+
+// ---- round 17 S-3: the hash comes from eth_sendTransaction, and the wait runs on the page's RPC ----------
+{
+  const O = { approved: true, ownedIds: [7], txByHashThrows: true, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 }, ownerOf: A(0x41) };
+  const page = await open(browser, O);
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x41) + ',7\n');
+  await page.click('#parse'); await page.waitForTimeout(500);
+  await page.click('#send'); await page.waitForTimeout(9000);
+  const logText = await text(page, '#log');
+  const pend = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('bulksend:pending:')).map((k) => JSON.parse(localStorage.getItem(k))));
+  check('round-17 S-3 a wallet that cannot look its own transaction up no longer hangs the send', /sent, waiting/.test(logText) && !(await page.$eval('#list', (b) => b.disabled)), logText.slice(-300));
+  check('round-17 S-3 the hash the wallet returned is written down at once', pend.length === 0 || pend.every((p) => p.hash !== null), JSON.stringify(pend.map((p) => p.hash)));
+  check('round-17 S-3 and the batch completes on the page\'s own RPC', /done: 1 arrived|Finished\. 1 delivered/.test(logText), logText.slice(-300));
   await page.close();
 }
 

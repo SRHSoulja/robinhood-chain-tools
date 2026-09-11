@@ -1,6 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 11 September 2026, against BulkSend **v13** and round sixteen.
+Last updated 11 September 2026, against BulkSend **v13** and round seventeen.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -25,7 +25,7 @@ for three deployments, which is exactly why the rule is written down: available 
 nonce is 0.
 
 Current unreleased validation, 11 September 2026: the complete current-tree gate passed all five ordinary
-contract test files, 343/343 airdrop-page tests, 129/129 Check-page tests, and 21/21 publish-policy checks.
+contract test files, 348/348 airdrop-page tests, 129/129 Check-page tests, and 21/21 publish-policy checks.
 Every historical probe is now bound both to its complete source hash and to its exact assertion names and
 statuses; an ordinary Solidity failure can no longer hide by borrowing a probe-style function name. The
 reproducible WalletConnect rebuild matched its shipped and expected SHA-256. The separate read-only mainnet
@@ -38,7 +38,7 @@ tokens were accepted. No transaction was signed or broadcast and no ETH was spen
 ```
 ./test.sh                              # everything below except the live scripts
 forge test                             # 111 contract tests, plus 29 reviewer probes of which 9 must FAIL
-node test/web/client.test.mjs          # 343 airdrop page tests
+node test/web/client.test.mjs          # 348 airdrop page tests
 node test/web/check.test.mjs           # 129 Check page tests
 ./test/csp-gate.test.sh                #  21 checks that a weaker published CSP is refused
 forge test --match-path 'test/fork/MainnetGuards.t.sol'   # the paste guards against 20 real mainnet
@@ -105,7 +105,7 @@ They sign with a testnet-only key that holds no mainnet balance and refuse to ru
 | deployed bytecode matches what this repository builds | v13, byte-identical, 9,752 bytes, fully verified on the explorer (compiler 0.8.36, cancun, 10,000 runs) | ✅ |
 | the paste guards agree with real mainnet contracts | `test/fork/MainnetGuards.t.sol` on a read-only fork: 20 real collections refused by the ERC-20 guard and accepted by the NFT guard, 20 real tokens accepted; v12's guard let 20 of 20 through | ✅ |
 | the contract's properties hold over random sequences, all three standards | `test/Invariants.t.sol`, 2,304 calls, 0 reverts | ✅ |
-| the deployed pages match these files | **no** — both externally fetched HTML pages differ from this tree; `wc.js` still matches. Publication is deliberately withheld until the remediation commit passes CI and a fresh exact-commit review | ❌ |
+| the deployed pages match these files | **yes** since the round-sixteen commit `4cc8a1c` was published: both HTML pages and `wc.js` byte-identical, checked by the publisher, by an independent fetch, by round seventeen's reviewer, and by the integrity workflow four times a day | ✅ |
 | ERC-1155 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding 2 of an edition | ✅ |
 | ERC-20 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding exactly 1.5, to the wei | ✅ |
 | any of it against a real wallet extension, automatically | **no** — every wallet in every test here is written by this repository | ❌ |
@@ -139,6 +139,23 @@ ERC-1155 survey covers 6, which is every one that was findable and measurable. S
 a distribution, only its top, and the file says so.
 
 ## Open findings
+
+Round seventeen, 11 September 2026, against `4cc8a1c`. The full report is
+[`audit-2026-09-11-seventeenth-external.md`](audit-2026-09-11-seventeenth-external.md), published as written.
+**No release blocker**, the first round of seventeen to find none. Eleven should-fix items, six inherent
+limits. Its probe file is `test/web/audit-probe-17.mjs` (the reviewer named it `audit-probe-14`; kept under
+the round's number like the others).
+
+### Round seventeen should-fix
+
+| | | |
+| --- | --- | --- |
+| S-1 | Assign captured six inputs before it waited; "How many each" was the seventh | closed: captured and compared like the others, regression beside the round-sixteen one |
+| S-3 | the bulk send hung, form locked, when the wallet's RPC could not look up the transaction it had just broadcast; the hash it returned was never written down | closed: the hash comes straight from `eth_sendTransaction`, is recorded at once, and the receipt is awaited on this page's own RPC; a replaced transaction times out and its rows are held, which is the safe direction |
+| S-4 | three early returns left the holder-snapshot button dead | closed: `finally` |
+| S-9 | four documents described the state two commits ago | closed |
+| S-8 | the mainnet gate list was short by two items the code depends on | recorded as gates in `plan.md`: an explorer that answers this origin on mainnet (today the mainnet explorer answers the worker with a Cloudflare challenge, so Assign's fallback, holder snapshots and Check's source verification would be dark there), proven by an integrity step; and the wallet-RPC dependence, which S-3 removes from the send path |
+| S-2, S-5, S-6, S-7, S-10, S-11 | Assign re-pairs an already-paired list without asking; a zero-address line stops Assign without being named; `x0` read as one delivery by the picker and refused by Assign; the snapshot records the network after its wait; Check's "why it failed" can be today's reason presented as then's; a second tab's reconciliation waits silently on the first | **open**; none is a fund path, and the reviewer says so |
 
 Round sixteen, 11 September 2026, against `ebc910b`. The full report is
 [`audit-2026-09-11-sixteenth-external.md`](audit-2026-09-11-sixteenth-external.md), published as written.

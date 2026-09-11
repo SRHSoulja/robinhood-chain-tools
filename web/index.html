@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-Gm/WrYSKvVV4qzbmrO9lV86lMDr0bEJUYtH+UXMQk8U='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-iXf7FoukqmaVS2zyetrbTGGDnPPtzvDnr3RD5hVNO/8='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -1899,7 +1899,7 @@
       if (std() === '721') log('Next: press "Assign my token ids to these wallets" to fill in which of your NFTs each one gets.');
       parseList();
     } catch (e) { log('Could not read holders: ' + String(e.message || e).slice(0, 120), 'bad'); }
-    $('snap').disabled = false;
+    finally { $('snap').disabled = false; }   // round seventeen S-4: three early returns used to leave it dead
   });
 
   // Anything that can make those numbers describe a different thing than the list in the box drops them.
@@ -2097,6 +2097,7 @@
     const totalWanted = wants.reduce((a, w) => a + w.n, 0);
     const sourceBeforeAssign = $('list').value;
     const stdAtStart = std(); const meAtStart = me; const chainAtStart = chainId(); const randomAtStart = $('rand').checked;
+    const eachAtStart = $('each').value;   // round seventeen S-1: the seventh input, baked into `wants` above
     const myGeneration = ++assignGeneration;
     $('assign').disabled = true;
     try {
@@ -2109,7 +2110,8 @@
         : std() !== stdAtStart ? 'the standard'
         : me !== meAtStart ? 'the connected account'
         : chainId() !== chainAtStart ? 'the network'
-        : $('rand').checked !== randomAtStart ? 'the random-pairing setting' : null;
+        : $('rand').checked !== randomAtStart ? 'the random-pairing setting'
+        : $('each').value !== eachAtStart ? '"how many each"' : null;
       if (changed) {
         say('msgList', 'Assign stopped: ' + changed + ' changed while your holdings were being read. Nothing has been changed. Press Assign again when the list is as you want it.', 'bad');
         log('Assign stopped because ' + changed + ' changed while it was reading your holdings. The box is exactly as you left it.', 'bad');
@@ -3284,9 +3286,16 @@
           log('  this browser will not save what has been sent, so nothing has been sent. Sending without that record is how a recipient gets paid twice.', 'bad');
           break;
         }
+        // Round seventeen S-3. `bulk[fn](...)` returned only after ethers had looked the transaction up
+        // THROUGH THE WALLET's RPC to build its response object, retrying forever on an error or a null: a
+        // rate-limited wallet endpoint left the form locked with the hash the wallet had already given us
+        // never written down. So: ask the wallet to send, take the hash it returns, record it at once, and
+        // wait for the receipt on this page's own RPC, which is the endpoint this page is configured for.
         let tx;
         try {
-          tx = await bulk[fn](...args, onThisChain());
+          const req = await bulk[fn].populateTransaction(...args, onThisChain());
+          const hash = await signer.sendUncheckedTransaction(req);
+          tx = { hash, to: bulkAddr, data: planned, value: 0n };
         } catch (err) {
           // A refusal is a definite answer: the wallet moved nothing, so the record is removed and the rows
           // go back. Anything else -- including no answer at all -- keeps the record, because "I could not
@@ -3308,7 +3317,10 @@
         // waiting on it would hang forever. Stop after a while and say what is actually going on.
         let rc;
         try {
-          rc = await Promise.race([tx.wait(), new Promise((res) => setTimeout(() => res(null), 180000))]);
+          // On this page's RPC, not the wallet's. A replaced transaction is not reported as such here: it
+          // times out below and the rows are held, which is the safe direction. The next visit reconciles it
+          // by hash and by ownership, as it does for every held batch.
+          rc = await new ethers.JsonRpcProvider(cfg().rpc).waitForTransaction(tx.hash, 1, 180000).catch(() => null);
         } catch (e) {
           // "Speed up" in a wallet replaces the transaction. That is a success, not an error, but only if the
           // replacement is the same call: same destination, same calldata. Anything else is not our batch.

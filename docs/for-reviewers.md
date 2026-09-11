@@ -11,10 +11,9 @@ builds. Check that yourself:
     cast code 0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232 --rpc-url https://rpc.testnet.chain.robinhood.com
     # compare with out/BulkSend.sol/BulkSend.json -> deployedBytecode.object
 
-The two pages under `web/` are what people actually use. As of the round-fifteen review, neither live HTML
-page is byte-identical to this tree; the live WalletConnect bundle still is. Publication is deliberately held
-until one exact remediation commit passes the complete gate, CI, and a fresh zero-blocker review. The
-integrity comparison below must be green again before release:
+The two pages under `web/` are what people actually use, and the live copies are byte-identical to the files
+here since the round-sixteen commit was published (rounds fourteen and fifteen were fixed and deliberately
+not published while blockers were open; the integrity workflow checks this four times a day and is green):
 
     curl -s https://rhairdrop.gmgnrepeat.com/ | cmp - web/index.html
     curl -s https://rhcheck.gmgnrepeat.com/   | cmp - web/check.html
@@ -22,7 +21,7 @@ integrity comparison below must be green again before release:
 ## Running everything
 
     forge test                    # 111 contract tests, plus 29 reviewer probes of which 9 must fail
-    npm install && npm test       # 471 browser tests, all answers mocked, no network
+    npm install && npm test       # 477 browser tests, all answers mocked, no network
     ./test.sh                     # both of the above
 
 The browser tests answer every RPC, explorer and price request from the test file itself, so a failure is the
@@ -125,12 +124,13 @@ which is the case worth monitoring for.
   stretch is the one worth monitoring, so a green badge on a dormant repository means the last run that
   happened rather than the state today. A failure also opens an issue, so it is visible without access to
   anyone's inbox.
-- Sixteen adversarial review rounds, each by a fresh model with no prior context, all published unedited in
-  [`docs/`](.). Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1. The first thirteen
-  rounds are closed. Round fourteen's source findings are fixed, but its live-page mismatch carried into
-  round fifteen and remains open. Round fifteen's focused fixes and deployment state are tracked in
-  `status.md`; its inherent-limit list is not a backlog, but the things a browser page cannot prove, written
-  down so nobody rediscovers them.
+- Seventeen adversarial review rounds, each by a fresh model with no prior context, all published unedited in
+  [`docs/`](.). Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, **0**. Round seventeen,
+  against `4cc8a1c`, found no release blocker: the first round to do so. Every earlier round's blockers are
+  closed against their reproductions, the pages are published and byte-identical, and round seventeen's
+  eleven should-fix items are tracked in `status.md` (four closed in the commit after it, two folded into the
+  mainnet gate, five open). Its inherent-limit list is not a backlog, but the things a browser page cannot
+  prove, written down so nobody rediscovers them.
 - Repeatedly, a fix from one round has been the next round's finding. In the tenth it was every blocker. In
   the twelfth the only blocker was round eleven's B-4 surviving on the reader nobody re-checked. In the
   thirteenth the contract blocker was round twelve's own new guard, and six of its nine findings were one

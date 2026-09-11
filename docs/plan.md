@@ -31,9 +31,13 @@
 >    purpose and are written down in `status.md`: the guard probes' unbounded returndata copy, which needs a
 >    v14 and is not an asset-loss path, and nothing else. The next round is pointed at the Assign fix and its
 >    twins first.
->    **Round seventeen is running** against `4cc8a1c`, launched 11 September 2026 in the usual way (a fresh
->    `claude -p` in the harness directory reading `PROMPT.md`). Both pages were published from `4cc8a1c` and
->    are byte-identical live; integrity issue #1 is closed with the record. Triage when `AUDIT.md` completes.
+>    **Round seventeen ran against `4cc8a1c` and found no release blocker**, the first round to do so. Eleven
+>    should-fix items; S-1, S-3, S-4 and S-9 are closed in the commit after it, S-8's two items are gates
+>    below, the rest are open in `status.md`. Its report is published as written. Both pages were published
+>    from `4cc8a1c` and are byte-identical live; integrity issue #1 is closed.
+> 8b. **Round eighteen** runs against the commit that closes S-1 and S-3, on Opus rather than Fable (a
+>    reviewer round does not need the larger model, and two of them on Fable cost five hours of usage in one
+>    day). If it also finds no blocker, the mainnet question is the maintainer's, subject to gates 9 to 12.
 > 9. **Production RPC is now an explicit gate.** Robinhood's public mainnet endpoint is suitable for the
 >    present read-only rehearsal but its own documentation calls it rate-limited and not recommended for
 >    production. Select a dedicated provider, keep its credential in the Worker rather than `index.html`, and
@@ -42,6 +46,26 @@
 >     their wallets are test implementations, and the manual MetaMask run predates v10. Complete one injected-
 >     wallet and one phone/WalletConnect airdrop with freshly minted testnet assets, then read both back before
 >     changing the mainnet placeholder.
+>  11. **An explorer that answers this origin on mainnet** (round seventeen S-8). Today the mainnet explorer
+>     answers the worker's passthrough with a Cloudflare managed challenge, so on mainnet Assign's fallback,
+>     holder snapshots and Check's source verification and revert reasons would all be dark. An API key, an
+>     allowlisted origin, or a different indexer; proven by an integrity step that fails on the
+>     `{"error":"upstream"}` envelope for `/x/4663/`, which today it would.
+>  12. **The send path must not depend on the wallet's RPC** (round seventeen S-8, second item). S-3's fix
+>     takes the hash from `eth_sendTransaction` and waits on this page's RPC; gate 9's production endpoint
+>     then covers every read the page makes. Proven by the S-3 regression and by one real-wallet send under
+>     gate 10 with the wallet on the public endpoint.
+>
+> **The test harness, after round eighteen and before real money** (maintainer, 11 September: "if you have to
+> constantly adjust for delay variables I just have to ask if our testing setup is correct"). The browser
+> suites are right about what they test and wrong about how: they wait on wall-clock delays, a single thrown
+> error kills all 350 checks with the results buffered until the end, the two mocks model the page's plumbing
+> (wallet path, page-RPC path) rather than a chain, and every assertion pays for a headless browser. Two cheap
+> fixes first: per-block isolation with incremental output, and a hold-and-release gate on both mock paths
+> replacing `slowMethod` and `delayNextRpcMs`. Then, as its own task and not a mainnet gate: one fake chain
+> behind both mocks, and node-level unit tests for the fourteen readers of the recipient box. Process rule in
+> force now: one `./verify.sh` per change (it already runs both suites); documents-only commits get
+> `preflight.sh` only; reviewer rounds run on Opus with the expected cost stated first.
 >
 > **Deferred on purpose, and written down so it is not forgotten:** the four live scripts and the on-chain
 > B-1 script sign with `cast send --private-key`, which puts a testnet-only key in a process argument list
