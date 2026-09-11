@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-hA+J59CZdSMLcRXsiOc96JeCl5Y15UNLSyeDGjKZL8A='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-PH/PKLy8+a1+4t4NlBeZPKn+j1sCh6lCnSlQfOrjqgQ='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -2794,6 +2794,29 @@
     return null;
   }
 
+  // The NFT counterpart of checkTotals. It cannot be a gate: a fungible shortfall is a property of the whole
+  // list, an unheld id is a property of one row, and the per-row simulation below already refuses that row.
+  // But the token and edition paths say "the wallet holds less than this list needs" before the row-by-row
+  // output, and until now the NFT path said nothing at that level. (A duplicated id never gets this far: the
+  // list reader refuses it as "listed twice".)
+  async function unheldIds(list) {
+    if (std() !== '721' || !list.length || !me) return null;
+    const token = $('token').value.trim();
+    const rp = new ethers.JsonRpcProvider(cfg().rpc);
+    const t = new ethers.Contract(token, ['function ownerOf(uint256) view returns (address)'], rp);
+    const ids = [...new Set(list.map(r => r.id.toString()))];
+    const unheld = [];
+    for (let i = 0; i < ids.length; i += 40) {
+      const chunk = ids.slice(i, i + 40);
+      const owners = await Promise.all(chunk.map(id => t.ownerOf(BigInt(id)).then(o => String(o).toLowerCase(), () => null)));
+      owners.forEach((o, j) => { if (o !== null && o !== String(me).toLowerCase()) unheld.push(chunk[j]); });
+    }
+    if (!unheld.length) return null;
+    const first = unheld.slice(0, 8).join(', ') + (unheld.length > 8 ? ', … and ' + (unheld.length - 8) + ' more' : '');
+    return 'The wallet does not hold ' + unheld.length + ' of the ids in this list: ' + first
+      + '. Those rows will be refused (all or nothing) or skipped (keep going); the rest are unaffected.';
+  }
+
   let orderedCheckFailed = null;   // set when the whole-batch simulation could not run
   async function preflight(verbose, listIn) {
     orderedCheckFailed = null;
@@ -2812,6 +2835,10 @@
         if (upgraded.length > 8) log('    … and ' + (upgraded.length - 8) + ' more', 'warn');
       }
     } catch (e) { /* an advisory check: never let it stop a run */ }
+    try {
+      const unheld = await unheldIds(ordered);
+      if (unheld) log(unheld, 'warn');
+    } catch (e) { /* advisory as well: the per-row simulation is the verdict */ }
     {
       const shortfall = await checkTotals(ordered);
       if (shortfall) { log(shortfall, 'bad'); return { ok: false, why: shortfall, willDeliver: 0, willSkip: 0, good: [], bad: [], list: ordered }; }

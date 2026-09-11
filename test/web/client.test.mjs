@@ -755,6 +755,20 @@ async function freshBrowser() {
   await page.close();
 }
 
+// ---- the NFT path says up front which ids the wallet does not hold, like the token and edition paths do ----
+{
+  const page = await open(browser, { ownerOf: A(0xe1) });   // every id answers as owned by someone else
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0xf2) + ',1\n' + A(0xf3) + ',2\n' + A(0xf4) + ',3\n');
+  check('the list is accepted, so the test run can be asked for', !(await page.$eval('#preflight', b => b.disabled)), 'button disabled');
+  await page.click('#preflight'); await page.waitForTimeout(5000);
+  const logText = await text(page, '#log');
+  check('unheld ids are counted and named before the row-by-row results', /does not hold 3 of the ids in this list: 1, 2, 3\./.test(logText), logText.slice(0, 400));
+  check('and it is advisory: the test run still runs row by row', /Test run: simulating every transfer/.test(logText), logText.slice(0, 200));
+  await page.close();
+}
+
 // ---- M-03: the delivered ledger is never silently trimmed ------------------------
 {
   const page = await open(browser, { walletBatch: true, ownerOf: A(0xe1) });

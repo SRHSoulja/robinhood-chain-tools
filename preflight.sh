@@ -91,16 +91,25 @@ python3 - <<'PY' || bad=1
 import io, json, re, sys
 abi = json.load(open('out/BulkSend.sol/BulkSend.json'))['abi']
 errs = [e['name'] for e in abi if e['type'] == 'error']
+bad = False
+# Both pages read this contract's errors, and round thirteen's fix taught only one of them (S-7 on the twin
+# reader). The airdrop page declares signatures and words them in a map; Check carries [signature, words]
+# pairs. Either way: every error, declared, with a sentence.
 page = io.open('web/index.html', encoding='utf-8').read()
 declared = set(re.findall(r"'error (\w+)\(", page))
 worded = set(re.findall(r"^\s*(\w+): '", page, re.M))
-missing = [e for e in errs if e not in declared]
-unworded = [e for e in errs if e in declared and e not in worded]
-if missing or unworded:
-    for e in missing:  print('  FAIL   the contract can revert %s() and the page does not declare it, so it reaches the user as hex' % e)
-    for e in unworded: print('  FAIL   %s() is declared but has no sentence, so the user is shown its name and nothing to do' % e)
-    sys.exit(1)
-print('  ok     all %d contract errors reach the user as a sentence' % len(errs))
+for e in [e for e in errs if e not in declared]:
+    print('  FAIL   the contract can revert %s() and the airdrop page does not declare it, so it reaches the user as hex' % e); bad = True
+for e in [e for e in errs if e in declared and e not in worded]:
+    print('  FAIL   %s() is declared in the airdrop page but has no sentence, so the user is shown its name and nothing to do' % e); bad = True
+check = io.open('web/check.js', encoding='utf-8').read()
+pairs = dict(re.findall(r"\['error (\w+)\([^']*\)',\s*'([^']*)'\]", check))
+for e in [e for e in errs if e not in pairs]:
+    print('  FAIL   the contract can revert %s() and the Check page cannot name it, so it is shown as a bare selector' % e); bad = True
+for e in [e for e in errs if e in pairs and not pairs[e].strip()]:
+    print('  FAIL   %s() has an empty sentence in the Check page' % e); bad = True
+if bad: sys.exit(1)
+print('  ok     all %d contract errors reach the user as a sentence, on both pages' % len(errs))
 PY
 else
   note ok "contract errors: skipped, no build in out/ (run forge build)"

@@ -164,6 +164,11 @@
     ['error GasOutOfRange(uint256 given, uint256 min, uint256 max)', 'BulkSend: the gas allowance is outside the range the contract accepts'],
     ['error GasIsForLenientOnly()', 'BulkSend: a gas allowance only applies when skipping is allowed'],
     ['error TransferFailed(address to, uint256 id)', 'BulkSend: a transfer failed and the batch was refused'],
+    // The three added in v11 to v13. The airdrop page learned them in round thirteen (S-7) and this page,
+    // which reads the same contract, did not: the twin reader nobody re-checked. preflight.sh now reads both.
+    ['error IsAnNft(address token)', 'BulkSend: that address is an NFT collection and this is the token form, so the amounts would have been spent as token ids; nothing moved'],
+    ['error NotAnNft(address token)', 'BulkSend: that address does not answer as an NFT collection, so it was not sent through the NFT form; nothing moved'],
+    ['error Reentered()', 'BulkSend: a recipient called BulkSend again from inside its own receive hook, which is refused; nothing moved'],
   ];
   const ERR_IFACE = new ethers.Interface(ERR_SIGS.map((e) => e[0]));
   const ERR_WORDS = {};

@@ -227,6 +227,23 @@ async function freshBrowser() {
   await page.close();
 }
 
+// ---- the contract's newest refusals are named, not shown as selectors (round thirteen S-7, twin reader) ----
+{
+  // selectors from `cast sig`, so the test does not depend on the page's own library to name them
+  const cases = [
+    ['0x16102772' + NFT.slice(2).padStart(64, '0'), 'NFT collection', 'IsAnNft'],            // IsAnNft(address)
+    ['0x21443d13' + TOK.slice(2).padStart(64, '0'), 'does not answer as an NFT collection', 'NotAnNft'],   // NotAnNft(address)
+    ['0xb5dfd9e5', 'called BulkSend again', 'Reentered'],                                    // Reentered()
+  ];
+  for (const [data, words, name] of cases) {
+    const page = await open(browser, { simRevert: data });
+    const t = await ask(page, JSON.stringify({ to: NFT, data: '0x23b872dd' + ME.slice(2).padStart(64, '0') + A(0x2222).slice(2).padStart(64, '0') + (7).toString(16).padStart(64, '0') }), ME);
+    check(name + ' is explained in words', t.includes(words), t.slice(0, 400));
+    check(name + ' is not shown as a bare selector', !t.includes(data.slice(0, 10)), t.slice(0, 400));
+    await page.close();
+  }
+}
+
 // ---- powers, read from bytecode when there is no source ---------------------
 {
   const page = await open(browser, {});
