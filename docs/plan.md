@@ -2,10 +2,15 @@
 
 > ## Start here
 >
-> **State on 11 September 2026, after round sixteen.** Working tree at the commit that carries this file; CI's
-> `tests` workflow green at `ebc910b` (the suites, the probes, the connector rebuild and the bytecode step, in
-> that order). The `integrity` workflow was red only because the fixed pages had not been published; the
-> round-sixteen commit publishes them.
+> **State on 11 September 2026, evening, commit `0f3daf1`.** Round seventeen found no release blocker, the first
+> round to do so; its four fixable should-fix items are closed and its report is published. Gate 10, the
+> real-wallet run, is done from the maintainer's own wallet (four runs, two wallets, three standards, every hash
+> read back from the explorer), and both findings it produced are closed and published. Both pages are
+> byte-identical live; CI `tests` and `integrity` are green. **What remains before the mainnet question:**
+> gate 9 (a production RPC) and gate 11 (an explorer that answers this origin on mainnet), both from research
+> in progress, then round eighteen on Opus against that commit as the final review, then the deploy of v13
+> (about 0.0003 ETH) only on the maintainer's explicit word. Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3,
+> 5, 1, 2, 4, 5, 1, 0.
 >
 > - **BulkSend v13 is DEPLOYED on testnet** at `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (tx `0x5cb0037f…`), byte-identical
 >   at 9,752 bytes, fully verified. The on-chain B-1 reproduction against it reverts `IsAnNft`
