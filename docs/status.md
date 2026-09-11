@@ -85,6 +85,25 @@ They sign with a testnet-only key that holds no mainnet balance and refuse to ru
 | any of it against a real wallet extension, by hand | **yes, once** — the maintainer drove the page from a phone with MetaMask and it worked. That was against an earlier BulkSend, before v10, so it is evidence about the page and not about the contract now deployed. Not repeated since, deliberately: more of it is worth doing when the software is otherwise finished, not while it is still changing under the tester | ⚠️ |
 | behaviour on mainnet | **never, by design** | ❌ |
 
+## Reading the testnet deployer's activity
+
+The deployer and the test wallets are **shared with unrelated work**: the maintainer also mints and moves NFTs
+on this testnet for a game being tested. So on chain 46630, expect balances, nonces and gas to move for
+reasons that have nothing to do with this project, and expect tokens in these collections that this repository
+did not create.
+
+Nothing here may touch them, and nothing here can:
+
+- every live script **mints the tokens it sends**, in its own decade of the id space
+  (`live-send.mjs` from 7,000,000,000,000 and `live-wallet-batch.mjs` from 8,000,000,000,000, each plus the
+  millisecond it started). Minting an id that already exists reverts, so a collision fails the run rather than
+  moving a token the run did not create. `preflight.sh` refuses a live script with hardcoded ids.
+- nothing in this repository enumerates what a wallet already holds and sends it. The NFT picker reads
+  holdings, but only in the browser suites, against a wallet this repository writes.
+
+The practical consequence for anyone reading a balance here: **a change in testnet gas or nonce is not a signal
+about this project.** Mainnet is the one to watch, and it is at nonce 0.
+
 ## Where the numbers come from
 
 Gas figures in [`gas-and-batches.md`](gas-and-batches.md) are measured, not estimated, and the method is in

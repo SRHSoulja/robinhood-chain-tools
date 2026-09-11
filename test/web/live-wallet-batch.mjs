@@ -45,7 +45,13 @@ const to = (n) => ('0x' + '51f' + stamp + '0'.repeat(40 - 3 - 12 - 1) + n).toLow
 const RECIPIENTS = [to(1), to(2), to(3)];
 
 // fresh ids this account owns, minted for this run
-const base = 220000 + (Date.now() % 100000) * 10;
+// Monotonic, and its own decade. `Date.now() % 100000` cycled every hundred seconds, so two runs a hundred
+// seconds apart picked the same ids, and both live scripts drew from overlapping ranges. That was survivable
+// -- minting an id that already exists reverts, so a collision fails the mint rather than moving somebody
+// else's token -- but it fails as a confusing broken test, and this collection is shared: the maintainer also
+// mints into it for an unrelated game. Milliseconds never repeat, and the leading 8 separates this script
+// from the other one, so a run here can never land on an id anything else created.
+const base = 8_000_000_000_000 + Date.now();
 execFileSync(CAST, ['send', D.OZ721, 'mintMany(address,uint256,uint256)', ME, String(base), '3',
   '--rpc-url', RPC, '--private-key', KEY.private_key], { maxBuffer: 1 << 24 });
 const IDS = [base, base + 1, base + 2];
