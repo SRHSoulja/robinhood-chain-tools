@@ -928,19 +928,23 @@
     return w;
   }
 
-  async function showCall(to, data, from, value, seq) {
+  async function showCall(to, data, from, value, seq, options) {
+    options = options || {};
     say('Working out what that would do…');
     const target = await readAddress(to);
     const parsed = parseData(data, target.abi);
     const ctx = { target };
     const sentence = parsed.unknown || parsed.empty ? null : describeCall(parsed, ctx);
     let sim = null, simErr = null;
-    try { sim = await simulate({ to, data, from, value }); } catch (e) { simErr = String(e.message || e).slice(0, 160); }
+    if (options.simulate !== false) {
+      try { sim = await simulate({ to, data, from, value }); } catch (e) { simErr = String(e.message || e).slice(0, 160); }
+    }
     const moves = sim ? await movements(sim.logs, ctx) : [];
     const warnings = callWarnings(parsed, target, sim, from);
     if (stale(seq)) return;
     say('');
     out(
+      ...(options.before || []),
       card(null,
         h('p', { class: 'lede', text: sentence || (parsed.unknown ? 'A call this page cannot name: the contract has published no source and the function is not a standard one.' : parsed.empty ? 'No calldata: this is a plain transfer of ETH.' : parsed.signature) }),
         sentence ? readingCaption(target) : null,
@@ -1200,11 +1204,31 @@
       refuse(entryIndex, 'An entry in that JSON is neither a request, a transaction, nor a call.');
     }
     if (!requests.length) return { kind: 'bad', why: refused.join('  ') || 'That JSON has no calls in it.' };
+    // Keep the compact single-call presentation, but keep the request with it. The renderer resolves this
+    // through the same sender function as a multi-call request, so compact no longer means lossy.
     if (requests.length === 1 && requests[0].calls.length === 1 && requests[0].calls[0].to
         && !requests[0].envelope && !requests[0].notes.length && !refused.length
         && !(requests[0].schemaProblems || []).length && !requests[0].invalidMembers)
-      return Object.assign({ kind: 'call' }, requests[0].calls[0]);
+      return Object.assign({ kind: 'call', request: requests[0] }, requests[0].calls[0]);
     return { kind: 'batch', requests, refused, topCount: top.length };
+  }
+
+  // One precedence rule for compact and batch renderers. A valid sender declared by the request wins; the UI
+  // is only a fallback when the request omitted one. An explicit unreadable sender remains explicit and makes
+  // simulation ineligible instead of being silently replaced by that fallback.
+  function resolveRequestSender(request, uiSender) {
+    const env = request && request.envelope;
+    const declared = request && (request.declaredFrom
+      || (env && ADDR_RE.test(String(env.from)) ? ethers.getAddress(env.from) : null)
+      || (request.calls && request.calls[0] && ADDR_RE.test(String(request.calls[0].from)) ? ethers.getAddress(request.calls[0].from) : null));
+    const unreadable = request && request.senderUnreadable;
+    return {
+      declared: declared || null,
+      unreadable: unreadable || null,
+      chosen: declared || uiSender || null,
+      mismatch: !!(declared && uiSender && declared.toLowerCase() !== uiSender.toLowerCase()),
+      usedFallback: !declared && !unreadable && !!uiSender,
+    };
   }
 
   // ---------- working out what was pasted ----------
@@ -1269,12 +1293,11 @@
           // has. Derived from the envelope alone, the "names a different sender than the box" warning covered
           // wallet_sendCalls and not eth_sendTransaction -- so a transaction whose `from` differed from the
           // box silently changed who the answer was about. Who is asking decides what most contracts do.
-          const envSender = reqs[ri].declaredFrom || (env && env.from ? ethers.getAddress(env.from) : null);
           const uiSender = from;
-          // The reader has already discarded anything a wallet would not honour. What is left is the
-          // request's own sender, or, where it named none, the address in the box, said out loud as such.
-          const envFrom = env && env.from ? env.from : null;
-          const chosenSender = envFrom || reqs[ri].calls[0].from || uiSender || null;
+          const sender = resolveRequestSender(reqs[ri], uiSender);
+          const envSender = sender.declared;
+          // The request's sender is authoritative; the box fills in only when the request truly omitted it.
+          const chosenSender = sender.chosen;
           const calls = reqs[ri].calls.map((c) => Object.assign({}, c, { from: chosenSender }));
           for (const n of (reqs[ri].notes || [])) cards.push(note('warn', label + 'something in this request was ignored', n));
           const schemaProblems = reqs[ri].schemaProblems || [];
@@ -1297,7 +1320,7 @@
           // carried `input` instead of `data` was described as a plain transfer of ETH and still earned an
           // unqualified "run in order, every call succeeds".
           reqs[ri].unread = pasteUnread || caps.length > 0 || schemaProblems.length > 0
-            || (reqs[ri].notes || []).length > 0 || !!reqs[ri].invalidMembers;
+            || (reqs[ri].notes || []).length > 0 || !!reqs[ri].invalidMembers || !!reqs[ri].senderUnreadable;
           if (reqs[ri].invalidMembers) cards.push(note('bad', label + reqs[ri].invalidMembers + ' of its ' + reqs[ri].calls.length + ' entries could not be read as calls',
             'They are kept in place below rather than dropped, because a list with a member missing is not the list that was pasted. No verdict is given for the sequence as a whole.'));
           if (!chosenSender) {
@@ -1305,7 +1328,7 @@
               'This request does not say who sends it, and the box above is empty. Who is asking decides what most contracts do, so there is nothing here worth simulating until you put an address in. Nothing below has been checked.'));
             continue;
           }
-          if (!envFrom && !reqs[ri].calls[0].from) {
+          if (sender.usedFallback) {
             cards.push(note('warn', label + 'the sender is the one you typed, not one the request names',
               'This request leaves the sender to the wallet. Everything below was worked out as ' + short(chosenSender) + ' because that is what is in the box.'));
           }
@@ -1357,10 +1380,10 @@
           if (reqs[ri].senderUnreadable) {
             cards.push(note('bad', label + 'this request names a sender that is not an address',
               'Its `from` is ' + reqs[ri].senderUnreadable + ' rather than an address, so it has not been used. '
-              + (uiSender ? 'The address in the box, ' + short(uiSender) + ', is who this has been read as.'
+              + (uiSender ? 'The address in the box, ' + short(uiSender) + ', is only a fallback for requests that omit a sender; it cannot replace an explicit unreadable one. Nothing has been simulated.'
                           : 'Nothing has been read as the sender, and who is asking decides what most contracts do.')));
           }
-          if (envSender && uiSender && envSender.toLowerCase() !== uiSender.toLowerCase()) {
+          if (sender.mismatch) {
             cards.push(note('warn', label + 'the request names a different sender than the box',
               'The request says ' + short(envSender) + ' and the box says ' + short(uiSender) + '. The request wins, because that is who would actually send it.'));
           }
@@ -1383,7 +1406,8 @@
           // whole" when an entry could not be read; this is what makes that sentence true. Without it the
           // page printed that card and then, directly beneath it, "run in order, every call succeeds".
           const unreadableCall = calls.some((c) => c.invalid);
-          const simulatable = !unreadableCall && calls.every((c) => ADDR_RE.test(String(c.to || '')));
+          const senderUnreadable = !!reqs[ri].senderUnreadable;
+          const simulatable = !senderUnreadable && !unreadableCall && calls.every((c) => ADDR_RE.test(String(c.to || '')));
           let ordered = null, orderedErr = null;
           if (simulatable) {
             try { ordered = await simulateInOrder(calls); }
@@ -1391,6 +1415,10 @@
             if (stale(seq)) return;
           }
           if (!simulatable) {
+            if (senderUnreadable) {
+              cards.push(note('bad', label + 'this cannot be checked as a sequence',
+                'The request explicitly carries an unreadable sender. Substituting the address in the box would simulate a different transaction, so no transaction-level verdict is given.'));
+            } else {
             // Which of the two it is, rather than naming only the innocent one. An entry with an unreadable
             // destination is a malformed request; an entry with none is a contract creation; they are not
             // the same thing to tell somebody.
@@ -1403,6 +1431,7 @@
                 ? 'At least one entry has a destination that is not an address, so it cannot be simulated. That is a malformed request, not an entry that creates a contract.'
                 : 'At least one entry has no destination this page can simulate, such as a contract being created.')
               + ' Running the others in order would leave that one out, and a verdict with a member missing is not a verdict.'));
+            }
           } else if (ordered) {
             const bad = ordered.findIndex((r) => !r.ok);
             if (bad >= 0) cards.push(note('bad', label + 'run in order, call ' + (bad + 1) + ' fails',
@@ -1461,7 +1490,7 @@
             if (stale(seq)) return;
             const p = parseData(c.data, t && t.abi);
             let sim = ordered ? ordered[i] : null, simErr = null;
-            if (!sim) { try { sim = await simulate(c); } catch (e) { simErr = String(e.message || e).slice(0, 140); } }
+            if (!sim && !senderUnreadable) { try { sim = await simulate(c); } catch (e) { simErr = String(e.message || e).slice(0, 140); } }
             if (stale(seq)) return;
             const sentence = p.unknown || p.empty ? null : describeCall(p, { target: t });
             cards.push(card(title, [
@@ -1524,7 +1553,18 @@
           }
         }
         if (!ethers.isAddress(parsedInput.to || '')) { say('That call has no valid "to" address in it.', 'bad'); out(); return; }
-        return await showCall(ethers.getAddress(parsedInput.to), parsedInput.data, from || (ethers.isAddress(parsedInput.from || '') ? ethers.getAddress(parsedInput.from) : null), parsedInput.value, seq);
+        if (parsedInput.request) {
+          const sender = resolveRequestSender(parsedInput.request, from);
+          const before = [];
+          if (sender.unreadable) before.push(note('bad', 'This request names a sender that is not an address',
+            'Its `from` is ' + sender.unreadable + ' rather than an address. The address in the box cannot replace an explicit unreadable sender, so nothing has been simulated.'));
+          if (sender.mismatch) before.push(note('warn', 'The request names a different sender than the box',
+            'The request says ' + short(sender.declared) + ' and the box says ' + short(from) + '. The request wins, because that is who would actually send it.'));
+          return await showCall(ethers.getAddress(parsedInput.to), parsedInput.data, sender.chosen,
+            parsedInput.value, seq, { simulate: !sender.unreadable, before });
+        }
+        return await showCall(ethers.getAddress(parsedInput.to), parsedInput.data,
+          from || (ethers.isAddress(parsedInput.from || '') ? ethers.getAddress(parsedInput.from) : null), parsedInput.value, seq);
       }
       if (parsedInput.kind === 'data') {
         // Calldata alone says what is being asked for but not of whom, and the answer depends on both.

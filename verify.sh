@@ -32,7 +32,7 @@ fi
 current_web=(); for f in test/web/audit-probe*.mjs; do [ -e "$f" ] && current_web+=("$(basename "$f" .mjs)"); done
 current_contract=(); for f in test/Audit*.t.sol; do [ -e "$f" ] && current_contract+=("$(basename "$f" .t.sol)"); done
 if ! python3 - "$BASELINE" "${current_web[@]}" -- "${current_contract[@]}" <<'PY'
-import json, sys
+import hashlib, json, pathlib, sys
 with open(sys.argv[1], encoding="utf-8") as f:
     baseline = json.load(f)
 mark = sys.argv.index("--")
@@ -45,8 +45,25 @@ for section, label in (("web_probes", "browser probe"), ("contract_probes", "con
         parts = (["missing: " + ", ".join(missing)] if missing else []) + (["unlisted: " + ", ".join(extra)] if extra else [])
         print("FAIL  " + label + " manifest differs from the baseline (" + "; ".join(parts) + ").")
         bad = True
+for inventory, sources, folder, suffix, label in (
+    ("web_probes", "web_probe_sources", pathlib.Path("test/web"), ".mjs", "browser probe"),
+    ("contract_probes", "contract_probe_sources", pathlib.Path("test"), ".t.sol", "contract probe"),
+):
+    expected_names = set(baseline.get(inventory, {}))
+    source_hashes = baseline.get(sources, {})
+    if set(source_hashes) != expected_names:
+        print("FAIL  " + sources + " does not name exactly the files in " + inventory + ".")
+        bad = True
+        continue
+    for name in sorted(expected_names):
+        path = folder / (name + suffix)
+        actual = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "missing"
+        if actual != source_hashes[name]:
+            print("FAIL  " + label + " source changed: " + str(path)
+                  + ". Update the baseline only after reviewing the exact source change.")
+            bad = True
 if bad: raise SystemExit(1)
-print("ok    evidence-file manifest exactly matches the baseline")
+print("ok    evidence-file manifest and complete probe sources exactly match the baseline")
 PY
 then
   exit 1
@@ -55,17 +72,30 @@ fi
 [ -d node_modules ] || npm install --no-audit --no-fund >/dev/null 2>&1
 
 say "=== the suites: does everything still work ==="
-forge test --no-match-path 'test/fork/*.t.sol' >/tmp/rh-forge.txt 2>&1
-forge_line="$(grep -E '^Ran .* test suites' /tmp/rh-forge.txt | tail -1)"
-# The reviewers' probe suite is expected to fail; every other contract suite is not.
-forge_bad="$(grep -cE '^\[FAIL' /tmp/rh-forge.txt || true)"
-forge_bad_outside_probes="$(grep -E '^\[FAIL' /tmp/rh-forge.txt | grep -vc 'test_probe_' || true)"
-say "  contracts: ${forge_line:-no result}"
-if [ "${forge_bad_outside_probes:-0}" -gt 0 ]; then
-  say "  FAIL  $forge_bad_outside_probes contract test(s) failing outside the probe suite:"
-  grep -E '^\[FAIL' /tmp/rh-forge.txt | grep -v 'test_probe_' | sed 's/^/        /'
-  fail=1
-fi
+# Run every ordinary contract test file on its own. Probe suites intentionally contain failing reproductions;
+# excluding failures by a test-name prefix let an ordinary failure hide merely by borrowing that prefix.
+# File membership is the trust boundary: Audit*.t.sol is evidence, fork/ is the separate live-state check,
+# and every other top-level contract test must exit cleanly regardless of what any test function is called.
+ordinary_contracts=()
+for f in test/*.t.sol; do
+  [ -e "$f" ] || continue
+  case "$(basename "$f")" in Audit*.t.sol) continue ;; esac
+  ordinary_contracts+=("$f")
+done
+: >/tmp/rh-forge.txt
+contract_files_passed=0
+for f in "${ordinary_contracts[@]}"; do
+  tmp="/tmp/rh-forge-$(basename "$f" .t.sol).txt"
+  if forge test --match-path "$f" >"$tmp" 2>&1; then
+    contract_files_passed=$((contract_files_passed + 1))
+  else
+    say "  FAIL  ordinary contract suite $f failed:"
+    grep -E '^\[FAIL|^Error:|^Suite result:' "$tmp" | sed 's/^/        /'
+    fail=1
+  fi
+  cat "$tmp" >>/tmp/rh-forge.txt
+done
+say "  contracts: $contract_files_passed of ${#ordinary_contracts[@]} ordinary test files passed"
 
 suite_files=""
 for suite in client check; do

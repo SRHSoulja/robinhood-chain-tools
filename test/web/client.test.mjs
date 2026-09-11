@@ -98,6 +98,8 @@ function chainAnswer(O) {
       }
       case 'eth_simulateV1': {
         const calls = params[0].blockStateCalls[0].calls || [];
+        O.__orderedRequests = (O.__orderedRequests || 0) + 1;
+        if (Object.prototype.hasOwnProperty.call(O, 'orderedResponse')) return O.orderedResponse;
         return [{ calls: calls.map((c, i) => (O.sequenceFailsAt === i
           ? { status: '0x0', gasUsed: '0x1', returnData: '0x', logs: [], error: { message: 'execution reverted', data: '0x7e273289' + (99).toString(16).padStart(64, '0') } }
           : { status: '0x1', gasUsed: '0x1', returnData: '0x', logs: [] })) }];
@@ -980,6 +982,109 @@ async function freshBrowser() {
   check('round-14 B-2 an exact ERC-721 id plus amount is refused rather than reinterpreted',
     /already names the exact NFT id/.test(await text(page, '#msgList')), await text(page, '#msgList'));
   check('round-14 B-2 the refused rewrite leaves the quoted list byte-for-byte unchanged', after === before, after);
+  await page.close();
+}
+
+// ---- round 15 B-01: visible recipient bytes and armed rows are one state -------------------------------
+{
+  const opts = { approved: true, ownedIds: [1, 2, 9] };
+  const page = await open(browser, opts);
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const first = A(0x111) + ',1\n' + A(0x222) + ',2\n';
+  const second = A(0x999) + ',9\n';
+  await setList(page, first);
+  await page.fill('#list', second); // a normal user edit fires input, but does not press Check list
+  check('round-15 B-01 editing the list immediately clears the old parse summary',
+    !(await text(page, '#parseOut')).trim(), await text(page, '#parseOut'));
+  check('round-15 B-01 editing the list immediately disarms simulation and Send',
+    await page.$eval('#preflight', (b) => b.disabled) && await page.$eval('#send', (b) => b.disabled),
+    'preflight=' + await page.$eval('#preflight', (b) => b.disabled) + ' send=' + await page.$eval('#send', (b) => b.disabled));
+
+  // A script, autofill implementation or future writer can change .value without dispatching input. The
+  // consumer therefore checks the exact binding too; the event listener is responsiveness, not the trust root.
+  await setList(page, second);
+  await page.evaluate((v) => { document.querySelector('#list').value = v; }, first);
+  const before = opts.__orderedRequests || 0;
+  await page.click('#preflight'); await page.waitForTimeout(1200);
+  check('round-15 B-01 preflight refuses a value change that emitted no input event',
+    (opts.__orderedRequests || 0) === before && /changed.*Check list again/i.test(await text(page, '#log')),
+    'ordered=' + (opts.__orderedRequests || 0) + ' log=' + (await text(page, '#log')).slice(-220));
+  // Send independently rechecks before reconciliation and again under its run lock; it does not depend on a
+  // previous Test run having noticed the change.
+  await setList(page, second);
+  await page.evaluate((v) => { document.querySelector('#list').value = v; }, first);
+  const sentBefore = await page.evaluate(() => window.__sent.length);
+  await page.click('#send'); await page.waitForTimeout(700);
+  check('round-15 B-01 Send refuses an unparsed value change before any wallet request',
+    await page.evaluate((n) => window.__sent.length === n, sentBefore) && /changed.*Check list again/i.test(await text(page, '#log')),
+    'sent=' + await page.evaluate(() => window.__sent.length) + ' log=' + (await text(page, '#log')).slice(-220));
+  await page.close();
+}
+
+// ---- round 15 B-02: Assign reads the same named quantity semantics as Check list ----------------------
+{
+  const page = await open(browser, { approved: true, ownedIds: [31, 32, 33, 34, 35] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  // Direct entry is the auditor's route. Quoted delimiter-bearing metadata and a non-first address column
+  // make this exercise the semantic columns, not an accidental positional success.
+  await page.fill('#list', 'label,address,quantity\n"team,one",' + A(0x111) + ',3\n"team;two",' + A(0x222) + ',2\n');
+  await page.click('#assign');
+  await page.waitForFunction(() => document.querySelector('#log').textContent.includes('Assigned'), null, { timeout: 10000 }).catch(() => {});
+  const assigned = (await val(page, '#list')).split(/\r?\n/).filter(Boolean);
+  const forOne = assigned.filter((l) => l.toLowerCase().startsWith(A(0x111))).length;
+  const forTwo = assigned.filter((l) => l.toLowerCase().startsWith(A(0x222))).length;
+  check('round-15 B-02 Assign preserves named quantities entered directly',
+    assigned.length === 5 && forOne === 3 && forTwo === 2,
+    'lines=' + assigned.length + ' first=' + forOne + ' second=' + forTwo + ' box=' + assigned.join(' | '));
+  check('round-15 B-02 Assign output round-trips to the canonical parser with five deliveries',
+    /5 recipients/.test(await text(page, '#parseOut')) && !/problem lines/.test(await text(page, '#parseOut')),
+    await text(page, '#parseOut'));
+  await page.close();
+}
+{
+  const page = await open(browser, { approved: true, ownedIds: [41, 42, 43] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const before = 'address,amount\n' + A(0x333) + ',2.5\n';
+  await page.fill('#list', before);
+  await page.click('#assign'); await page.waitForTimeout(800);
+  check('round-15 B-02 Assign refuses an invalid named quantity rather than substituting the global default',
+    /not a whole number/.test(await text(page, '#msgList')), await text(page, '#msgList'));
+  check('round-15 B-02 a refused named quantity leaves the source bytes unchanged',
+    (await val(page, '#list')) === before, await val(page, '#list'));
+  await page.close();
+}
+
+// ---- round 15 B-04: incomplete ordered simulation evidence is never success ---------------------------
+{
+  const ok = { status: '0x1', gasUsed: '0x1', returnData: '0x', logs: [] };
+  const opts = { walletBatch: true, orderedResponse: [{ calls: [] }] };
+  const page = await open(browser, opts);
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x441) + ',1\n' + A(0x442) + ',2\n');
+  const malformed = [
+    ['empty', [{ calls: [] }]],
+    ['short', [{ calls: [ok] }]],
+    ['null response', null],
+    ['null member', [{ calls: [ok, null] }]],
+    ['extra', [{ calls: [ok, ok, ok] }]],
+    ['extra block result', [{ calls: [ok, ok] }, { calls: [] }]],
+    ['missing calls', [{}]],
+    ['missing status', [{ calls: [{}, ok] }]],
+    ['unknown status', [{ calls: [{ status: '0x2' }, ok] }]],
+  ];
+  for (const [name, response] of malformed) {
+    opts.orderedResponse = response;
+    await page.evaluate(() => { document.querySelector('#log').textContent = ''; });
+    await page.click('#preflight'); await page.waitForTimeout(900);
+    const logText = await text(page, '#log');
+    check('round-15 B-04 ' + name + ' ordered results fall back to the weaker check',
+      /would not run the whole batch in order|did not answer for every call|ordered simulation/i.test(logText)
+        && !/every transfer holds/.test(logText), logText.slice(0, 500));
+  }
   await page.close();
 }
 

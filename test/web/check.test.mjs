@@ -669,6 +669,36 @@ async function freshBrowser() {
   await page.close();
 }
 
+// ---- round 15 B-03: one JSON-RPC transaction keeps its own sender ----------------
+{
+  const seen = {};
+  const page = await open(browser, seen);
+  const declared = A(0x1111), ui = A(0x2222);
+  const t = await ask(page, JSON.stringify({
+    jsonrpc: '2.0', id: 1, method: 'eth_sendTransaction',
+    params: [{ from: declared, to: NFT, data: '0x06fdde03' }],
+  }), ui, 7000);
+  const senders = (seen.__senders || []).map((x) => String(x).toLowerCase());
+  check('round-15 B-03 a single transaction is simulated as its declared sender',
+    senders.length > 0 && senders.every((x) => x === declared.toLowerCase()), JSON.stringify(senders));
+  check('round-15 B-03 the single transaction surfaces the sender mismatch and says the request wins',
+    /request names a different sender than the box/.test(t) && /request wins/.test(t), t.slice(0, 800));
+  await page.close();
+}
+{
+  const seen = {};
+  const page = await open(browser, seen);
+  const t = await ask(page, JSON.stringify({
+    jsonrpc: '2.0', id: 1, method: 'eth_sendTransaction',
+    params: [{ from: 'not-an-address', to: NFT, data: '0x06fdde03' }],
+  }), ME, 7000);
+  check('round-15 B-03 an unreadable explicit sender is surfaced for a single transaction',
+    /names a sender that is not an address/.test(t), t.slice(0, 700));
+  check('round-15 B-03 an unreadable explicit sender receives no unqualified favorable verdict',
+    !/\bwould succeed\b/.test(t) && !/run in order, every call succeeds(?! — as read here)/.test(t), t.slice(0, 900));
+  await page.close();
+}
+
 // ---- B-02: separate transactions are not one sequence ---------------------------
 {
   const seen = {};

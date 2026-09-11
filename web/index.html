@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-y5nCDKNWEhU+lxWucrDL2qB1tTSqSpnd6hB/WszVFHg='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-OB2FagDw2LbL1MwF0McMlik/ZjW6WKaqlLD/H9XnSHY='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -205,7 +205,7 @@
   const setStat = (el, parts) => { el.textContent = ''; for (const [label, value, cls] of parts) { const span = document.createElement('span'); if (cls) span.className = cls; if (label) span.appendChild(document.createTextNode(label + ' ')); const b = document.createElement('b'); b.textContent = value; span.appendChild(b); el.appendChild(span); } };
 
   let eth = null;   // the wallet the user chose, discovered through EIP-6963 rather than assumed
-  let provider, signer, me, rows = [], stopFlag = false, decimals = null, tokenLoadedFor = null, skippedRows = [], sending = false;
+  let provider, signer, me, rows = [], parsedListSource = null, stopFlag = false, decimals = null, tokenLoadedFor = null, skippedRows = [], sending = false;
   let sendRunKey = null;   // set only while a send holds its run lock; see runKey() and ledgerKey()
   let forcePicker = false; // a deliberate disconnect means the next connect should ask which account
   // Anything that signs has to refuse a second press while the first is unfinished. `send` was given that in
@@ -789,20 +789,20 @@
     const addr = $('token').value.trim().toLowerCase();
     if (addr && addr === tokenLoadedFor && tokenLoadedChain === chainId()) return;
     if (pick.context && pick.context !== pickContext()) closePicker('The collection changed, so those are no longer the NFTs in front of you.');
-    rows = []; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); tokenInfo();
+    rows = []; parsedListSource = null; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); tokenInfo();
   });
   $('std').addEventListener('change', () => {
     $('fmt').textContent = std() === '721' ? 'address, tokenId' : std() === '1155' ? 'address, tokenId, amount' : 'address, amount';
     $('safeRow').style.display = std() === '721' ? 'flex' : 'none';
     if (pick.context) closePicker('The token type changed.');
-    rows = []; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); plan(); if ($('token').value.trim()) tokenInfo();
+    rows = []; parsedListSource = null; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); plan(); if ($('token').value.trim()) tokenInfo();
   });
   $('net').addEventListener('change', async () => {
     forgetSnapshot('the network changed');
     // The same address is a different contract on a different chain, and decimals differ. Keeping a parsed
     // list across that boundary would send amounts computed for one token using another one's units.
     if (pick.context) closePicker('The network changed, and the same address is a different contract on a different chain.');
-    rows = []; decimals = null; tokenLoadedFor = null; tokenLoadedChain = null; gatedBy = null; tokenPaused = false;
+    rows = []; parsedListSource = null; decimals = null; tokenLoadedFor = null; tokenLoadedChain = null; gatedBy = null; tokenPaused = false;
     badLines = 0; badLinesOk = false; skippedRows = []; gasPriceFor = null;
     setStat($('parseOut'), []); setStat($('tokenInfo'), []); say('msgList', ''); $('problems').style.display = 'none'; $('ackRow').style.display = 'none';
     refreshGasPrice(); plan();
@@ -925,6 +925,21 @@
     const raw = col ? cells[col.to] : cells.filter(Boolean)[0];
     return (raw && ethers.isAddress(raw)) ? ethers.getAddress(raw) : null;
   }
+  // One quantity reader for every feature that interprets an ERC-721 allocation request. A named amount or
+  // quantity column is authoritative; the xN shorthand is only the positional form used by a bare list.
+  // Returning the original text lets every caller reject the same malformed value rather than substituting a
+  // global default and silently shortening an airdrop.
+  function requestedNftQuantity(line, col, fallback) {
+    const cells = splitRow(String(line || '').trim());
+    if (col && col.qty !== undefined) {
+      const raw = String(cells[col.qty] == null ? '' : cells[col.qty]).trim();
+      return { n: wholeNumber(raw), raw, named: true };
+    }
+    const parts = cells.filter(Boolean);
+    const mult = parts.slice(1).find((x) => /^x\d+$/i.test(x));
+    if (mult) return { n: wholeNumber(mult.slice(1)), raw: mult, named: false };
+    return { n: fallback, raw: String(fallback), named: false };
+  }
   // Some addresses are not recipients. The zero address burns; BulkSend has no owner and no rescue function,
   // so anything sent there is gone; a token's own contract almost never gives it back either. The contract
   // refuses itself, but the wallet-batch path never reaches the contract, so the refusal has to live here too.
@@ -1039,7 +1054,29 @@
   // ---- list parsing ----
   $('csv').addEventListener('change', (ev) => { const f = ev.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { $('list').value = r.result; parseList(); }; r.readAsText(f); });
   $('parse').addEventListener('click', parseList);
+  // Parsed rows are executable state. They are valid only for the exact bytes the user checked. The input
+  // event makes the UI react immediately; parsedListIsCurrent is still rechecked at every consumer because
+  // scripts, autofill, and future writers can change .value without emitting an event.
+  function parsedListIsCurrent() { return parsedListSource !== null && parsedListSource === $('list').value; }
+  function invalidateParsedList() {
+    rows = []; parsedListSource = null; skippedRows = []; lastManifest = null;
+    badLines = 0; badLinesOk = false;
+    setStat($('parseOut'), []); say('msgList', '');
+    $('problems').textContent = ''; $('problems').style.display = 'none';
+    $('ack').checked = false; $('ackRow').style.display = 'none';
+    $('manifest').disabled = true;
+    plan();
+  }
+  function requireCurrentParsedList() {
+    if (parsedListIsCurrent()) return true;
+    invalidateParsedList();
+    log('The recipient list changed after it was checked. Press Check list again. Nothing was simulated, signed or sent.', 'bad');
+    return false;
+  }
+  $('list').addEventListener('input', invalidateParsedList);
   function parseList() {
+    // Disarm first, including for programmatic edits that emitted no input event and for every early return.
+    invalidateParsedList();
     const s = std();
     if (s === '20' && tokenLoadedFor !== $('token').value.trim().toLowerCase()) {
       const typed = $('token').value.trim();
@@ -1100,6 +1137,13 @@
       if (!named.length) { finishParse(out, problems, headers, ''); return; }
       // A file that names an address column and nothing else is a list of wallets with no ids yet.
       if (s === '721' && colMap.id === undefined && colMap.qty === undefined) { offerToAssign(named.length); return; }
+      // Some exports include a holdings/quantity heading even when the selected rows carry no value in that
+      // column. That is still an address-only list, not a request to interpret an absent quantity. This case
+      // was previously masked by the stale parse summary that input invalidation now correctly clears.
+      if (s === '721' && colMap.id === undefined && colMap.qty !== undefined
+          && named.every((r) => !String(r.qtyCell == null ? '' : r.qtyCell).trim())) {
+        offerToAssign(named.length); return;
+      }
       // In the wider ecosystem an NFT file with a quantity column but no id column means "how many of yours",
       // which is the same thing this page calls x3. Rewrite it into that form and let Assign fill the ids in.
       // A file that names an id column and then leaves it blank is not a file that means "assign some";
@@ -1263,6 +1307,7 @@
   // this offer. That difference is exactly the friction a first-time user reports as the file being wrong.
   function offerToAssign(n) {
     rows = [];
+    parsedListSource = null;
     setStat($('parseOut'), [['', n + ' wallet' + (n === 1 ? '' : 's') + ', no token ids yet', 'warn']]);
     $('problems').style.display = 'block';
     $('problems').textContent = 'These are wallets with no token ids yet. Press "Assign my token ids" and the ones you hold are filled in for you. Set "How many each" to give everyone more than one, or write x3 after a single address to give that wallet more than the rest.';
@@ -1302,6 +1347,7 @@
 
   function finishParse(out, problems, headers, note) {
     rows = out;
+    parsedListSource = $('list').value;
     lastManifest = null; $('manifest').disabled = true;   // a different list is not the list that was agreed to
     // Two identical lines are two payments, not one. Numbering each repeat means the record of what has been
     // delivered can hold both, instead of the second disappearing behind the first.
@@ -1505,7 +1551,10 @@
         const ids = String(cells[col.id]).trim().split(/[\s|]+/).filter(Boolean);
         return ids.length > 1 && ids.every((x) => wholeText(x) !== null) ? ids.length : 1;
       }
-      if (col.qty !== undefined) return Math.max(1, Math.min(1000, wholeNumber(String(cells[col.qty] ?? '')) || 1));
+      if (col.qty !== undefined) {
+        const q = requestedNftQuantity(t, col, 1).n;
+        return q === null ? 1 : Math.max(1, Math.min(1000, q));
+      }
       return 1;                                    // one named address column, one named id column, one NFT
     }
     const parts = splitRow(t).filter(Boolean);
@@ -2023,22 +2072,23 @@
     // refusal. Reached by a different route and with the same consequence: a recipient dropped from an
     // airdrop without a word, before anything would have flagged the line.
     if (refuseForUnreadableLines('msgList', 'Assign')) return;
-    // Each line may carry its own quantity ("0xabc… x3"); the rest use the "how many each" field.
+    // Each line may carry its own quantity, either in a named amount/quantity column or as the bare-list xN
+    // shorthand. This is the same semantic reader used by list sizing; Assign does not keep a parallel rule.
     const perWallet = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
     const wants = [];
     const col = boxColumns();
     for (const line of $('list').value.split(/\r?\n/)) {
       const addr = addressOn(line, col);
       if (!addr) continue;
-      const p = splitRow(line.trim()).filter(Boolean);
-      const m = p.slice(1).find(x => /^x\d+$/i.test(x));
-      const q = m ? wholeNumber(m.slice(1)) : perWallet;
-      if (q === null || q > 1000) { say('msgList', 'One line asks for "' + String(m).slice(0, 12) + '", which is not a workable number. Fix it and try again.', 'bad'); return; }
+      const asked = requestedNftQuantity(line, col, perWallet);
+      const q = asked.n;
+      if (q === null || q > 1000) { say('msgList', 'One line asks for "' + asked.raw.slice(0, 20) + '", which is not a whole number of NFTs from 1 to 1000. Fix it and try again.', 'bad'); return; }
       wants.push({ to: addr, n: q });
     }
     if (!wants.length) { say('msgList', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
     const wallets = wants.map(w => w.to);
     const totalWanted = wants.reduce((a, w) => a + w.n, 0);
+    const sourceBeforeAssign = $('list').value;
     $('assign').disabled = true;
     try {
       const ids = await myTokenIds(token, totalWanted);
@@ -2049,7 +2099,7 @@
         // an edition is divisible, so "how many each" is just the amount on the line
         const id = (random ? shuffled(ids) : ids)[0];
         chosenEdition = id;
-        $('list').value = wants.map(w => w.to + ',' + id + ',' + w.n).join('\n');
+        $('list').value = wants.map(w => serializeRow([w.to, id, w.n])).join('\n');
         say('msgList', 'Using id ' + id + '. Change the id or the amount on any line.', 'ok');
       } else {
         // an NFT cannot be divided, so a wallet getting more means more ids, one line each
@@ -2070,10 +2120,26 @@
           $('assign').disabled = false; return;
         }
         const lines = []; let k = 0;
-        for (const w of order) { for (let j = 0; j < w.n && k < pool.length; j++) lines.push(w.to + ',' + pool[k++]); }
+        for (const w of order) { for (let j = 0; j < w.n && k < pool.length; j++) lines.push(serializeRow([w.to, pool[k++]])); }
         $('list').value = lines.join('\n');
       }
       const n = $('list').value.split('\n').filter(Boolean).length;
+      // The generated form is not trusted merely because this page wrote it. Parse it through the canonical
+      // reader, then prove the parsed address/quantity meaning is exactly the request Assign started with.
+      const expected = new Map();
+      for (const w of wants) expected.set(w.to.toLowerCase(), (expected.get(w.to.toLowerCase()) || 0n) + BigInt(w.n));
+      parseList();
+      const actual = new Map();
+      for (const r of rows) actual.set(r.to.toLowerCase(), (actual.get(r.to.toLowerCase()) || 0n) + (std() === '1155' ? r.amount : 1n));
+      const sameMeaning = rows.length === n && expected.size === actual.size
+        && [...expected].every(([a, q]) => actual.get(a) === q) && parsedListIsCurrent();
+      if (!sameMeaning) {
+        $('list').value = sourceBeforeAssign;
+        parseList();
+        say('msgList', 'Assign stopped because its output did not round-trip through the recipient parser with the same wallets and quantities. Your original list was restored.', 'bad');
+        log('Assign stopped: the generated list changed meaning when checked by the canonical parser.', 'bad');
+        $('assign').disabled = false; return;
+      }
       // An edition is not paired with anything and has no id order: every line carries the same id, and the
       // only random thing was which edition was picked. Describing that as "paired at random, lowest id
       // first" explains a property this list does not have.
@@ -2081,7 +2147,6 @@
         ? ', every one of edition ' + chosenEdition + (random ? ', which was chosen at random from the editions you hold.' : '.')
         : (random ? ', paired at random. They still go out lowest id first, which is the cheapest order.' : ', lowest id first.');
       log('Assigned ' + n + ' line' + (n === 1 ? '' : 's') + tail, 'ok');
-      parseList();
     } catch (e) { log('Could not read your token ids: ' + String(e.message || e).slice(0, 120), 'bad'); }
     $('assign').disabled = false;
   });
@@ -2194,7 +2259,7 @@
 
   // ---- plan ----
   function plan() {
-    const c = cfg(); const bs = batchSize(); const n = rows.length; const batches = Math.ceil(n / bs);
+    const c = cfg(); const bs = batchSize(); const n = parsedListIsCurrent() ? rows.length : 0; const batches = Math.ceil(n / bs);
     const path = deliveryPath();
     const tokenFresh = tokenLoadedFor === $('token').value.trim().toLowerCase() && tokenLoadedChain === chainId();
     let ready = !!(provider && ethers.isAddress($('token').value.trim()) && tokenFresh && n > 0 && !sending && (path === 'wallet' || path === 'bulk') && (!badLines || badLinesOk));
@@ -2816,7 +2881,7 @@
   $('preflight').addEventListener('click', async () => {
     if (sending) return;
     $('preflight').disabled = true;
-    try { if (await onSelectedChain()) await preflight(true); } finally { plan(); }
+    try { if (requireCurrentParsedList() && await onSelectedChain()) await preflight(true); } finally { plan(); }
   });
   // Each transfer is simulated on its own, so nothing in that loop can notice that the amounts add up to more
   // than the wallet holds: every one passes, and the run then fails partway, or fails as a whole in the
@@ -2871,8 +2936,22 @@
   }
 
   let orderedCheckFailed = null;   // set when the whole-batch simulation could not run
+  function completeOrderedSimulation(response, expected) {
+    if (!Array.isArray(response) || response.length !== 1 || !response[0]
+        || typeof response[0] !== 'object' || Array.isArray(response[0])
+        || !Array.isArray(response[0].calls) || response[0].calls.length !== expected)
+      throw new Error('ordered simulation did not answer for every requested call');
+    const calls = response[0].calls;
+    for (let i = 0; i < calls.length; i++) {
+      const c = calls[i];
+      if (!c || typeof c !== 'object' || Array.isArray(c) || (c.status !== '0x0' && c.status !== '0x1'))
+        throw new Error('ordered simulation returned a malformed result at call ' + (i + 1));
+    }
+    return calls;
+  }
   async function preflight(verbose, listIn) {
     orderedCheckFailed = null;
+    if (!requireCurrentParsedList()) return { ok: false, why: 'the recipient list changed; check it again', willDeliver: 0, willSkip: 0, good: [], bad: [], list: [] };
     const ordered = listIn || workingList().list;
     if (verbose) log('Test run: simulating every transfer against the live chain. Nothing is signed and nothing is spent.');
     // Said before the per-transfer results, because "recipient is a contract that cannot receive NFTs" is a
@@ -2912,8 +2991,8 @@
             blockStateCalls: [{ calls: chunk.map(r => { const c = directCall(r); return { from: me, to: c.to, data: c.data, value: '0x0' }; }) }],
             traceTransfers: false, validation: false,
           }, 'latest']);
-          const calls = (res && res[0] && res[0].calls) || [];
-          const stopAt = calls.findIndex(c => c && c.status !== '0x1');
+          const calls = completeOrderedSimulation(res, chunk.length);
+          const stopAt = calls.findIndex(c => c.status !== '0x1');
           if (stopAt >= 0) {
             const row = chunk[stopAt];
             const why = decodeReason((calls[stopAt].error && calls[stopAt].error.data) || calls[stopAt].returnData || '0x');
@@ -2984,6 +3063,7 @@
   // ---- approve ----
   $('approve').addEventListener('click', onlyOnce('approve', async () => {
     try {
+      if (!requireCurrentParsedList()) return;
       if (!(await onSelectedChain())) return;
       const token = $('token').value.trim(), bulk = cfg().bulk;
       if (std() === '20') {
@@ -3028,6 +3108,7 @@
   });
   async function runSend() {
     stopFlag = false; skippedRows = [];
+    if (!requireCurrentParsedList()) return;
     // Before any lock is held. Reconciliation walks every run, so it needs other runs' locks, and taking
     // those while holding this run's is how two tabs deadlock on each other.
     // Outside runSend's own try, so anything thrown here used to escape the click handler entirely: the form
@@ -3063,6 +3144,9 @@
     }
     try {
     if (!(await onSelectedChain())) return;
+    // Revalidate inside the run lock. A script can change .value without an input event while reconciliation
+    // or lock acquisition is pending; the lock protects duplicate sends, not the DOM-to-plan binding.
+    if (!requireCurrentParsedList()) return;
     // Left deliberately empty: reconciliation happens before the lock is taken, a few lines above. Doing it
     // here meant holding run A's lock while waiting for run B's, and two tabs doing that wait on each other
     // forever.

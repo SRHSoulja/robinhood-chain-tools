@@ -1,6 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 11 September 2026, against BulkSend **v13** and round fourteen.
+Last updated 11 September 2026, against BulkSend **v13** and round fifteen.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -15,7 +15,7 @@ Four things have to be true before that changes, and all are currently false:
 
 | | state |
 | --- | --- |
-| a review round with no release blockers | **not met** — round fourteen found four. Three have focused fixes in the current working tree; the live-page mismatch cannot close until a reviewed fix commit is published. A fresh round still has to find none |
+| a review round with no release blockers | **not met** — round fifteen found five. B-01 through B-04 have focused regressions and fixes in the current working tree; the live-page mismatch cannot close until the exact remediation commit receives a clean independent review and is published. A fresh exact-commit round still has to find none |
 | a production mainnet RPC plan | **not met** — the page names Robinhood's free public endpoint, which [the official documentation](https://docs.robinhood.com/chain/connecting/) calls rate-limited and not recommended for production. Choose a production provider, keep credentials out of the page, and monitor/fail over reads before enabling mainnet |
 | a current real-wallet rehearsal on testnet | **not met** — the v13 live scripts are green, but their wallets are written by this repository. The one manual MetaMask run predates v10. Run the final page through an injected wallet and the phone/WalletConnect path on testnet once each |
 | explicit permission from the maintainer, given after that round | **not given** |
@@ -24,12 +24,12 @@ No one item alone is enough. The deployer holds about 0.002 mainnet ETH that som
 for three deployments, which is exactly why the rule is written down: available is not permitted. Its mainnet
 nonce is 0.
 
-Current unreleased validation, 11 September 2026: the current-tree suites completed with 325/325 airdrop-page
-tests, 125/125 Check-page tests, 21/21 publish-policy checks, and all ordinary contract tests green. Every
-historical probe retained its exact assertion names and statuses. The ledger initially fingerprinted volatile
-diagnostics too, so timestamps made two identical probe runs differ; it now hashes only the promised status
-and assertion name, and all five browser-probe fingerprints match across both completed runs. The separate
-read-only mainnet fork also passed all four tests: 20/20 real
+Current unreleased validation, 11 September 2026: the complete current-tree gate passed all five ordinary
+contract test files, 342/342 airdrop-page tests, 129/129 Check-page tests, and 21/21 publish-policy checks.
+Every historical probe is now bound both to its complete source hash and to its exact assertion names and
+statuses; an ordinary Solidity failure can no longer hide by borrowing a probe-style function name. The
+reproducible WalletConnect rebuild matched its shipped and expected SHA-256. The separate read-only mainnet
+fork also passed all four tests: 20/20 real
 ERC-721 collections were accepted by the NFT guard and refused by the ERC-20 guard, and 20/20 real ERC-20
 tokens were accepted. No transaction was signed or broadcast and no ETH was spent.
 
@@ -105,7 +105,7 @@ They sign with a testnet-only key that holds no mainnet balance and refuse to ru
 | deployed bytecode matches what this repository builds | v13, byte-identical, 9,752 bytes, fully verified on the explorer (compiler 0.8.36, cancun, 10,000 runs) | ✅ |
 | the paste guards agree with real mainnet contracts | `test/fork/MainnetGuards.t.sol` on a read-only fork: 20 real collections refused by the ERC-20 guard and accepted by the NFT guard, 20 real tokens accepted; v12's guard let 20 of 20 through | ✅ |
 | the contract's properties hold over random sequences, all three standards | `test/Invariants.t.sol`, 2,304 calls, 0 reverts | ✅ |
-| the deployed pages match these files | `deploy/publish.sh` verifies the hash after publishing | ✅ |
+| the deployed pages match these files | **no** — both externally fetched HTML pages differ from this tree; `wc.js` still matches. Publication is deliberately withheld until the remediation commit passes CI and a fresh exact-commit review | ❌ |
 | ERC-1155 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding 2 of an edition | ✅ |
 | ERC-20 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding exactly 1.5, to the wei | ✅ |
 | any of it against a real wallet extension, automatically | **no** — every wallet in every test here is written by this repository | ❌ |
@@ -139,6 +139,32 @@ ERC-1155 survey covers 6, which is every one that was findable and measurable. S
 a distribution, only its top, and the file says so.
 
 ## Open findings
+
+Round fifteen, 11 September 2026, against `9426c2c`. The full report is
+[`audit-2026-09-11-fifteenth-external.md`](audit-2026-09-11-fifteenth-external.md), published byte-for-byte
+unchanged. Five release blockers, two should-fix findings, and five inherent/operational limits.
+
+### Round fifteen release blockers
+
+| | | |
+| --- | --- | --- |
+| B-01 | editing the recipient textarea after parsing left the old parsed/send plan armed | fixed in the current tree: parsed rows are bound to the exact textarea bytes; input synchronously clears parsed and derived state; preflight, approval and Send revalidate, including after the send lock is held; exact user-edit, programmatic-edit and no-wallet-request regressions added |
+| B-02 | Assign ignored named quantity/amount columns and silently underallocated ERC-721s | fixed in the current tree through one shared quantity reader for named columns and bare `xN`; generated output is parsed by the canonical parser and compared to the requested wallet/quantity meaning before it is accepted; named/quoted/fractional regressions added alongside existing bare-CSV coverage |
+| B-03 | Check replaced a single transaction's declared sender with the UI sender | fixed in the current tree: compact and multi-request renderers share one sender resolver, a valid declared sender wins, mismatches are displayed, and an unreadable explicit sender is never simulated through a UI substitution |
+| B-04 | empty, short, null, malformed or extra ordered-simulation results were announced as complete success | fixed in the current tree: exactly one result with exactly one recognized-status member per requested call is required; every malformed equivalence class falls into the existing isolated-check warning and explicit send confirmation |
+| B-05 | neither public HTML page matches the reviewed artifact | **open**: read-only fetch on 11 September confirmed both HTML hashes differ, while `wc.js` and the deployed v13 testnet runtime still match. Publish only the exact commit that first passes the full gate, CI, and a fresh zero-blocker review, then fetch and compare it externally |
+
+Round fifteen S-02 is fixed in the current tree: the evidence gate pins complete probe-source hashes and
+explicit probe-file inventory, and ordinary contract suites must exit cleanly by file rather than by test-name
+substring. A scratch-copy tamper check proved a one-byte probe-source change fails before the long suites run.
+
+Round fifteen S-01 remains deliberately deferred. The guard probes run before any transfer and a failure
+reverts the transaction, so the demonstrated consequence is caller gas loss, not asset movement, false
+delivered accounting, or widened authority. Fixing it requires new contract bytecode and another deployment;
+rushing an assembly probe rewrite into otherwise unchanged v13 would add contract risk to clear a
+non-blocking recommendation. The next contract version should cap probe gas and inspect fixed-size returndata,
+with burn-gas and returndata-bomb fixtures, before deployment. Until then a hostile or pathological token can
+consume most of a submitted transaction's gas during classification, and that limitation is not hidden.
 
 Round fourteen, 10–11 September 2026, against `f5b7614`. The full report is
 [`audit-2026-09-11-fourteenth-external.md`](audit-2026-09-11-fourteenth-external.md), published byte-for-byte

@@ -29,12 +29,18 @@ serialize the same cells back without changing their columns or meaning.
 | `deliveriesOn` | ● | | `splitRow`; named `tokenId` wins over an unrelated `amount` |
 | `$('csv')` change | | ● | `splitRow` |
 | `$('pickUse')` click | ● | ● | via `walletsInBox` / `refuseForUnreadableLines` |
-| `$('assign')` click | ● | ● | `boxColumns`, `addressOn`, `splitRow` |
+| `$('assign')` click | ● | ● | `boxColumns`, `addressOn`, `requestedNftQuantity`, `serializeRow`; output is accepted only after `parseList` round-trips the same wallet/quantity meaning |
 | `$('shuffle')` click | ● | ● | `boxColumns`, `addressOn`, `splitRow`, `serializeRow`; changes only the standard's named payload cells |
 | `$('applyWeight')` click | ● | ● | `boxColumns`, `addressOn`, `splitRow`, `serializeRow`; changes only the named amount cell |
 | `$('dropContracts')` click | ● | ● | `boxColumns`, `addressOn` |
 | `confirmOverwrite` | ● | | counts raw lines, and says "lines" — correct as written |
 | `$('snap')` click | | ● | none — **writes only**, one bare address per line, which every reader handles |
+
+Parsed output is also executable state. `finishParse` binds `rows` to the exact current textarea bytes;
+textarea input invalidates that binding immediately, and preflight/approval/Send recheck it rather than
+trusting the event listener. Send checks again while its duplicate-send run lock is held. Any new consumer of
+`rows` must either enforce `parsedListIsCurrent()` itself or be reachable only through one of those guarded
+paths.
 
 ### What the map found that the round did not
 

@@ -1,5 +1,5 @@
 {
- "_why": "The reviewers' probes reproduce findings. Counts, exact file membership, and fingerprints of each assertion name and status must all match: higher, lower, deleted, renamed, or count-cancelled evidence fails until a reviewed baseline change explains it. suite_files pins the complete deterministic browser-suite sources, so deleting or rewriting an ordinary regression assertion is also an explicit evidence change.",
+ "_why": "The reviewers' probes reproduce findings. Counts, exact file membership, complete probe-source hashes, and fingerprints of each assertion name and status must all match: higher, lower, deleted, renamed, rewritten, or count-cancelled evidence fails until a reviewed baseline change explains it. suite_files pins the complete deterministic browser-suite sources, so deleting or rewriting an ordinary regression assertion is also an explicit evidence change.",
  "contract_probes": {
   "AuditProbe": 14,
   "Audit12": 5,
@@ -11,6 +11,18 @@
   "audit-probe-check2": 1,
   "audit-probe-12": 0,
   "audit-probe-13": 0
+ },
+ "contract_probe_sources": {
+  "AuditProbe": "0417777234c0aad9ab68ff2c0d9a432b38273f21d92ee4554fe3ffdb2e7f4008",
+  "Audit12": "3b88933faa488453f729c198cb7712cd3bd06eed29466fc7e1e4a03a43f993b1",
+  "Audit13": "03c01d9930bd940f19cd09135f351427377a3630f7a391bc20eab6e00309cf6d"
+ },
+ "web_probe_sources": {
+  "audit-probe": "c7722db40b8c2d120c2d25936deadf276f57147a570bba9840442a6ce2c2966f",
+  "audit-probe-check": "15e0bd1136e55030c2485bc8ce7284bcf3201653606c45e0e18daaefac71adf2",
+  "audit-probe-check2": "504dd3f1afd34402c18c6d2c8fbf3d914b5946ebbe09a3e9d8f42f51094a16b3",
+  "audit-probe-12": "4504e1fb1acb6b099577504b99bd54f6051dd353e9f7297c892df514b579c164",
+  "audit-probe-13": "6e1103f443cce95365115e55d5fa21c4edeaf2f966fb6a9b42eb5c564b0126b8"
  },
  "contract_probe_assertions": {
   "AuditProbe": "58faa4fe9f082e1bbd74e487087307e4f66ace155d99da8d6452c582ca4033fc",
@@ -25,7 +37,7 @@
   "audit-probe-13": "7ff803e37c9db1cbb502f83b1ce95007288956b683b152a99b16333d903a18a3"
  },
  "suite_files": {
-  "client": "a83e14d5312df128d92587acad0e205fbc0f35c5bf50eef2156a7df95128522c",
-  "check": "5b8b1db8ea1f8a675425b7e133368c0d65daba11809c5bd54378fd377b39a460"
+  "client": "f75399600b8cde29128b31de32e617d4ca5e6f91e097ff615e53177ce4b7088a",
+  "check": "1e435057ffb8c69ee1c28fa6e1e6bf06edb245bf481bd0bb23d5743a00517c03"
  }
 }
