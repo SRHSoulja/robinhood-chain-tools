@@ -216,7 +216,7 @@ jobs:
           fail=0
           for chain in 46630 4663; do
             # the rpcs list for this chain, as written in the page
-            list="$(tr -d '\n' < web/index.html | grep -oE "$chain: *\{[^}]*rpcs: *\[[^]]*\]" | grep -oE "https://[^' ]+" )"
+            list="$(tr -d '\n' < web/index.html | grep -oE "$chain: *\{[^}]*rpcs: *\[[^]]*\]" | grep -oE "rpcs: *\[[^]]*\]" | grep -oE "https://[^' ]+" )"
             first="$(echo "$list" | head -1)"; rest="$(echo "$list" | tail -n +2)"
             [ -n "$first" ] || { echo "no rpcs list found for $chain in web/index.html"; fail=1; continue; }
             probe "$first" "$chain" || { echo "the endpoint listed first for $chain does not answer"; fail=1; }
@@ -224,6 +224,17 @@ jobs:
             [ "$ok" = 1 ] || { echo "no fallback answers for $chain"; fail=1; }
           done
           [ "$fail" = 0 ]
+      # Gate 11. The mainnet explorer challenges every non-browser client; the Worker answers /x/4663/ paths by
+      # translating them to Blockscout's PRO API behind a bound key. The page treats the {"error":"upstream"}
+      # envelope as "could not check", so a dark explorer is invisible to every other test. This one asks the
+      # live Worker for a real mainnet collection's holders and refuses the envelope.
+      - name: the mainnet explorer answers through the Worker, not the upstream-error envelope
+        run: |
+          set -euo pipefail
+          body="$(curl -sS --max-time 25 'https://rhcheck.gmgnrepeat.com/x/4663/tokens/0xdFa5D366Cc9B2bdf08d44A7d7e891012C893385b/holders')"
+          echo "  ${body:0:160}"
+          printf '%s' "$body" | grep -q '"items"' || { echo "the Worker did not answer with a holders page; the mainnet explorer path is dark"; exit 1; }
+          printf '%s' "$body" | grep -q '"error":"upstream"' && { echo "upstream-error envelope"; exit 1; } || true
       - name: say so somewhere public if this failed
         if: failure()
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea   # v7

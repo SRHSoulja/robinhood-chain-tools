@@ -125,6 +125,16 @@ else
 fi
 
 say ""
+say "=== gate 11: the Worker's mainnet explorer translation ==="
+if node test/worker.test.mjs >/tmp/rh-worker.txt 2>&1; then
+  say "  $(grep -E '^[0-9]+ passed' /tmp/rh-worker.txt | tail -1)"
+else
+  say "  FAIL  the worker suite has failures:"
+  grep -E '^  FAIL' /tmp/rh-worker.txt | sed 's/^/      /'
+  fail=1
+fi
+
+say ""
 say "=== the probes: is everything that was fixed still fixed ==="
 web_probe_files=""
 for f in test/web/audit-probe*.mjs; do
