@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { mkdtempSync, copyFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { makeRunner } from './lib.mjs';
 
 const PAGE = pathToFileURL(new URL('../../web/index.html', import.meta.url).pathname).href;
 const NFT = '0x1111111111111111111111111111111111111111';
@@ -42,11 +43,15 @@ const bulkAddress = (page) => page.evaluate(() => {
 const RUN_ME = A(0xdead);
 
 let pass = 0, fail = 0;
-const results = [];
+// Streamed as it happens rather than buffered: a run watched live shows progress, and a run piped to a file
+// still has every line in it. verify.sh reads the file afterward either way.
 function check(name, cond, detail) {
-  if (cond) { pass++; results.push('  ok   ' + name); }
-  else { fail++; results.push('  FAIL ' + name + (detail ? '  <- ' + detail : '')); }
+  if (cond) { pass++; console.log('  ok   ' + name); }
+  else { fail++; console.log('  FAIL ' + name + (detail ? '  <- ' + detail : '')); }
 }
+// The case runner: named cases, ONLY=<regex> filtering, one throw fails its own case and nothing else.
+// See test/web/lib.mjs and docs/harness.md.
+const { t, trackPage, summaryLine } = makeRunner(check);
 
 // One place that answers for the chain. Both the wallet object in the page and the direct HTTP calls the page
 // makes are routed here, so a test controls every answer and nothing touches a real network.
@@ -349,6 +354,7 @@ async function open(_stale, opts = {}) {
   await page.goto(opts.url || PAGE, { waitUntil: 'load' });
   await page.waitForTimeout(500);
   page.__errs = errs;
+  trackPage(page);   // so a case that throws before its own page.close() still gets one
   return page;
 }
 
@@ -378,7 +384,7 @@ const val = (page, sel) => page.evaluate((s) => (document.querySelector(s) || {}
 // appear, which reads like a broken test or a slow machine rather than the real cause. It cost fifteen
 // minutes once. Checking it here costs a millisecond and turns it into one line.
 const CSP_PAGES = [['../../web/index.html', null]];
-{
+await t("csp: the page has to be one the browser will actually run", async () => {
   const { readFileSync } = await import('node:fs');
   const { createHash } = await import('node:crypto');
   const die = (m) => { console.error('\n' + m + '\nRun web/sync.sh and try again.\n'); process.exit(1); };
@@ -404,7 +410,7 @@ const CSP_PAGES = [['../../web/index.html', null]];
     const csp = (src.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/) || [])[1] || '';
     if (!csp.includes("'" + want + "'")) die(rel + ': its CSP does not name the script it carries, so the browser will refuse to run it. Expected ' + want);
   }
-}
+});
 
 // --allow-file-access-from-files: the page imports its phone-wallet connector as a module from its own
 // directory, which a file:// origin otherwise refuses. Nothing here is ever served over the network.
@@ -421,7 +427,7 @@ async function freshBrowser() {
 }
 
 // ---- H-04: a real CSV reader ------------------------------------------------
-{
+await t("parse: H-04: a real CSV reader", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, TOK, '20');
@@ -442,10 +448,10 @@ async function freshBrowser() {
     (await text(page, '#msgList')).includes('not a whole number'), await text(page, '#msgList'));
   check('H-04 the list is left untouched when the file is bad', (await val(page, '#list')).includes('garbage'));
   await page.close();
-}
+});
 
 // ---- H-02: tokens never go out through a raw wallet batch --------------------
-{
+await t("send: H-02: tokens never go out through a raw wallet batch", async () => {
   const page = await open(browser, { walletBatch: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, TOK, '20');
@@ -457,10 +463,10 @@ async function freshBrowser() {
   check('H-02 an NFT still uses the wallet path when it can batch',
     (await text(page, '#plan')).includes('as itself'), await text(page, '#plan'));
   await page.close();
-}
+});
 
 // ---- H-03: all or nothing means one transaction ------------------------------
-{
+await t("send: H-03: all or nothing means one transaction", async () => {
   const page = await open(browser, { walletBatch: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -473,10 +479,10 @@ async function freshBrowser() {
   check('H-03 strict is allowed once it fits in one transaction',
     !(await page.evaluate(() => document.querySelector('#send').disabled)));
   await page.close();
-}
+});
 
 // ---- H-08: changing network clears the parsed list ---------------------------
-{
+await t("parse: H-08: changing network clears the parsed list", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, TOK, '20');
@@ -487,10 +493,10 @@ async function freshBrowser() {
   await page.waitForTimeout(900);
   check('H-08 changing network drops the parsed rows', !(await text(page, '#parseOut')).includes('2 recipients'), await text(page, '#parseOut'));
   await page.close();
-}
+});
 
 // ---- L-01: a phone wallet stays reachable with extensions installed ----------
-{
+await t("wc: L-01: a phone wallet stays reachable with extensions installed", async () => {
   const page = await open(browser, {});
   await page.evaluate(() => {
     for (const [name, rdns] of [['One', 'io.one'], ['Two', 'io.two']]) {
@@ -503,10 +509,10 @@ async function freshBrowser() {
   check('L-01 two extensions do not remove the phone wallet option',
     names.some((n) => /Phone wallet/.test(n)), names.join(','));
   await page.close();
-}
+});
 
 // ---- M-03: an incomplete holder read is not used ----------------------------
-{
+await t("snapshot: M-03: an incomplete holder read is not used", async () => {
   const many = { items: Array.from({ length: 50 }, (_, i) => ({ address: { hash: A(0x1000 + i) } })), next_page_params: { page: 2 } };
   const page = await open(browser, { explorer: many });
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -517,10 +523,10 @@ async function freshBrowser() {
     (await text(page, '#msgList')).includes('incomplete') || (await text(page, '#log')).includes('cut short'),
     (await text(page, '#msgList')) + ' | ' + (await text(page, '#log')).slice(-120));
   await page.close();
-}
+});
 
 // ---- unreadable lines still gate the send -----------------------------------
-{
+await t("send: unreadable lines still gate the send", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -529,10 +535,10 @@ async function freshBrowser() {
   await page.check('#ack'); await page.waitForTimeout(300);
   check('and is allowed once acknowledged', !(await page.evaluate(() => document.querySelector('#send').disabled)));
   await page.close();
-}
+});
 
 // ---- the send is not re-entrant ---------------------------------------------
-{
+await t("send: the send is not re-entrant", async () => {
   const page = await open(browser, { walletBatch: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -542,10 +548,10 @@ async function freshBrowser() {
   const sent = await page.evaluate(() => window.__sent.length);
   check('three clicks on Send produce one batch', sent <= 1, 'batches sent: ' + sent);
   await page.close();
-}
+});
 
 // ---- L-02: the gas allowance is the caller's, inside the contract's bounds -----
-{
+await t("gas: L-02: the gas allowance is the caller's, inside the contract's bounds", async () => {
   const page = await open(browser, { approved: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -571,10 +577,10 @@ async function freshBrowser() {
   check('L-02 a chosen allowance goes out through the WithGas entry point', data.startsWith('0x45310558'), data.slice(0, 10));
   check('L-02 carrying the number that was asked for', data.toLowerCase().includes((900000).toString(16).padStart(64, '0')), data.slice(-64));
   await page.close();
-}
+});
 
 // ---- L-02: the default is left alone when nothing is typed --------------------
-{
+await t("gas: L-02: the default is left alone when nothing is typed", async () => {
   const page = await open(browser, { approved: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -583,10 +589,10 @@ async function freshBrowser() {
   const data = await page.evaluate(() => (window.__sent[0] || {}).data || '');
   check('L-02 no allowance typed means the plain entry point and the contract default', data.startsWith('0xb097e731'), data.slice(0, 10));
   await page.close();
-}
+});
 
 // ---- L-01: a connection is a state you can leave ------------------------------
-{
+await t("wallet: L-01: a connection is a state you can leave", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(700);
   const before = await page.evaluate(() => [...document.querySelectorAll('#walletBox button')].map((b) => b.textContent.trim()));
@@ -596,10 +602,10 @@ async function freshBrowser() {
   check('L-01 and leaving it puts the connect buttons back',
     after.includes('Connect wallet') && after.some((n) => /Phone wallet/.test(n)), after.join(','));
   await page.close();
-}
+});
 
 // ---- M-01: two identical rows are two payments --------------------------------
-{
+await t("ledger: M-01: two identical rows are two payments", async () => {
   const page = await open(browser, { approved: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, TOK, '20');
@@ -618,11 +624,11 @@ async function freshBrowser() {
   const sentCount = await page.evaluate(() => window.__sent.length);
   check('M-01 and the other one is still sent', sentCount === 1, 'batches: ' + sentCount);
   await page.close();
-}
+});
 
 // ---- M-01: a batch this browser cannot account for holds its rows back --------
 // (recipientBalance makes the after-the-fact arrival check answerable, so the run reaches its end)
-{
+await t("ledger: M-01: a batch this browser cannot account for holds its rows back", async () => {
   const page = await open(browser, { approved: true, noReceipt: true, recipientBalance: '3000000000000000000' });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, TOK, '20');
@@ -640,10 +646,10 @@ async function freshBrowser() {
   check('M-01 an unread batch is reported rather than silently ignored', logText.includes('is not on the chain'), logText.slice(0, 220));
   check('M-01 and its recipients are held back instead of being sent again', logText.includes('held back'), logText.slice(-260));
   await page.close();
-}
+});
 
 // ---- M-01: and is recorded once the chain can be read ------------------------
-{
+await t("ledger: M-01: and is recorded once the chain can be read", async () => {
   const page = await open(browser, { approved: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await page.evaluate(([acct, tok]) => {
@@ -661,10 +667,10 @@ async function freshBrowser() {
   check('M-01 and a row it cannot confirm is held rather than sent again',
     /held back|holding back/.test(logText), logText.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- L-03: the exact list, and where the transactions divide it ---------------
-{
+await t("send: L-03: the exact list, and where the transactions divide it", async () => {
   const page = await open(browser, { approved: true, willDeliver: 6 });
   const dialogs = [];
   page.on('dialog', (d) => dialogs.push(d.message()));
@@ -680,10 +686,10 @@ async function freshBrowser() {
   check('L-03 and the confirmation says who a partial run favours', /lower token ids are the ones that were paid/.test(msg), msg.slice(0, 300));
   check('L-03 the exact list can be downloaded', !(await page.evaluate(() => document.querySelector('#manifest').disabled)));
   await page.close();
-}
+});
 
 // ---- H-01: an address that can never give the token back is not a recipient ------
-{
+await t("parse: H-01: an address that can never give the token back is not a recipient", async () => {
   const page = await open(browser, { walletBatch: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -695,10 +701,10 @@ async function freshBrowser() {
   await setList(page, NFT + ',8\n');
   check('H-01 the token\'s own contract is refused too', (await text(page, '#problems')).includes('own contract address'), await text(page, '#problems'));
   await page.close();
-}
+});
 
 // ---- H-05: a blank cell is a position, not an absence ---------------------------
-{
+await t("parse: H-05: a blank cell is a position, not an absence", async () => {
   const page = await open(browser, { ownedIds: [11, 12, 13] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -709,10 +715,10 @@ async function freshBrowser() {
   const shown = (await text(page, '#problems')) + (await text(page, '#msgList')) + (await text(page, '#log'));
   check('H-05 and the file is either refused or read as how-many-each', /empty|how many|assign/i.test(shown), shown.slice(0, 200));
   await page.close();
-}
+});
 
 // ---- H-04: the cross-tab lock fails closed --------------------------------------
-{
+await t("send: H-04: the cross-tab lock fails closed", async () => {
   const page = await open(browser, { walletBatch: true, noLocks: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -722,10 +728,10 @@ async function freshBrowser() {
     (await text(page, '#log')).includes('does not support the lock'), (await text(page, '#log')).slice(0, 160));
   check('H-04 and nothing was sent', (await page.evaluate(() => window.__sent.length)) === 0);
   await page.close();
-}
+});
 
 // ---- H-04: an unwritable ledger fails closed ------------------------------------
-{
+await t("ledger: H-04: an unwritable ledger fails closed", async () => {
   const page = await open(browser, { walletBatch: true, brokenStorage: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -735,10 +741,10 @@ async function freshBrowser() {
     (await text(page, '#log')).includes('will not let this page store'), (await text(page, '#log')).slice(0, 200));
   check('H-04 and nothing was sent', (await page.evaluate(() => window.__sent.length)) === 0);
   await page.close();
-}
+});
 
 // ---- H-04: two real tabs, one lock ----------------------------------------------
-{
+await t("send: H-04: two real tabs, one lock", async () => {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 1400 } });
   const one = await open(browser, { walletBatch: true, ctx });
   const two = await open(browser, { walletBatch: true, ctx });
@@ -752,10 +758,10 @@ async function freshBrowser() {
   const sent = (await one.evaluate(() => window.__sent.length)) + (await two.evaluate(() => window.__sent.length));
   check('H-04 two tabs sending the same list produce one batch, not two', sent <= 1, 'batches sent: ' + sent);
   await one.close(); await two.close(); await ctx.close();
-}
+});
 
 // ---- M-02: a wallet batch with no transaction hash is resolved by its calls id ---
-{
+await t("ledger: M-02: a wallet batch with no transaction hash is resolved by its calls id", async () => {
   const page = await open(browser, { walletBatch: true, approved: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await page.evaluate(([acct, nft]) => {
@@ -771,10 +777,10 @@ async function freshBrowser() {
   const logText = await text(page, '#log');
   check('M-02 a hashless wallet batch is resolved by asking the wallet', logText.includes('Caught up'), logText.slice(0, 240));
   await page.close();
-}
+});
 
 // ---- M-04: an allocation that cannot be filled is not quietly shrunk -------------
-{
+await t("ledger: M-04: an allocation that cannot be filled is not quietly shrunk", async () => {
   const page = await open(browser, { ownedIds: [21, 22, 23] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -785,10 +791,10 @@ async function freshBrowser() {
     (await text(page, '#msgList')).includes('Nothing has been changed'), await text(page, '#msgList'));
   check('M-04 and the list is left exactly as it was', (await val(page, '#list')) === before, (await val(page, '#list')).slice(0, 80));
   await page.close();
-}
+});
 
 // ---- the NFT path says up front which ids the wallet does not hold, like the token and edition paths do ----
-{
+await t("send: the NFT path says up front which ids the wallet does not hold, like the token and edition paths do", async () => {
   const page = await open(browser, { ownerOf: A(0xe1) });   // every id answers as owned by someone else
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -799,10 +805,10 @@ async function freshBrowser() {
   check('unheld ids are counted and named before the row-by-row results', /does not hold 3 of the ids in this list: 1, 2, 3\./.test(logText), logText.slice(0, 400));
   check('and it is advisory: the test run still runs row by row', /Test run: simulating every transfer/.test(logText), logText.slice(0, 200));
   await page.close();
-}
+});
 
 // ---- M-03: the delivered ledger is never silently trimmed ------------------------
-{
+await t("ledger: M-03: the delivered ledger is never silently trimmed", async () => {
   const page = await open(browser, { walletBatch: true, ownerOf: A(0xe1) });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -816,10 +822,10 @@ async function freshBrowser() {
   check('M-03 a full ledger stops the run instead of forgetting its oldest rows',
     (await text(page, '#log')).includes('is full'), (await text(page, '#log')).slice(-220));
   await page.close();
-}
+});
 
 // ---- an upgraded wallet is a wallet, and the page has to say so -----------------
-{
+await t("wallet: an upgraded wallet is a wallet, and the page has to say so", async () => {
   const upgraded = A(0xf1);
   const page = await open(browser, { delegated: [upgraded], delegateAccepts: false });
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -832,10 +838,10 @@ async function freshBrowser() {
   check('EIP-7702 and is called a wallet, not a contract', /real wallets, not contracts/.test(logText), logText.slice(0, 300));
   check('EIP-7702 with the fix that actually works for an NFT', /unticking/.test(logText), logText.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- and the same wallet is fine once safe mode is off --------------------------
-{
+await t("wallet: and the same wallet is fine once safe mode is off", async () => {
   const upgraded = A(0xf3);
   const page = await open(browser, { delegated: [upgraded], delegateAccepts: false });
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -846,10 +852,10 @@ async function freshBrowser() {
   check('EIP-7702 a plain transfer to an upgraded wallet raises no warning',
     !/upgraded \(EIP-7702\)/.test(await text(page, '#log')), (await text(page, '#log')).slice(0, 200));
   await page.close();
-}
+});
 
 // ---- an edition cannot reach one at all, and the page says that plainly ----------
-{
+await t("send: an edition cannot reach one at all, and the page says that plainly", async () => {
   const upgraded = A(0xf4);
   const page = await open(browser, { delegated: [upgraded], delegateAccepts: false });
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -859,10 +865,10 @@ async function freshBrowser() {
   check('EIP-7702 an edition to an upgraded wallet is called impossible, not user error',
     /cannot receive one from anybody/.test(await text(page, '#log')), (await text(page, '#log')).slice(0, 400));
   await page.close();
-}
+});
 
 // ---- T-H-01: a receipt that does not add up is never acted on -------------------
-{
+await t("ledger: T-H-01: a receipt that does not add up is never acted on", async () => {
   const page = await open(browser, { approved: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, ED, '1155');
@@ -905,10 +911,10 @@ async function freshBrowser() {
   check('T-H-01 control: the same receipt with one honest summary is read, not refused',
     injected && injected.honestAmbiguous === false && injected.honestSkipped === 1, JSON.stringify(injected));
   await page.close();
-}
+});
 
 // ---- Phase 4: one input, one count. The heading is a line and it is not a wallet. --------------------
-{
+await t("parse: Phase 4: one input, one count. The heading is a line and it is not a wallet.", async () => {
   // Three functions counted the heading row as a wallet or as an unreadable line, and each was found
   // separately: two by round thirteen, the third by reading the reader map. They are fixed together and
   // tested together, because that is the step that was missing.
@@ -936,8 +942,8 @@ async function freshBrowser() {
   check('S-1 "Use these" accepts a headed file instead of blaming its heading',
     !/have a wallet address on them|Fix or remove/.test(pickMsg), pickMsg.slice(0, 200));
   await page.close();
-}
-{
+});
+await t("assign: S-2b: the page offers Assign for a headed address-only file, so Assign has to accept that same file.", async () => {
   // S-2b: the page offers Assign for a headed address-only file, so Assign has to accept that same file.
   const page = await open(browser, { approved: true, ownedIds: [21, 22] });
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -949,8 +955,8 @@ async function freshBrowser() {
   check('S-2b Assign accepts the headed file the page just told the user to press Assign for',
     !/have a wallet address on them|Fix or remove/.test(msg), 'offered: ' + offered.slice(0, 90) + ' || said: ' + msg.slice(0, 160));
   await page.close();
-}
-{
+});
+await t("snapshot: The third instance, from the map: applyWeight reported lines.length as a wallet count, so a headed file was announced as one wallet more than it has.", async () => {
   // The third instance, from the map: applyWeight reported lines.length as a wallet count, so a headed file
   // was announced as one wallet more than it has. It must also keep the heading it did not write.
   const page = await open(browser, {});
@@ -983,8 +989,8 @@ async function freshBrowser() {
     /2 recipients/.test(await text(page, '#plan')) && !/could not be read/.test(await text(page, '#msgList')),
     (await text(page, '#plan')).slice(0, 120) + ' || ' + (await text(page, '#msgList')).slice(0, 120));
   await page.close();
-}
-{
+});
+await t("parse: An ERC-721 amount cannot multiply an already named unique id.", async () => {
   // An ERC-721 amount cannot multiply an already named unique id. The safest handling of the auditor's exact
   // B-2 shape is to refuse the ambiguous rewrite and preserve every byte the user pasted.
   const page = await open(browser, {});
@@ -1001,10 +1007,10 @@ async function freshBrowser() {
     /already names the exact NFT id/.test(await text(page, '#msgList')), await text(page, '#msgList'));
   check('round-14 B-2 the refused rewrite leaves the quoted list byte-for-byte unchanged', after === before, after);
   await page.close();
-}
+});
 
 // ---- round 15 B-01: visible recipient bytes and armed rows are one state -------------------------------
-{
+await t("send: round 15 B-01: visible recipient bytes and armed rows are one state", async () => {
   const opts = { approved: true, ownedIds: [1, 2, 9] };
   const page = await open(browser, opts);
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -1038,10 +1044,10 @@ async function freshBrowser() {
     await page.evaluate((n) => window.__sent.length === n, sentBefore) && /changed.*Check list again/i.test(await text(page, '#log')),
     'sent=' + await page.evaluate(() => window.__sent.length) + ' log=' + (await text(page, '#log')).slice(-220));
   await page.close();
-}
+});
 
 // ---- round 15 B-02: Assign reads the same named quantity semantics as Check list ----------------------
-{
+await t("assign: round 15 B-02: Assign reads the same named quantity semantics as Check list", async () => {
   const page = await open(browser, { approved: true, ownedIds: [31, 32, 33, 34, 35] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1060,8 +1066,8 @@ async function freshBrowser() {
     /5 recipients/.test(await text(page, '#parseOut')) && !/problem lines/.test(await text(page, '#parseOut')),
     await text(page, '#parseOut'));
   await page.close();
-}
-{
+});
+await t("assign: round-15 B-02 Assign refuses an invalid named quantity rather than substituting the global default", async () => {
   const page = await open(browser, { approved: true, ownedIds: [41, 42, 43] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1073,10 +1079,10 @@ async function freshBrowser() {
   check('round-15 B-02 a refused named quantity leaves the source bytes unchanged',
     (await val(page, '#list')) === before, await val(page, '#list'));
   await page.close();
-}
+});
 
 // ---- round 18 S-1: several ids on one line count the same to Assign as to the parser and the picker ----
-{
+await t("assign: round 18 S-1: several ids on one line count the same to Assign as to the parser and the picker", async () => {
   const page = await open(browser, { approved: true, ownedIds: [31, 32, 33, 34, 35] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1088,8 +1094,8 @@ async function freshBrowser() {
   check('round-18 S-1 the parser sees five deliveries', /5 recipients/.test(parsed), parsed.slice(0, 80));
   check('round-18 S-6 Assign asks before throwing away a list that already names every id, and a No leaves it untouched', list === A(0x111) + ',11,12,13\n' + A(0x222) + ',21,22\n', JSON.stringify(list));
   await page.close();
-}
-{
+});
+await t("assign: round-18 S-1 Assign asks for five ids, one line each, not two", async () => {
   const page = await open(browser, { approved: true, ownedIds: [31, 32, 33, 34, 35] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1098,10 +1104,10 @@ async function freshBrowser() {
   const lines = (await val(page, '#list')).split('\n').filter(Boolean);
   check('round-18 S-1 Assign asks for five ids, one line each, not two', lines.length === 5, JSON.stringify(lines));
   await page.close();
-}
+});
 
 // ---- round 18 S-1: the holder snapshot is a reader that waits; a network change mid-read must not blend chains --
-{
+await t("snapshot: round 18 S-1: the holder snapshot is a reader that waits; a network change mid-read must not blend chains", async () => {
   const opts = { explorer: { items: [{ address: { hash: A(0x5a01) }, value: '1' }, { address: { hash: A(0x5a02) }, value: '1' }] }, delayHoldersMs: 1500 };
   const page = await open(browser, opts);
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -1118,10 +1124,10 @@ async function freshBrowser() {
   check('round-18 S-1 and the box is exactly as it was', list === A(0x5a09) + '\n', JSON.stringify(list));
   check('round-18 S-1 and the read stopped after the page in flight', (opts.__holdersHosts || []).length <= 1, JSON.stringify(opts.__holdersHosts));
   await page.close();
-}
+});
 
 // ---- gate 9: when the endpoint listed first is down, the page reads through the next one and says so ----
-{
+await t("wallet: gate 9: when the endpoint listed first is down, the page reads through the next one and says so", async () => {
   const opts = { deadRpcHosts: ['rpc.testnet.chain.robinhood.com'] };
   const page = await open(browser, opts);
   await page.click('#connect'); await page.waitForTimeout(1500);
@@ -1131,8 +1137,8 @@ async function freshBrowser() {
   check('gate-9 with the first endpoint down, reads go through the next listed endpoint', hosts.includes('robinhood-sepolia-rpc.publicnode.com'), JSON.stringify(hosts));
   check('gate-9 and the page says which endpoint it is reading through', /Reading Robinhood Chain Testnet through robinhood-sepolia-rpc\.publicnode\.com/.test(logText), logText.slice(0, 300));
   await page.close();
-}
-{
+});
+await t("wallet: gate-9 with the first endpoint up, nothing else is asked and nothing is said", async () => {
   const opts = {};
   const page = await open(browser, opts);
   await page.click('#connect'); await page.waitForTimeout(1200);
@@ -1140,13 +1146,13 @@ async function freshBrowser() {
   const hosts = [...(opts.__rpcHosts || [])];
   check('gate-9 with the first endpoint up, nothing else is asked and nothing is said', hosts.every((h) => h === 'rpc.testnet.chain.robinhood.com') && !/Reading Robinhood Chain Testnet through/.test(await text(page, '#log')), JSON.stringify(hosts));
   await page.close();
-}
+});
 
 // ---- gate 10, run 4: a phone re-establishing its session mid-send must not be told the batch never came back --
 // From the maintainer's own screenshot: the record is written before the wallet is asked, the browser was
 // backgrounded, the wallet session came back, and reconciliation printed "was sent to your wallet and never
 // came back with a transaction" about a batch that landed a second later.
-{
+await t("send: gate 10, run 4: a phone re-establishing its session mid-send must not be told the batch never came back", async () => {
   const paid = A(0xb05);
   const page = await open(browser, { url: WC_DIR, approved: true, ownerOf: paid, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 },
     slowMethod: { method: 'eth_sendTransaction', ms: 5000 } });
@@ -1172,10 +1178,10 @@ async function freshBrowser() {
     delivered: Object.keys(localStorage).filter((k) => /^bulksend:46630:/.test(k)).map((k) => JSON.parse(localStorage.getItem(k) || '[]').length) }));
   check('gate-10 run-4 nothing was held by the reconnect: no pending record remains and the delivery is recorded once', after.pending === 0 && after.delivered.some((n) => n === 1), JSON.stringify(after));
   await page.close();
-}
+});
 
 // ---- round 17 S-1: "How many each" is the seventh input Assign captures before it waits ---------------
-{
+await t("assign: round 17 S-1: \"How many each\" is the seventh input Assign captures before it waits", async () => {
   const opts = { approved: true, ownedIds: [71, 72, 73, 74] };
   const page = await open(browser, opts);
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -1193,10 +1199,10 @@ async function freshBrowser() {
     finalList === list && /how many each/.test(msg), JSON.stringify({ finalList, msg: msg.slice(0, 160) }));
   check('round-17 S-1 and Send is not armed on the stale quantity', await page.$eval('#send', (b) => b.disabled), 'send enabled');
   await page.close();
-}
+});
 
 // ---- round 17 S-3: the hash comes from eth_sendTransaction, and the wait runs on the page's RPC ----------
-{
+await t("send: round 17 S-3: the hash comes from eth_sendTransaction, and the wait runs on the page's RPC", async () => {
   const O = { approved: true, ownedIds: [7], txByHashThrows: true, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 }, ownerOf: A(0x41),
     slowMethod: { method: 'eth_getTransactionReceipt', ms: 3000 } };   // round eighteen S-4: hold the receipt so the record can be read mid-send
   const page = await open(browser, O);
@@ -1212,10 +1218,10 @@ async function freshBrowser() {
   check('round-17 S-3 a wallet that cannot look its own transaction up no longer hangs the send', /sent, waiting/.test(logText) && !(await page.$eval('#list', (b) => b.disabled)), logText.slice(-300));
   check('round-17 S-3 and the batch completes on the page\'s own RPC', /done: 1 arrived|Finished\. 1 delivered/.test(logText), logText.slice(-300));
   await page.close();
-}
+});
 
 // ---- round 16 B-01: an older asynchronous Assign may not replace newer input -------------------------
-{
+await t("assign: round 16 B-01: an older asynchronous Assign may not replace newer input", async () => {
   const opts = { approved: true, ownedIds: [71, 72] };
   const page = await open(browser, opts);
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -1234,10 +1240,10 @@ async function freshBrowser() {
     finalList === newList && sendDisabled && !summary.trim(),
     JSON.stringify({ finalList, sendDisabled, summary }));
   await page.close();
-}
+});
 
 // ---- round 15 B-04: incomplete ordered simulation evidence is never success ---------------------------
-{
+await t("send: round 15 B-04: incomplete ordered simulation evidence is never success", async () => {
   const ok = { status: '0x1', gasUsed: '0x1', returnData: '0x', logs: [] };
   const opts = { walletBatch: true, orderedResponse: [{ calls: [] }] };
   const page = await open(browser, opts);
@@ -1265,10 +1271,10 @@ async function freshBrowser() {
         && !/every transfer holds/.test(logText), logText.slice(0, 500));
   }
   await page.close();
-}
+});
 
 // ---- B-2: the record exists while the wallet still has the request ------------------------------------
-{
+await t("ledger: B-2: the record exists while the wallet still has the request", async () => {
   // Between pressing Send and the wallet answering, the user is in their wallet app. On a phone that means
   // this tab is in the background, and iOS and Android evict background tabs routinely. The wallet
   // broadcasts, the tab dies, and nothing was ever written down -- so the next visit offers every recipient
@@ -1301,8 +1307,8 @@ async function freshBrowser() {
   check('B-2 the same record gains the hash when the wallet answers, rather than a second one appearing',
     after.length === 1 && !!after[0].hash, JSON.stringify(after).slice(0, 200));
   await page.close();
-}
-{
+});
+await t("ledger: A refusal is the one answer that means nothing happened, so the record goes away and the rows come back.", async () => {
   // A refusal is the one answer that means nothing happened, so the record goes away and the rows come back.
   // Everything else keeps it.
   const page = await open(browser, { rejectSend: true });
@@ -1317,10 +1323,10 @@ async function freshBrowser() {
   check('B-2 and the refusal is reported rather than swallowed',
     /cancelled|rejected|did not go through/i.test(logText), logText.slice(-200));
   await page.close();
-}
+});
 
 // ---- S-18: every signature names the chain it is for ---------------------------------------------------
-{
+await t("wallet: S-18: every signature names the chain it is for", async () => {
   // Without a chainId in the request, a wallet that is on a different network than it reports signs rather
   // than refusing, and nothing this page can do afterwards detects it. It matters most on mainnet, where the
   // same address is a different contract.
@@ -1339,10 +1345,10 @@ async function freshBrowser() {
   check('S-18 and the chain it names is the one selected',
     sent.every((c) => c !== null && Number(c) === 46630), JSON.stringify(sent));
   await page.close();
-}
+});
 
 // ---- S-8: one input, one way of cutting it into cells --------------------------------------------------
-{
+await t("parse: S-8: one input, one way of cutting it into cells", async () => {
   // `"0x…","1"` parsed correctly WITH a header row and was rejected line by line without one, because the
   // header path used splitRow (RFC 4180) and the positional path used a bare regex. The page tells users
   // that exports from Etherscan, Safe, thirdweb, Dune, OpenSea and disperse are read as they come, several
@@ -1375,10 +1381,10 @@ async function freshBrowser() {
   r = await reads(A(0x111) + ',1\n' + A(0x222) + ',2\n');
   check('S-8 and a plain comma-separated list still reads', /2 recipients/.test(r.plan), r.plan.slice(0, 160));
   await page.close();
-}
+});
 
 // ---- S-7: nothing rewrites the box while a line on it cannot be read -----------------------------------
-{
+await t("parse: S-7: nothing rewrites the box while a line on it cannot be read", async () => {
   const page = await open(browser, { approved: true, ownedIds: [11, 12, 13] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1397,10 +1403,10 @@ async function freshBrowser() {
   check('S-7 and it says which line is in the way',
     /have a wallet address on them|Fix or remove/.test(await text(page, '#pickMsg')), (await text(page, '#pickMsg')).slice(0, 220));
   await page.close();
-}
+});
 
 // ---- S-18: Shuffle and "remove contracts" read the address column, not cell 0 --------------------------
-{
+await t("parse: S-18: Shuffle and \"remove contracts\" read the address column, not cell 0", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1425,10 +1431,10 @@ async function freshBrowser() {
       && [7, 8].every((id) => new RegExp(',' + id + '(?:\\n|$)').test(box)),
     (await text(page, '#plan')).slice(0, 160) + ' || ' + box);
   await page.close();
-}
+});
 
 // ---- S-14: one guard, on every path that signs -------------------------------------------------------
-{
+await t("send: S-14: one guard, on every path that signs", async () => {
   // onlyOnce disables only its OWN button and calls plan() after its work settles, so an approval prompt
   // sitting unanswered in the wallet left Send enabled. Pressing it raised a second prompt from one page.
   const page = await open(browser, { slowMethod: { method: 'eth_sendTransaction', ms: 8000 } });
@@ -1450,10 +1456,10 @@ async function freshBrowser() {
   check('S-14 and the form is not locked by the refusal, so the page is still usable',
     !(await page.evaluate(() => document.querySelector('#token').disabled)));
   await page.close();
-}
+});
 
 // ---- S-13: the price quoted to the sender carries the same margin the batch cap gets -------------------
-{
+await t("gas: S-13: the price quoted to the sender carries the same margin the batch cap gets", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1482,10 +1488,10 @@ async function freshBrowser() {
   check('S-13 and the measurement is still named, as what the chain quoted for an owner transfer',
     note.includes(q.measured.toLocaleString() + ' the chain quoted'), note.slice(-260));
   await page.close();
-}
+});
 
 // ---- S-12: the reader takes the batch's token and sender, not whatever the form is showing --------------
-{
+await t("ledger: S-12: the reader takes the batch's token and sender, not whatever the form is showing", async () => {
   const page = await open(browser, { approved: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, ED, '1155');            // the form now shows the EDITION contract
@@ -1520,10 +1526,10 @@ async function freshBrowser() {
   check('S-12 and a batch sent by a different account is still not read as this one\'s',
     v && v.asOther === true, JSON.stringify(v));
   await page.close();
-}
+});
 
 // ---- T-H-02: all or nothing is not renegotiated after you agree to it -----------
-{
+await t("send: T-H-02: all or nothing is not renegotiated after you agree to it", async () => {
   const page = await open(browser, { walletBatch: true, tooLarge: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1535,10 +1541,10 @@ async function freshBrowser() {
   check('T-H-02 and the reason names the promise being kept',
     /all or nothing/i.test(await text(page, '#log')), (await text(page, '#log')).slice(-260));
   await page.close();
-}
+});
 
 // ---- T-M-01: the sequence is simulated, not each call against untouched state ----
-{
+await t("send: T-M-01: the sequence is simulated, not each call against untouched state", async () => {
   const page = await open(browser, { walletBatch: true, sequenceFailsAt: 2 });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1550,10 +1556,10 @@ async function freshBrowser() {
   check('T-M-01 and the page says the whole transaction would be lost, not just that row',
     /none of it would land/.test(logText), logText.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- records written by the previous version are carried across, not dropped -----
-{
+await t("ledger: records written by the previous version are carried across, not dropped", async () => {
   const page = await open(browser, { approved: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   const migrated = await page.evaluate(() => {
@@ -1572,10 +1578,10 @@ async function freshBrowser() {
   check('and the old key is cleared once every record has been moved',
     !migrated.after.includes('bulksend:pending'), JSON.stringify(migrated.after));
   await page.close();
-}
+});
 
 // ---- H-06: the token saying it sent is not the chain saying it arrived -----------
-{
+await t("ledger: H-06: the token saying it sent is not the chain saying it arrived", async () => {
   const landed = A(0xe9);
   const page = await open(browser, { approved: true, ownerOf: landed, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 } });
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -1585,10 +1591,10 @@ async function freshBrowser() {
   const logText = await text(page, '#log');
   check('H-06 a row the chain agrees arrived is recorded as arrived', /1 arrived/.test(logText), logText.slice(-200));
   await page.close();
-}
+});
 
 // ---- H-06: and a token that reports success while moving nothing is caught -------
-{
+await t("ledger: H-06: and a token that reports success while moving nothing is caught", async () => {
   const page = await open(browser, { approved: true, ownerOf: A(0xdead), summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 } });   // still owned by the sender
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1605,10 +1611,10 @@ async function freshBrowser() {
   });
   check('H-06 so the row is not suppressed on the next run', stillFresh === 0, 'delivered keys: ' + stillFresh);
   await page.close();
-}
+});
 
 // ---- a reload confirms from the token's own events in that transaction ----------
-{
+await t("ledger: a reload confirms from the token's own events in that transaction", async () => {
   const paid = A(0x95);
   const page = await open(browser, { approved: true, tokenTransfers: [{ token: TOK, to: paid, amount: '1000000000000000000' }] });
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -1628,10 +1634,10 @@ async function freshBrowser() {
     /the token reported all 1 of these transfers/.test(logText), logText.slice(0, 400));
   check('and is then treated as already delivered', /already delivered/.test(logText), logText.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- H-04: two rows to one wallet are judged together, not twice over ------------
-{
+await t("ledger: H-04: two rows to one wallet are judged together, not twice over", async () => {
   // one wallet, two rows of 1 each, and only 1 arrives: neither may be recorded
   const both = A(0x97);
   const page = await open(browser, { approved: true, recipientBalance: '1000000000000000000',
@@ -1644,10 +1650,10 @@ async function freshBrowser() {
   check('H-04 two rows to one wallet share one balance and are judged as a group',
     /unsettled and held/.test(logText) && !/2 arrived/.test(logText), logText.slice(-320));
   await page.close();
-}
+});
 
 // ---- H-02/H-03: a read that fails settles nothing, and holds ---------------------
-{
+await t("send: H-02/H-03: a read that fails settles nothing, and holds", async () => {
   const page = await open(browser, { approved: true, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 } });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1662,10 +1668,10 @@ async function freshBrowser() {
   });
   check('H-02 and nothing is written to the delivered ledger on no evidence', ledger === 0, 'ledger rows: ' + ledger);
   await page.close();
-}
+});
 
 // ---- L-01: a wallet that declares batching for every chain at once --------------
-{
+await t("wallet: L-01: a wallet that declares batching for every chain at once", async () => {
   const page = await open(browser, { walletBatchAllChains: true });
   await page.click('#connect'); await page.waitForTimeout(900);
   await useToken(page, NFT, '721');
@@ -1673,10 +1679,10 @@ async function freshBrowser() {
   check('L-01 capabilities declared under the all-chain key are honoured',
     (await text(page, '#plan')).includes('as itself'), await text(page, '#plan'));
   await page.close();
-}
+});
 
 // ---- a snapshot keeps what each wallet holds, so a drop can follow it ------------
-{
+await t("snapshot: a snapshot keeps what each wallet holds, so a drop can follow it", async () => {
   const holders = {
     items: [
       { address: { hash: A(0x101) }, value: '300' },
@@ -1703,10 +1709,10 @@ async function freshBrowser() {
   check('and a wallet holding one gets one, with no suffix',
     list.split('\n').some((l) => l.startsWith(A(0x103)) && !/ x\d/.test(l)), list.slice(0, 200));
   await page.close();
-}
+});
 
 // ---- B-01: a lock held for one run is not a lock held for another ----------------
-{
+await t("send: B-01: a lock held for one run is not a lock held for another", async () => {
   const page = await open(browser, { approved: true });
   await page.click('#connect'); await page.waitForTimeout(600);
   const r = await page.evaluate(async () => {
@@ -1729,10 +1735,10 @@ async function freshBrowser() {
   check('B-01 a lock held elsewhere is genuinely unavailable', r.gotB === true && r.ranWhileHeld === false,
     JSON.stringify(r));
   await page.close();
-}
+});
 
 // ---- B-05: holdings describe one collection on one chain, and say which ----------
-{
+await t("snapshot: B-05: holdings describe one collection on one chain, and say which", async () => {
   const holders = { items: [{ address: { hash: A(0x201) }, value: '300' }, { address: { hash: A(0x202) }, value: '2' }] };
   const page = await open(browser, { explorer: holders });
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -1746,7 +1752,7 @@ async function freshBrowser() {
     await page.evaluate(() => document.querySelector('#weightRow').style.display === 'none'));
   check('B-05 and says so', /holdings reading has been dropped/.test(await text(page, '#log')), (await text(page, '#log')).slice(-200));
   await page.close();
-}
+});
 
 // ---- B-04: a phone wallet that drops mid-send cannot move the key the ledger is written under ----
 // The disconnect handler used to clear the sender while a batch was still being watched for arrival. The key
@@ -1754,7 +1760,7 @@ async function freshBrowser() {
 // every wallet in that batch payable a second time on the next connect. Two things stop it now, and both are
 // checked here: no handler blanks the sender mid-send, and the key is frozen to the one the run lock was
 // taken for regardless.
-{
+await t("ledger: B-04: a phone wallet that drops mid-send cannot move the key the ledger is written under", async () => {
   const paid = A(0xb04);
   const page = await open(browser, {
     url: WC_DIR, approved: true, ownerOf: paid,
@@ -1778,7 +1784,7 @@ async function freshBrowser() {
   check('B-04 the sender is not blanked while a send is in flight',
     /disconnected mid-airdrop/.test(await text(page, '#log')), (await text(page, '#log')).slice(-300));
   await page.close();
-}
+});
 
 // ---- a correct CSV must never be reported as a broken file -----------------------
 // Reported by a real user: "I uploaded the CSV correctly, but it kept saying there was an error with the
@@ -1786,7 +1792,7 @@ async function freshBrowser() {
 // the page recognised, so it was read as a recipient, reported as "that is not a wallet address", and the
 // send stayed disabled behind the acknowledge-bad-lines gate. A heading is now any first line with no
 // address attempt in it, whatever it calls its columns.
-{
+await t("parse: a correct CSV must never be reported as a broken file", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1810,10 +1816,10 @@ async function freshBrowser() {
   check('but a first line that tries to be an address is still reported',
     /not a wallet address|right length/.test(await text(page, '#problems')), await text(page, '#problems'));
   await page.close();
-}
+});
 
 // ---- spreadsheets write whole numbers their own way ------------------------------
-{
+await t("parse: spreadsheets write whole numbers their own way", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1830,10 +1836,10 @@ async function freshBrowser() {
     /spreadsheet/.test(await text(page, '#problems')) && /formatted as text/.test(await text(page, '#problems')),
     await text(page, '#problems'));
   await page.close();
-}
+});
 
 // ---- a file that is missing a whole column says so once, about the file ----------
-{
+await t("parse: a file that is missing a whole column says so once, about the file", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, ED, '1155');
@@ -1842,10 +1848,10 @@ async function freshBrowser() {
   check('an ERC-1155 file with no amount column is told that, not shown "null" on every line',
     /no amount column/.test(msg) && !/null/.test(msg + (await text(page, '#problems'))), msg.slice(0, 200));
   await page.close();
-}
+});
 
 // ---- a file saved in the wrong encoding is named as that --------------------------
-{
+await t("parse: a file saved in the wrong encoding is named as that", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1853,7 +1859,7 @@ async function freshBrowser() {
   check('a UTF-16 file is reported as an encoding problem, not as bad addresses',
     /CSV UTF-8/.test(await text(page, '#msgList')), (await text(page, '#msgList')).slice(0, 200));
   await page.close();
-}
+});
 
 // ---- leaving the token field must not throw away the token that is in it ----------
 // Found by driving the real page against testnet, not by any of the nine audits. `change` fires when a field
@@ -1861,7 +1867,7 @@ async function freshBrowser() {
 // a good load and re-read the token from the chain. For the second or so those calls take, "Check list"
 // refused an ERC-20 list with "Enter the token address first" -- about the address sitting right there. It
 // blocked every ERC-20 airdrop, intermittently, which is worse than blocking it outright.
-{
+await t("parse: leaving the token field must not throw away the token that is in it", async () => {
   const page = await open(browser, { decimals: 18 });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, TOK, '20');
@@ -1885,7 +1891,7 @@ async function freshBrowser() {
   check('but changing the address really does load the new one',
     (await text(page, '#tokenInfo')).length > 0, await text(page, '#tokenInfo'));
   await page.close();
-}
+});
 
 // ---- the file a real user sent in, exactly as they sent it ---------------------
 // "I have all the columns filled out, but it's still saying it's incorrect." Their addresses were sequential
@@ -1893,7 +1899,7 @@ async function freshBrowser() {
 // empty result as "every token id is blank", switched to the how-many-each reading, threw away every reason
 // it had collected, and asked whether to replace the list with "0 wallets, 0 NFTs in total" -- while saying
 // nothing whatsoever about the addresses.
-{
+await t("parse: the file a real user sent in, exactly as they sent it", async () => {
   const page = await open(browser, {});
   const dialogs = [];
   page.removeAllListeners('dialog');
@@ -1921,14 +1927,14 @@ async function freshBrowser() {
   check('the same file with no capitals is accepted, as the message says',
     /3 recipients/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
   await page.close();
-}
+});
 
 // ---- a file of nothing but addresses is how most people start ---------------------
 // Asked for by the first outside tester: "allow them to upload a CSV of just the addresses and enter the
 // number of NFTs they want to send. From there it should just choose any of the available token IDs." That
 // already existed -- but only for a list pasted with no heading. The same list as a CSV, headed `address`,
 // went to the named-column reader and was answered with "no token id on this line" once per wallet.
-{
+await t("parse: a file of nothing but addresses is how most people start", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1947,14 +1953,14 @@ async function freshBrowser() {
       !/no token id on this line/.test(prob) && !/problem lines/.test(stat), prob.slice(0, 120));
   }
   await page.close();
-}
+});
 
 // ---- a list of addresses nobody ever created ------------------------------------
 // A wallet address is twenty random bytes. Two real ones sharing eight characters is a one-in-four-billion
 // coincidence, and two landing within a few values of each other is far less likely still. A list that does
 // both was written by counting, and an address nobody generated has no key behind it: what goes there cannot
 // be moved again by anyone. The first outside tester's failing file was exactly this shape.
-{
+await t("parse: a list of addresses nobody ever created", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -1996,14 +2002,14 @@ async function freshBrowser() {
   check('two addresses are too few to judge, and it says nothing rather than guessing',
     !/look made up/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
   await page.close();
-}
+});
 
 // ---- a token that takes a cut on transfer -----------------------------------------
 // Proved live against a real 2% fee token on testnet, which reported: "received 98.0 of the 100.0 sent. This
 // token takes a cut on transfer, so nothing here is recorded as paid in full" -- 0 arrived, 1 held. This
 // guards that: recording a short delivery as paid in full is how someone is quietly underpaid and then
 // suppressed from the retry, which is worse than not sending at all.
-{
+await t("ledger: a token that takes a cut on transfer", async () => {
   const AMOUNT = 100n * 10n ** 18n;
   const page = await open(browser, {
     approved: true, decimals: 18,
@@ -2026,13 +2032,13 @@ async function freshBrowser() {
       .reduce((n, k) => n + JSON.parse(localStorage.getItem(k) || '[]').length, 0));
   check('and nothing goes into the delivered ledger', ledger === 0, 'ledger holds ' + ledger);
   await page.close();
-}
+});
 
 // ---- choosing which NFTs go out, rather than leaving it to chance ------------------
 // Asked for by the first outside tester. Three of the five largest collections on this chain keep their art
 // on the chain -- a data: URI of JSON whose image is a data: URI of an SVG -- so the picture is already in
 // the answer and nothing has to be fetched from anywhere.
-{
+await t("picker: choosing which NFTs go out, rather than leaving it to chance", async () => {
   const page = await open(browser, { approved: true, artOnchain: true, ownedIds: [11, 12, 13] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -2060,9 +2066,9 @@ async function freshBrowser() {
   check('and the randomiser is switched off, since choosing then shuffling would undo the choosing',
     (await page.evaluate(() => document.querySelector('#rand').checked)) === false);
   await page.close();
-}
+});
 // ---- a collection that keeps its art on its own server ----------------------------
-{
+await t("picker: a collection that keeps its art on its own server", async () => {
   const page = await open(browser, { approved: true, artOffchain: true, ownedIds: [21, 22] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -2079,13 +2085,13 @@ async function freshBrowser() {
     /web server/.test(msg) && /signs transactions/.test(msg), msg.slice(0, 260));
   check('and those NFTs can still be sent', /still send normally/.test(msg), msg.slice(0, 260));
   await page.close();
-}
+});
 
 // ---- the picker is for curation; mass drops have their own tool -------------------
 // "Does it work in a way that is good with a mass drop tool?" It did not: it capped silently at 60 tiles,
 // loaded pictures one call at a time, and when it could not cover the list it said "choose exactly one for
 // each wallet" -- true, useless, and a dead end when the real reason is that you do not own that many.
-{
+await t("picker: the picker is for curation; mass drops have their own tool", async () => {
   const page = await open(browser, { approved: true, artOnchain: true, ownedIds: [1, 2, 3, 4, 5] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -2114,13 +2120,13 @@ async function freshBrowser() {
   check('it points at "Assign my token ids", which is the tool for that size',
     /Assign my token ids/.test(await text(page, '#msgList')), (await text(page, '#msgList')).slice(0, 200));
   await page.close();
-}
+});
 
 // ---- Stop, which had no test at all, mocked or live -------------------------------
 // It is the control someone presses when an airdrop is going wrong, and nothing had ever checked it worked.
 // It does: verified live on testnet halting after batch 1 of 3, with 2 delivered and the ledger holding
 // exactly those 2. This is the deterministic version.
-{
+await t("send: Stop, which had no test at all, mocked or live", async () => {
   const page = await open(browser, { approved: true, ownerOf: A(0xd1),
     summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 },
     slowMethod: { method: 'eth_getTransactionReceipt', ms: 2500 } });
@@ -2145,13 +2151,13 @@ async function freshBrowser() {
       .reduce((n, k) => n + JSON.parse(localStorage.getItem(k) || '[]').length, 0));
   check('a stopped run records only what actually went out', ledger <= sent, 'ledger ' + ledger + ' for ' + sent + ' sent');
   await page.close();
-}
+});
 
 // ---- proportional airdrops from a holder snapshot ---------------------------------
 // One passing reference and never run against real holdings. Verified live against a collection minted
 // deliberately uneven (3 / 2 / 1) and it is exact. The page writes one line with an "xN" multiplier rather
 // than N lines, which is what a reader of this test needs to know before believing the counts.
-{
+await t("snapshot: proportional airdrops from a holder snapshot", async () => {
   const big = A(0xe3), mid = A(0xe2), one = A(0xe1);
   const page = await open(browser, { approved: true, explorer: { items: [
     { address: { hash: big }, value: '3' }, { address: { hash: mid }, value: '2' },
@@ -2184,7 +2190,7 @@ async function freshBrowser() {
   check('and a cap stops the largest holder taking the whole drop',
     m.get(big.toLowerCase()) === 2 && m.get(one.toLowerCase()) === 1, JSON.stringify([...m]));
   await page.close();
-}
+});
 
 // ---- B-02 (round ten): a first row that is not a readable heading is a row, not rubbish -------
 // I fixed one silent-drop bug by writing another. "Any first line with no 0x in it is a heading" throws away
@@ -2192,7 +2198,7 @@ async function freshBrowser() {
 // problems panel, past the acknowledgement gate, in silence. And the test I wrote to prove the fix used only
 // obvious prose as its heading, which is the one shape that works. That is the test certifying its own
 // blind spot, so these cases come from the auditor rather than from me.
-{
+await t("parse: B-02 (round ten): a first row that is not a readable heading is a row, not rubbish", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -2219,13 +2225,13 @@ async function freshBrowser() {
     && (await page.evaluate(() => document.querySelector('#ackRow').style.display)) === 'none',
     await text(page, '#parseOut'));
   await page.close();
-}
+});
 
 // ---- B-01 (round ten): a selection belongs to the collection it was made in -------------------
 // Token ids are scoped to a contract, so id 41 of one and id 41 of another are unrelated NFTs. The picker
 // checked the token when it loaded and never again, so choosing in collection A, switching to B and pressing
 // "Use these" prepared B's id 41 while the art on screen was A's. That can send the wrong valuable asset.
-{
+await t("picker: B-01 (round ten): a selection belongs to the collection it was made in", async () => {
   const NFT2 = '0x4444444444444444444444444444444444444444';
   const page = await open(browser, { approved: true, artOnchain: true, ownedIds: [41, 42] });
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -2244,13 +2250,13 @@ async function freshBrowser() {
     /only means something inside one collection/.test(await text(page, '#pickMsg')),
     (await text(page, '#pickMsg')).slice(0, 200));
   await page.close();
-}
+});
 
 // ---- S-01 (round ten): one reading of where the address is -------------------------
 // `readHeader` has always allowed the address column to be anywhere. Assign, weighting and the picker each
 // looked at the first cell instead, so `label,address` was two wallets to one reader and none at all to the
 // others: the same valid file, contradictory answers, from the same page.
-{
+await t("parse: S-01 (round ten): one reading of where the address is", async () => {
   const page = await open(browser, { approved: true, ownedIds: [7, 8] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -2264,10 +2270,10 @@ async function freshBrowser() {
     (await text(page, '#msgList')).slice(0, 160));
   check('assigning rewrites those wallets with ids', /,\d+/.test(after), after.replace(/\n/g, ' | ').slice(0, 140));
   await page.close();
-}
+});
 
 // ---- S-05 (round ten): a shared prefix alone is what vanity addresses look like -----
-{
+await t("parse: S-05 (round ten): a shared prefix alone is what vanity addresses look like", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -2282,10 +2288,10 @@ async function freshBrowser() {
   check('and a counted list, which trips both signals, still is',
     /look made up/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
   await page.close();
-}
+});
 
 // ---- S-02 (round ten): untrusted metadata gets a budget ----------------------------
-{
+await t("picker: S-02 (round ten): untrusted metadata gets a budget", async () => {
   const page = await open(browser, { approved: true, artHuge: true, ownedIds: [1, 2] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -2298,7 +2304,7 @@ async function freshBrowser() {
   check('and the tile says it was not previewed rather than hanging the tab',
     /too large to preview/.test((tiles[0] || {}).why || ''), (tiles[0] || {}).why);
   await page.close();
-}
+});
 
 // ---- a header means the column order does not matter, in any order --------------------
 // Asked directly: is this format universal, or set up wrong? The positional convention across NFT airdrop
@@ -2309,7 +2315,7 @@ async function freshBrowser() {
 // Finding this needed a real test: "to" is a substring of "tokenid", so a substring match claimed the id
 // column as the address column and a file headed `tokenId,amount,address` had every row rejected. Whole
 // names first, then whole words, never a fragment.
-{
+await t("parse: a header means the column order does not matter, in any order", async () => {
   const page = await open(browser, { approved: true, decimals: 18 });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, ED, '1155');
@@ -2333,13 +2339,13 @@ async function freshBrowser() {
       /1 recipients/.test(await text(page, '#parseOut')), name + ' -> ' + (await text(page, '#parseOut')).slice(0, 80));
   }
   await page.close();
-}
+});
 
 // ---- files other chains' snapshot and airdrop tools actually produce ------------------
 // Asked directly whether this works with the tools people already use. These are real export shapes, not
 // invented ones, and testing them found three that did not parse: Etherscan writes `HolderAddress` with no
 // separator at all, disperse.app writes `address=amount`, and snapshot.org calls the column `voter`.
-{
+await t("parse: files other chains' snapshot and airdrop tools actually produce", async () => {
   const page = await open(browser, { approved: true, ownedIds: [251, 252, 253, 254] });
   const dialogs = [];
   page.removeAllListeners('dialog');
@@ -2384,12 +2390,12 @@ async function freshBrowser() {
   check('a column called tokenId is never mistaken for the address column',
     /2 recipients/.test(await text(page, '#parseOut')), await text(page, '#parseOut'));
   await page.close();
-}
+});
 
 // ---- the settled shape of a recipient list, all of it -------------------------------
 // docs/recipient-lists.md is the promise; this is the enforcement. Every shape that page says will work is
 // here, and so is every shape it says will be refused. If one of these changes, that document is wrong.
-{
+await t("parse: the settled shape of a recipient list, all of it", async () => {
   const page = await open(browser, { approved: true, decimals: 18, ownedIds: [251, 252, 253, 254] });
   page.removeAllListeners('dialog');
   page.on('dialog', (d) => d.accept());
@@ -2431,7 +2437,7 @@ async function freshBrowser() {
   check('ERC-1155: several ids on one line is refused, because 3 could be an id or an amount',
     /values, expected 3/.test(await text(page, '#problems')), await text(page, '#problems'));
   await page.close();
-}
+});
 
 // ---- a wallet that will not add the network must not leave you stuck ---------------
 // Found by the operator on a phone: "i dont think it's adding the testnet.. it's sensing the nfts though".
@@ -2439,7 +2445,7 @@ async function freshBrowser() {
 // And the page never even asked a phone wallet to add it -- a comment said phone wallets "generally will not
 // add one on request", so it skipped asking and told the user to switch instead. You cannot switch to a
 // network you do not have. True, and a dead end.
-{
+await t("wallet: a wallet that will not add the network must not leave you stuck", async () => {
   const page = await open(browser, { walletChain: '0x1', refuseAddChain: true });
   await page.click('#connect'); await page.waitForTimeout(3000);
   const msg = (await text(page, '#msgTop')).replace(/\s+/g, ' ');
@@ -2456,14 +2462,14 @@ async function freshBrowser() {
   check('with what to do, not just what went wrong',
     /add-chain/.test(msg) && /Settings/.test(msg), msg.slice(0, 200));
   await page.close();
-}
+});
 
 // ---- a wallet that answers nothing at all must not leave the page silent ------------
 // Reported twice from a phone, the second time after my first fix: "it still didn't add the testnet". Over
 // WalletConnect an unsupported method can simply never answer, so the await sat there forever, no catch ran,
 // and the page said nothing. A wallet can also answer yes and do nothing. Both are now caught the only way
 // that works: ask, wait with a limit, then read the chain back and believe that instead of the answer.
-{
+await t("wallet: a wallet that answers nothing at all must not leave the page silent", async () => {
   const ANY_WAY_OUT = /does not have|would not switch|has not answered/;
   for (const [what, opts, want] of [
     ['never answers', { walletChain: '0x1', hangOnAddChain: true }, /has not answered/],
@@ -2497,14 +2503,14 @@ async function freshBrowser() {
       /do not press Connect again first/i.test(msg), msg.slice(0, 240));
     await page.close();
   }
-}
+});
 
 // ---- a test run that skips everything for want of an approval must say so -----------
 // Found by the operator on a phone: "Test run finished: 0 of 3 would be delivered, 3 skipped", followed by
 // "a skipped wallet is one the token itself refuses... retry those in strict mode". Every word true of a
 // normal skip and completely wrong here: BulkSend simply had not been approved yet. Confirmed on chain --
 // isApprovedForAll false, and the airdrop call really did return (0 sent, 3 skipped).
-{
+await t("send: a test run that skips everything for want of an approval must say so", async () => {
   const page = await open(browser, { approved: false, ownedIds: [1, 2, 3], willDeliver: 0, willSkip: 3 });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -2520,12 +2526,12 @@ async function freshBrowser() {
   check('and does not send them off to retry in strict mode',
     !/retry those in strict mode/.test(l), l.slice(-300));
   await page.close();
-}
+});
 
 // ---- an ERC-20 amount in a confirmation is shown in the token's units, not base units ------------------
 // Gate 10, run 3, from the maintainer's own log: "0x51e0…D01 x1500000000000000000 through 0x51E0…D03
 // x1500000000000000000". The CSV beside it said 1.5. Same reader, same units.
-{
+await t("send: an ERC-20 amount in a confirmation is shown in the token's units, not base units", async () => {
   const page = await open(browser, { approved: true });
   const dialogs = [];
   page.removeAllListeners('dialog');
@@ -2538,14 +2544,14 @@ async function freshBrowser() {
   const d = dialogs.join(' ') + ' ' + (await text(page, '#log'));
   check('gate-10 an ERC-20 confirmation line shows 1.5 and 2.25, not base units', /x1\.5 through .* x2\.25/.test(d) && !/x1500000000000000000/.test(d), d.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- an address in a confirmation must show both ends -------------------------------
 // From a screenshot of the real confirmation dialog: "transaction 1: 4 recipients, 0x000000... id 103
 // through 0x000000... id 106". The two ends of the range rendered identically, because the shortener kept
 // only the head, and every address in a list of test wallets shares its head. A confirmation whose whole job
 // is telling someone who they are paying was showing four transfers to what looked like one destination.
-{
+await t("send: an address in a confirmation must show both ends", async () => {
   const page = await open(browser, { approved: true, ownedIds: [103, 104, 105, 106] });
   const dialogs = [];
   page.removeAllListeners('dialog');
@@ -2567,14 +2573,14 @@ async function freshBrowser() {
   check('an address is shown with its tail, which is the half that identifies it',
     /A1|a1/.test(d) || /\u2026[0-9a-fA-F]{4,6}/.test(d), d.slice(0, 300));
   await page.close();
-}
+});
 
 // ---- the four ways a line goes wrong, read by a person -----------------------------
 // The operator's own broken-list test, screenshotted from a phone. The messages were right and the prose was
 // not: a missing full stop ran two sentences together, and a name like alice.eth was offered the "maybe this
 // is a heading" hint even though a name is positively an attempted recipient and there is nothing ambiguous
 // about it. A hint attached to an answer that was already complete is noise.
-{
+await t("parse: the four ways a line goes wrong, read by a person", async () => {
   const page = await open(browser, { approved: true, ownedIds: [107, 109, 110] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -2599,14 +2605,14 @@ async function freshBrowser() {
   check('the same token id twice is caught and named',
     /token id 109 is listed twice/.test(await text(page, '#problems')), await text(page, '#problems'));
   await page.close();
-}
+});
 
 // ---- "already added it" and "does not have it" need opposite advice -----------------
 // Reported on the second day of testing: "happening a lot where the wallet is stuck and doesn't change to
 // testnet". By then the network was already added -- seven transactions had gone out on it -- so the page
 // telling them how to *add* it was the wrong half of the answer. A WalletConnect scan cannot change which
 // network a wallet is on; that is a limit of the session, not something the user did wrong.
-{
+await t("wallet: \"already added it\" and \"does not have it\" need opposite advice", async () => {
   for (const [what, opts, want] of [
     ['does not have the network', { walletChain: '0x1', switchUnknownChain: true, refuseAddChain: true }, /does not have/],
     ['has it but will not switch', { walletChain: '0x1', refuseAddChain: true }, /would not switch to/],
@@ -2630,7 +2636,7 @@ async function freshBrowser() {
   check('a wallet that already has the network is never told it does not',
     !/does not have/.test(msg) && /Switch to it inside the wallet app/.test(msg), msg.slice(0, 240));
   await page.close();
-}
+});
 
 // ---- anything that signs must refuse a second press ---------------------------------
 // From the chain, during live testing: three setApprovalForAll transactions to one contract inside eight
@@ -2638,7 +2644,7 @@ async function freshBrowser() {
 // were not, and checking isApprovedForAll first cannot help -- at the second press the first transaction is
 // not mined, so the check passes and another approval goes out. The operator was gracious about whose fault
 // it might be. It was ours.
-{
+await t("wallet: anything that signs must refuse a second press", async () => {
   const page = await open(browser, { approved: false, ownedIds: [1, 2],
     slowMethod: { method: 'eth_getTransactionReceipt', ms: 3000 } });
   await page.click('#connect'); await page.waitForTimeout(600);
@@ -2651,14 +2657,14 @@ async function freshBrowser() {
   const sent = (await page.evaluate(() => window.__sent.length)) - before;
   check('three taps on Approve sign one transaction, not three', sent <= 1, sent + ' transactions signed');
   await page.close();
-}
+});
 
 // ---- "Change wallet" has to reach the wallet ----------------------------------------
 // Reported during live testing: "when i click on metamask it won't let me disconnect and swap to a different
 // metamask and seems to stay on the first account i connected". Clearing our own variables is not
 // disconnecting -- the extension still has the site permitted, so the next eth_requestAccounts returns the
 // same account without prompting. A workaround existing inside MetaMask does not make our button honest.
-{
+await t("wallet: \"Change wallet\" has to reach the wallet", async () => {
   for (const [what, revokeWorks] of [['a wallet that can revoke', true], ['a wallet that cannot', false]]) {
     const page = await open(browser, { swapAccounts: true, revokeWorks });
     await page.click('#connect'); await page.waitForTimeout(1500);
@@ -2678,22 +2684,22 @@ async function freshBrowser() {
       JSON.stringify(asked.filter((m) => m.startsWith('wallet_'))));
     await page.close();
   }
-}
+});
 // ---- the WalletConnect button has to be findable by that name -----------------------
-{
+await t("wc: the WalletConnect button has to be findable by that name", async () => {
   const page = await open(browser, {});
   const labels = await page.evaluate(() => [...document.querySelectorAll('#walletBox button')].map((b) => b.textContent));
   check('the WalletConnect option says so, not only "Phone wallet"',
     labels.some((l) => /WalletConnect/.test(l)), JSON.stringify(labels));
   await page.close();
-}
+});
 
 // ---- an edition is not paired with anything ------------------------------------------
 // Spotted by the operator running a snapshot-and-assign on an ERC-1155 from a desktop: the closing line said
 // "paired at random. They still go out lowest id first", which is the ERC-721 explanation. An edition has no
 // pairing (every line carries the same id) and no id order (there is only one id), so that sentence
 // describes a property the list does not have.
-{
+await t("assign: an edition is not paired with anything", async () => {
   const page = await open(browser, { approved: true, ownedIds: [7, 8, 9] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, ED, '1155');
@@ -2706,12 +2712,12 @@ async function freshBrowser() {
   check('and never claims an id order that does not exist',
     !/lowest id first/.test(l.split('Assigned').pop() || ''), l.slice(-220));
   await page.close();
-}
+});
 
 // ---- if the page knows which wallet it is, it should say so --------------------------
 // Two wallets were named and one was not: with a single extension the button read "Connect wallet", which is
 // the page knowing perfectly well it is MetaMask and declining to mention it.
-{
+await t("wallet: if the page knows which wallet it is, it should say so", async () => {
   const mk = (name, rdns) => ({ name, rdns });
   for (const [what, announce, want] of [
     ['none', [], /^Connect wallet$/],
@@ -2738,7 +2744,7 @@ async function freshBrowser() {
   check('the connect button keeps its id whatever it is labelled',
     await page.evaluate(() => !!document.querySelector('#connect')));
   await page.close();
-}
+});
 
 
 // ---- the delivery order, which is load-bearing and was guarded by nothing --------------------------------
@@ -2747,7 +2753,7 @@ async function freshBrowser() {
 // 6.1M gas ascending, 8.9M shuffled, and descending does not finish at all, it reverts on OutOfGasForBatch.
 // The page has always sorted; nothing has ever checked that it still does, and the ids are BigInt, so a sort
 // that ever compared them as text would put 1000 before 9 and nobody would notice until a send failed.
-{
+await t("send: the delivery order, which is load-bearing and was guarded by nothing", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -2770,12 +2776,12 @@ async function freshBrowser() {
   check('and the page says it reordered, rather than silently handing back a different list',
     (await text(page, '#log')).includes('ascending token id order'));
   await page.close();
-}
+});
 
 // ---- the recipients-per-transaction box says what it will do -------------------------------------------
 // It used to accept 400 in every mode while quietly using 200 in the two modes that cost more gas per
 // transfer. The number in the box was not the number being sent, and nothing on the page said so.
-{
+await t("gas: the recipients-per-transaction box says what it will do", async () => {
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
@@ -2790,14 +2796,14 @@ async function freshBrowser() {
   await page.fill('#batch', '100'); await page.waitForTimeout(400);
   check('and the clamp message goes away once it no longer applies', (await text(page, '#batchClamp')) === '');
   await page.close();
-}
+});
 
 // ---- the cap comes from the token, not from a table -----------------------------------------------------
 // Measured against the 58 ERC-721 collections live on this chain, one more recipient costs between 41,825
 // and 152,843 gas. A single number cannot be right for all of them: the old table was too low for a third,
 // and it let six of them accept a batch that cannot fit in one transaction. So the page estimates one real
 // transfer of the token in front of it and works from that. 32,000,000 is the chain's own maxTxGasLimit.
-{
+await t("gas: the cap comes from the token, not from a table", async () => {
   const cap = (page) => page.evaluate(() => document.querySelector('#batch').getAttribute('max'));
   const list = Array.from({ length: 40 }, (_, i) => A(0x1000 + i) + ',' + (i + 1)).join('\n');
 
@@ -2842,14 +2848,14 @@ async function freshBrowser() {
       (await text(page, '#plan')).includes('fallback') && !(await text(page, '#plan')).includes('at most'), await text(page, '#plan'));
     await page.close();
   }
-}
+});
 
 // ---- the probe asks the right question for each kind of token -------------------------------------------
 // The measurement fails silently by design: a probe that cannot be answered leaves the page on its fallback,
 // which is the safe thing to do and is indistinguishable, from the outside, from a probe that was encoded
 // wrongly and reverted. Only the selector actually put on the wire separates the two, so that is what these
 // check. Without them, ERC-1155 and ERC-20 could have shipped never measuring anything and looking fine.
-{
+await t("probe-pins: the probe asks the right question for each kind of token", async () => {
   const SEL = { safe721: '0x42842e0e', plain721: '0x23b872dd', safe1155: '0xf242432a', erc20: '0xa9059cbb' };
   const asked = (o) => (o.probes || []).map((p) => String(p.data || '').slice(0, 10).toLowerCase());
   const sent = (o, sel, to) => (o.probes || []).some((p) =>
@@ -2906,7 +2912,7 @@ async function freshBrowser() {
       (o.probes || []).length > first && sent(o, SEL.safe1155, ED), JSON.stringify(o.probes));
     await page.close();
   }
-}
+});
 
 // ---- round eleven, B-1: a wallet's word never releases a paid recipient ---------------------------------
 // Everywhere else this page says the same thing: do not believe the answer, read the chain. Here it believed
@@ -2914,7 +2920,7 @@ async function freshBrowser() {
 // numeric 500 and the string 'FAILED', which no version of EIP-5792 defines, each arriving alongside a
 // receipt that shows the transfer succeeding. Deleting the pending record is what makes those recipients
 // payable again, so neither may produce a state that deletes it.
-{
+await t("probe-pins: round eleven, B-1: a wallet's word never releases a paid recipient", async () => {
   const paidReceipt = [{ transactionHash: '0x' + 'ab'.repeat(32), status: '0x1', blockNumber: '0x1000', logs: [] }];
   for (const [label, status] of [['a numeric 500', 500], ["the string 'FAILED'", 'FAILED']]) {
     const page = await open(browser, { walletBatch: true, callsStatus: { status, receipts: paidReceipt } });
@@ -2941,12 +2947,12 @@ async function freshBrowser() {
       /reverted in full/.test((await text(page, '#log')).replace(/\s+/g, ' ')), (await text(page, '#log')).slice(-200));
     await page.close();
   }
-}
+});
 
 // ---- S-6 and S-7, which the reviewer reasoned rather than demonstrated -----------------------------------
 // Nothing in the repository reproduces these, so nothing would notice them coming back. Both are about the
 // page claiming more than it knows, which is the failure this whole tool is built against.
-{
+await t("probe-pins: S-6 and S-7, which the reviewer reasoned rather than demonstrated", async () => {
   // S-6: Promise.race does not cancel the loser. The guard used to release the button after 180 s while the
   // wallet request was still queued, and say "nothing has been sent from here" -- true at that instant,
   // untrue about what happened next, and the sentence that invited a second press. The 180 s path cannot be
@@ -2999,10 +3005,10 @@ async function freshBrowser() {
     check('S-7 and the text is passed through as what it is', /contact support/.test(picked), picked.slice(0, 160));
     await page.close();
   }
-}
+});
 
 // ---- S-14: two of the grouped items that change what gets recorded --------------------------------------
-{
+await t("ledger: S-14: two of the grouped items that change what gets recorded", async () => {
   // A Transfer event only counts if this sender made it. Without that, a token that credits the recipient
   // from somewhere else in the same transaction -- a reflection, a mint, a rebase -- counted toward what the
   // batch delivered, and a row was recorded as paid on a transfer nobody here made.
@@ -3047,13 +3053,13 @@ async function freshBrowser() {
       await page.evaluate(() => document.querySelector('#manifest').disabled));
     await page.close();
   }
-}
+});
 
 // ---- S-14: the wallet listeners are removed as well as added ---------------------------------------------
 // Registered on every successful connect and removed from nothing. Reconnecting ran each handler twice, and
 // one left on a provider the user had since replaced could still fire and clear the connection for a wallet
 // that was no longer in use.
-{
+await t("wallet: S-14: the wallet listeners are removed as well as added", async () => {
   const page = await open(browser, { revokeWorks: true, swapAccounts: true });
   await page.click('#connect'); await page.waitForTimeout(700);
   const first = await page.evaluate(() => ({ on: window.__on || {}, off: window.__off || {} }));
@@ -3068,9 +3074,8 @@ async function freshBrowser() {
     live('chainChanged') <= 1 && live('accountsChanged') <= 1,
     JSON.stringify(after) + ' live=' + live('chainChanged') + '/' + live('accountsChanged'));
   await page.close();
-}
+});
 
 await browser.close();
-console.log(results.join('\n'));
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
+console.log('\n' + summaryLine(pass, fail));
 process.exit(fail ? 1 : 0);

@@ -5,6 +5,7 @@
 //
 import { chromium } from 'playwright';
 import { pathToFileURL } from 'node:url';
+import { makeRunner } from './lib.mjs';
 
 const PAGE = pathToFileURL(new URL('../../web/check.html', import.meta.url).pathname).href;
 const A = (n) => '0x' + n.toString(16).padStart(40, '0');
@@ -12,8 +13,12 @@ const NFT = A(0x721), TOK = A(0x20), PROXY = A(0x9), IMPL = A(0x99), WALLET = A(
 const MYSTERY = A(0x5150);   // a contract whose standard cannot be settled: no supportsInterface, no decimals
 const ME = A(0xdead);
 
-let pass = 0, fail = 0; const results = [];
-const check = (name, cond, detail) => { if (cond) { pass++; results.push('  ok   ' + name); } else { fail++; results.push('  FAIL ' + name + (detail ? '  <- ' + String(detail).slice(0, 200) : '')); } };
+let pass = 0, fail = 0;
+// Streamed as it happens rather than buffered into an array printed once at the end.
+const check = (name, cond, detail) => { if (cond) { pass++; console.log('  ok   ' + name); } else { fail++; console.log('  FAIL ' + name + (detail ? '  <- ' + String(detail).slice(0, 200) : '')); } };
+// The case runner: named cases, ONLY=<regex> filtering, one throw fails its own case and nothing else.
+// See test/web/lib.mjs and docs/harness.md.
+const { t, trackPage, summaryLine } = makeRunner(check);
 
 const word = (v) => '0x' + BigInt(v).toString(16).padStart(64, '0');
 const strRet = (t) => { const b = Buffer.from(t, 'utf8'); return '0x' + (32).toString(16).padStart(64, '0') + BigInt(b.length).toString(16).padStart(64, '0') + b.toString('hex').padEnd(Math.ceil(b.length / 32) * 64, '0'); };
@@ -113,6 +118,7 @@ async function open(_stale, opts = {}) {
   await page.goto(PAGE, { waitUntil: 'load' });
   await page.waitForTimeout(400);
   page.__errs = errs;
+  trackPage(page);   // so a case that throws before its own page.close() still gets one
   return page;
 }
 const ask = async (page, q, from, waitMs) => {
@@ -131,7 +137,7 @@ const ask = async (page, q, from, waitMs) => {
 // appear, which reads like a broken test or a slow machine rather than the real cause. It cost fifteen
 // minutes once. Checking it here costs a millisecond and turns it into one line.
 const CSP_PAGES = [['../../web/check.html', '../../web/check.js']];
-{
+await t("csp: the page has to be one the browser will actually run", async () => {
   const { readFileSync } = await import('node:fs');
   const { createHash } = await import('node:crypto');
   const die = (m) => { console.error('\n' + m + '\nRun web/sync.sh and try again.\n'); process.exit(1); };
@@ -157,7 +163,7 @@ const CSP_PAGES = [['../../web/check.html', '../../web/check.js']];
     const csp = (src.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/) || [])[1] || '';
     if (!csp.includes("'" + want + "'")) die(rel + ': its CSP does not name the script it carries, so the browser will refuse to run it. Expected ' + want);
   }
-}
+});
 
 // One browser for fifty pages is more than this machine will reliably carry: a headless Chromium does not
 // hand everything back when a page closes, and somewhere past the fortieth the next newPage cannot be
@@ -174,7 +180,7 @@ async function freshBrowser() {
 }
 
 // ---- what was pasted -------------------------------------------------------
-{
+await t("check-page: what was pasted", async () => {
   const page = await open(browser, {});
   const kinds = await page.evaluate((addr) => {
     const r = window.__check.readInput;
@@ -197,38 +203,38 @@ async function freshBrowser() {
   check('whitespace around a hash does not matter', kinds.spaced === 'tx', kinds.spaced);
   check('anything else is refused rather than guessed at', kinds.junk === 'bad', kinds.junk);
   await page.close();
-}
+});
 
 // ---- the warning that matters most -----------------------------------------
-{
+await t("check-page: the warning that matters most", async () => {
   const page = await open(browser, { simLogs: [{ address: TOK, topics: [APPROVAL, '0x' + ME.slice(2).padStart(64, '0'), '0x' + A(0x1111).slice(2).padStart(64, '0')], data: '0x' + 'f'.repeat(64) }] });
   const t = await ask(page, JSON.stringify({ to: TOK, data: '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + 'f'.repeat(64) }), ME);
   check('an unlimited approval is called unlimited', t.includes('unlimited'), t.slice(0, 200));
   check('and is spelled out as a standing permission', /at any point in the future/.test(t), t.slice(0, 300));
   check('and the approval it would grant is listed as a movement', /lets .* spend/.test(t), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- approving a whole collection ------------------------------------------
-{
+await t("check-page: approving a whole collection", async () => {
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify({ to: NFT, data: '0xa22cb465' + A(0x1111).slice(2).padStart(64, '0') + (1).toString().padStart(64, '0') }), ME);
   check('setApprovalForAll says it is the whole collection', /every one you hold now and every one you ever hold/.test(t), t.slice(0, 300));
   await page.close();
-}
+});
 
 // ---- a call that would fail ------------------------------------------------
-{
+await t("check-page: a call that would fail", async () => {
   const page = await open(browser, { simRevert: '0x7e273289' + (12345).toString(16).padStart(64, '0') });
   const t = await ask(page, JSON.stringify({ to: NFT, data: '0x23b872dd' + ME.slice(2).padStart(64, '0') + A(0x2222).slice(2).padStart(64, '0') + (12345).toString(16).padStart(64, '0') }), ME);
   check('a call that would fail says so before it is signed', t.includes('would fail'), t.slice(0, 200));
   check('and gives the contract’s own reason in words', t.includes('that token id does not exist'), t.slice(0, 400));
   check('and carries the argument the contract complained about', t.includes('12345'), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- the contract's newest refusals are named, not shown as selectors (round thirteen S-7, twin reader) ----
-{
+await t("check-page: the contract's newest refusals are named, not shown as selectors (round thirteen S-7, twin reader)", async () => {
   // selectors from `cast sig`, so the test does not depend on the page's own library to name them
   const cases = [
     ['0x16102772' + NFT.slice(2).padStart(64, '0'), 'NFT collection', 'IsAnNft'],            // IsAnNft(address)
@@ -242,10 +248,10 @@ async function freshBrowser() {
     check(name + ' is not shown as a bare selector', !t.includes(data.slice(0, 10)), t.slice(0, 400));
     await page.close();
   }
-}
+});
 
 // ---- powers, read from bytecode when there is no source ---------------------
-{
+await t("check-page: powers, read from bytecode when there is no source", async () => {
   const page = await open(browser, {});
   const t = await ask(page, NASTY);
   check('an unverified contract is not treated as unknowable', t.includes('bytecode'), t.slice(0, 200));
@@ -254,37 +260,37 @@ async function freshBrowser() {
   check('so is a fee setter', /change the fee/.test(t), t.slice(0, 400));
   check('and the page says the source was never published', t.includes('No source has been published'), t.slice(-300));
   await page.close();
-}
+});
 
 // ---- a name from a contract is text, never markup ---------------------------
-{
+await t("check-page: a name from a contract is text, never markup", async () => {
   const page = await open(browser, {});
   await ask(page, NASTY);
   const html = await page.evaluate(() => document.querySelector('#out').innerHTML);
   check('a token name that looks like markup is rendered as text',
     !html.includes('<img') && html.includes('&lt;img'), html.slice(0, 200));
   await page.close();
-}
+});
 
 // ---- a proxy is not the code it runs ----------------------------------------
-{
+await t("check-page: a proxy is not the code it runs", async () => {
   const page = await open(browser, {});
   const t = await ask(page, PROXY);
   check('a minimal proxy is flagged as replaceable code', t.includes('proxy'), t.slice(0, 200));
   check('and names the contract it forwards to', t.toLowerCase().includes(IMPL.slice(2, 10).toLowerCase()), t.slice(0, 300));
   await page.close();
-}
+});
 
 // ---- a delegated wallet is still a wallet ------------------------------------
-{
+await t("check-page: a delegated wallet is still a wallet", async () => {
   const page = await open(browser, {});
   const t = await ask(page, WALLET);
   check('an EIP-7702 wallet is called a wallet, not a contract', t.includes('wallet running delegated code'), t.slice(0, 200));
   await page.close();
-}
+});
 
 // ---- a verified contract reads from its source -------------------------------
-{
+await t("check-page: a verified contract reads from its source", async () => {
   const verified = {};
   verified[NFT] = { is_verified: true, name: 'Test Collection', compiler_version: 'v0.8.24', optimization_enabled: true, abi: [
     { type: 'function', name: 'mint', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'id', type: 'uint256' }] },
@@ -297,10 +303,10 @@ async function freshBrowser() {
   check('and its powers are read from that source', t.includes('the published source'), t.slice(0, 400));
   check('while a read-only function is not called a power', !/balanceOf/.test(t), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- an ordinary transaction reads back as English ---------------------------
-{
+await t("check-page: an ordinary transaction reads back as English", async () => {
   const tx = { hash: '0x' + 'cd'.repeat(32), from: ME, to: NFT, input: '0x23b872dd' + ME.slice(2).padStart(64, '0') + A(0x2222).slice(2).padStart(64, '0') + (7).toString(16).padStart(64, '0'), value: '0x0', gas: '0x5208', gasPrice: '0x989680', nonce: '0x1', blockHash: '0x' + '11'.repeat(32), blockNumber: '0x1000', transactionIndex: '0x0', type: '0x2', chainId: '0xb626', maxFeePerGas: '0x989680', maxPriorityFeePerGas: '0x0', accessList: [], v: '0x1', r: '0x' + '11'.repeat(32), s: '0x' + '22'.repeat(32) };
   const receipt = { transactionHash: tx.hash, transactionIndex: '0x0', blockHash: tx.blockHash, blockNumber: '0x1000', from: ME, to: NFT, cumulativeGasUsed: '0x5208', gasUsed: '0x5208', effectiveGasPrice: '0x989680', contractAddress: null, logsBloom: '0x' + '00'.repeat(256), status: '0x1', type: '0x2',
     logs: [{ address: NFT, topics: [TRANSFER, topicAddr(ME), topicAddr(A(0x2222)), word(7)], data: '0x', blockNumber: '0x1000', transactionHash: tx.hash, transactionIndex: '0x0', blockHash: tx.blockHash, logIndex: '0x0', removed: false }] };
@@ -311,10 +317,10 @@ async function freshBrowser() {
   check('and it is marked as leaving the reader’s wallet', t.includes('out of your wallet'), t.slice(0, 400));
   check('and the gas actually paid is shown', /Gas paid/.test(t), t.slice(0, 500));
   await page.close();
-}
+});
 
 // ---- an explorer that will not answer is not a contract without a source ----
-{
+await t("check-page: an explorer that will not answer is not a contract without a source", async () => {
   const page = await open(browser, { explorerSick: true });
   const t = await ask(page, NFT, null, 9000);
   check('an unreachable explorer is never reported as "no source published"',
@@ -323,10 +329,10 @@ async function freshBrowser() {
     t.includes('could not check for a published source'), t.slice(0, 260));
   check('while everything readable from the chain is still shown', t.includes('Code size'), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- H-02: a name is not a behaviour, and no match proves nothing ----------------
-{
+await t("check-page: H-02: a name is not a behaviour, and no match proves nothing", async () => {
   const verified = {};
   verified[NASTY] = { is_verified: true, name: 'Quiet', compiler_version: 'v0.8.24', abi: [
     { type: 'function', name: 'rebalance', stateMutability: 'nonpayable', inputs: [{ name: 'victim', type: 'address' }, { name: 'amount', type: 'uint256' }] },
@@ -340,10 +346,10 @@ async function freshBrowser() {
   check('H-02 and that nothing matching is not the same as nothing to find',
     /not that there is nothing to find/.test(t), t.slice(0, 500));
   await page.close();
-}
+});
 
 // ---- H-02: behind a proxy, the code that runs is what gets read ------------------
-{
+await t("check-page: H-02: behind a proxy, the code that runs is what gets read", async () => {
   const verified = {};
   verified[PROXY] = { is_verified: true, name: 'Forwarder', abi: [
     { type: 'function', name: 'harmless', stateMutability: 'view', inputs: [] },
@@ -357,39 +363,39 @@ async function freshBrowser() {
     /create new tokens/.test(t), t.slice(0, 400));
   check('H-02 and the page says where it read from', t.includes('implementation'), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- H-02: partial verification is incomplete evidence ---------------------------
-{
+await t("check-page: H-02: partial verification is incomplete evidence", async () => {
   const verified = {};
   verified[NFT] = { is_verified: true, is_partially_verified: true, name: 'Partly', abi: [{ type: 'function', name: 'harmless', stateMutability: 'view', inputs: [] }] };
   const page = await open(browser, { verified });
   const t = await ask(page, NFT);
   check('H-02 partial verification is called out as incomplete', /only partially verified/.test(t), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- H-03: silence is not proof that nothing moved -------------------------------
-{
+await t("check-page: H-03: silence is not proof that nothing moved", async () => {
   const page = await open(browser, { simLogs: [] });
   const t = await ask(page, JSON.stringify({ to: NFT, data: '0x23b872dd' + ME.slice(2).padStart(64, '0') + A(0x2222).slice(2).padStart(64, '0') + (7).toString(16).padStart(64, '0') }), ME);
   check('H-03 an empty log set is never reported as "nothing moves"', !/No tokens and no ETH move/.test(t), t.slice(0, 300));
   check('H-03 and the page says a token could move without announcing it',
     /without announcing it/.test(t), t.slice(0, 500));
   await page.close();
-}
+});
 
 // ---- H-03: what is shown is what the contract announced --------------------------
-{
+await t("check-page: H-03: what is shown is what the contract announced", async () => {
   const page = await open(browser, { simLogs: [{ address: TOK, topics: [TRANSFER, topicAddr(ME), topicAddr(A(0x2222))], data: word(100) }] });
   const t = await ask(page, JSON.stringify({ to: TOK, data: '0xa9059cbb' + A(0x2222).slice(2).padStart(64, '0') + word(100).slice(2) }), ME);
   check('H-03 the movement section is named for what it holds: announcements',
     /announce moving/.test(t), t.slice(0, 300));
   await page.close();
-}
+});
 
 // ---- M-05: a transaction with no receipt has unknown movements -------------------
-{
+await t("check-page: M-05: a transaction with no receipt has unknown movements", async () => {
   const tx = { hash: '0x' + 'cd'.repeat(32), from: ME, to: NFT, input: '0x23b872dd' + ME.slice(2).padStart(64, '0') + A(0x2222).slice(2).padStart(64, '0') + (7).toString(16).padStart(64, '0'), value: '0x0', gas: '0x5208', gasPrice: '0x989680', nonce: '0x1', blockHash: null, blockNumber: null, transactionIndex: null, type: '0x2', chainId: '0xb626', maxFeePerGas: '0x989680', maxPriorityFeePerGas: '0x0', accessList: [], v: '0x1', r: '0x' + '11'.repeat(32), s: '0x' + '22'.repeat(32) };
   const page = await open(browser, { tx, receipt: null });
   const t = await ask(page, tx.hash, ME);
@@ -398,10 +404,10 @@ async function freshBrowser() {
   check('M-05 it says the movements are unknown until it is mined',
     /has not been mined/.test(t), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- M-01: a slow answer never lands on top of a newer question ------------------
-{
+await t("check-page: M-01: a slow answer never lands on top of a newer question", async () => {
   const verified = {};
   verified[NASTY] = { is_verified: true, name: 'SlowOne', abi: [{ type: 'function', name: 'mint', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }] }] };
   verified[WALLET] = { is_verified: false };
@@ -417,10 +423,10 @@ async function freshBrowser() {
     !t.includes('SlowOne') && t.toLowerCase().includes(TOK.slice(-6).toLowerCase()) && !t.toLowerCase().includes(NASTY.slice(-6).toLowerCase()),
     t.slice(0, 300));
   await page.close();
-}
+});
 
 // ---- T-H-03: a batch is a batch, and the dangerous call is rarely the first -----
-{
+await t("check-page: T-H-03: a batch is a batch, and the dangerous call is rarely the first", async () => {
   const page = await open(browser, {});
   const approval = '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + 'f'.repeat(64);
   const t = await ask(page, JSON.stringify([
@@ -433,10 +439,10 @@ async function freshBrowser() {
     /unlimited approval/i.test(t), t.slice(0, 500));
   check('T-H-03 with the batch itself named as a batch', /2 calls, not one/.test(t), t.slice(0, 200));
   await page.close();
-}
+});
 
 // ---- T-H-03: bytes nobody is shown -----------------------------------------------
-{
+await t("check-page: T-H-03: bytes nobody is shown", async () => {
   const page = await open(browser, {});
   const approval = '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + word(5).slice(2);
   const t = await ask(page, JSON.stringify({ to: TOK, data: approval + word(999).slice(2) }), ME, 6000);
@@ -444,10 +450,10 @@ async function freshBrowser() {
     /32 bytes nobody is shown/.test(t), t.slice(0, 400));
   check('T-H-03 and the raw call is always available', /raw call, exactly as it would be sent/.test(t), t.slice(0, 500));
   await page.close();
-}
+});
 
 // ---- T-H-03: calls carried inside calls ------------------------------------------
-{
+await t("check-page: T-H-03: calls carried inside calls", async () => {
   const page = await open(browser, {});
   const inner = await page.evaluate(([spender]) => {
     const iface = new window.ethers.Interface(['function approve(address,uint256)', 'function multicall(bytes[])']);
@@ -460,29 +466,29 @@ async function freshBrowser() {
   check('T-H-03 and an unlimited approval one level down still gets its warning',
     /inner call is an unlimited approval/.test(t), t.slice(0, 600));
   await page.close();
-}
+});
 
 // ---- H-04: a read that failed is not a read that came back empty -----------------
-{
+await t("check-page: H-04: a read that failed is not a read that came back empty", async () => {
   const page = await open(browser, { codeUnreadable: [NASTY] });
   const t = await ask(page, NASTY, null, 5000);
   check('H-04 an unreadable code read is never called an ordinary wallet', !/ordinary wallet/.test(t), t.slice(0, 260));
   check('H-04 it says the chain would not answer', /could not read the code/.test(t), t.slice(0, 300));
   await page.close();
-}
+});
 
 // ---- H-04: and the same on a call, where the wrong answer is an all-clear --------
-{
+await t("check-page: H-04: and the same on a call, where the wrong answer is an all-clear", async () => {
   const page = await open(browser, { codeUnreadable: [NASTY] });
   const t = await ask(page, JSON.stringify({ to: NASTY, data: '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + 'f'.repeat(64) }), ME, 6000);
   check('H-04 a call to an unreadable address is not described as doing nothing',
     !/There is no contract at that address/.test(t), t.slice(0, 300));
   check('H-04 and the unknown is stated where the answer is', /could not be read/.test(t), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- H-05: a limit that hides things has to say so ------------------------------
-{
+await t("check-page: H-05: a limit that hides things has to say so", async () => {
   const page = await open(browser, {});
   const deep = await page.evaluate(([spender]) => {
     const iface = new window.ethers.Interface(['function approve(address,uint256)', 'function multicall(bytes[])']);
@@ -493,19 +499,19 @@ async function freshBrowser() {
   const t = await ask(page, JSON.stringify({ to: TOK, data: deep }), ME, 10000);
   check('H-05 calls nested past the limit are reported as not shown, never dropped', /are NOT shown/.test(t), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- H-05: an entry with no destination is still part of the request -------------
-{
+await t("check-page: H-05: an entry with no destination is still part of the request", async () => {
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify([{ to: NFT, data: '0x06fdde03' }, { input: '0x60806040', value: '0x0' }]), ME, 6000);
   check('H-05 a request entry with no destination is shown, not silently dropped',
     /2 calls, not one/.test(t) && /no destination this page can read/.test(t), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- M-01: the sentence says what it is a reading of ----------------------------
-{
+await t("check-page: M-01: the sentence says what it is a reading of", async () => {
   const verified = {};
   verified[NFT] = { is_verified: true, name: 'Test Collection', abi: [
     { type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'tokenId', type: 'uint256' }] },
@@ -515,10 +521,10 @@ async function freshBrowser() {
   check('M-01 the plain-English sentence is labelled as a convention, next to itself', /conventionally mean/.test(t), t.slice(0, 400));
   check('M-01 and the page does not claim to have read the code', !/decoded from the contract/.test(t), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- M-02: a proxy is not decoded against the forwarder's ABI -------------------
-{
+await t("check-page: M-02: a proxy is not decoded against the forwarder's ABI", async () => {
   const verified = {};
   verified[PROXY] = { is_verified: true, name: 'Forwarder', abi: [
     { type: 'function', name: 'approve', stateMutability: 'nonpayable', inputs: [{ name: 'spender', type: 'address' }, { name: 'value', type: 'uint256' }] },
@@ -528,10 +534,10 @@ async function freshBrowser() {
   check('M-02 a proxy whose implementation published nothing does not borrow the forwarder source',
     /the code it runs has published no source/.test(t) && !/source published and matched/.test(t), t.slice(0, 500));
   await page.close();
-}
+});
 
 // ---- H-05: the shape a wallet actually shows you --------------------------------
-{
+await t("check-page: H-05: the shape a wallet actually shows you", async () => {
   const page = await open(browser, {});
   const approval = '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + 'f'.repeat(64);
   const t = await ask(page, JSON.stringify({
@@ -544,30 +550,30 @@ async function freshBrowser() {
   check('H-05 and the approval buried in its second call is found',
     /unlimited approval/i.test(t), t.slice(0, 600));
   await page.close();
-}
+});
 
 // ---- M-01: a call in a batch is disclosed like a call on its own -----------------
-{
+await t("check-page: M-01: a call in a batch is disclosed like a call on its own", async () => {
   const page = await open(browser, { codeUnreadable: [NASTY] });
   const t = await ask(page, JSON.stringify([{ to: NFT, data: '0x06fdde03' }, { to: NASTY, data: '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + 'f'.repeat(64) }]), ME, 8000);
   check('M-01 an unreadable destination inside a batch is reported there too',
     /could not be read/.test(t), t.slice(0, 500));
   check('M-01 and the raw call is available for every element', /raw call/.test(t), t.slice(0, 500));
   await page.close();
-}
+});
 
 // ---- M-02: a beacon that will not answer is not the implementation ---------------
-{
+await t("check-page: M-02: a beacon that will not answer is not the implementation", async () => {
   const beacon = A(0xbea);
   const page = await open(browser, { beaconProxy: beacon, beaconSilent: true });
   const t = await ask(page, NASTY, null, 6000);
   check('M-02 a silent beacon leaves the implementation unknown rather than standing in for it',
     /beacon would not name the code/.test(t), t.slice(0, 500));
   await page.close();
-}
+});
 
 // ---- B-03: a request naming another chain is refused, not answered about this one ----
-{
+await t("check-page: B-03: a request naming another chain is refused, not answered about this one", async () => {
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify({
     method: 'wallet_sendCalls',
@@ -578,10 +584,10 @@ async function freshBrowser() {
     /for a different network/.test(t), t.slice(0, 300));
   check('B-03 and nothing about the address is presented', !/Test Collection/.test(t), t.slice(0, 300));
   await page.close();
-}
+});
 
 // ---- B-03/B-04: on the right chain it runs, in order, and says which -------------
-{
+await t("check-page: B-03/B-04: on the right chain it runs, in order, and says which", async () => {
   const page = await open(browser, { sequenceFailsAt: 1 });
   const t = await ask(page, JSON.stringify({
     method: 'wallet_sendCalls',
@@ -592,10 +598,10 @@ async function freshBrowser() {
     /run in order, call 2 fails/i.test(t), t.slice(0, 400));
   check('B-04 and all-or-nothing is spelled out', /none of it would happen/i.test(t), t.slice(0, 500));
   await page.close();
-}
+});
 
 // ---- B-02: two requests, two chains, judged separately ---------------------------
-{
+await t("check-page: B-02: two requests, two chains, judged separately", async () => {
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify([
     { method: 'wallet_sendCalls', params: [{ chainId: '0x1237', from: A(0x1111), atomicRequired: true, calls: [{ to: NFT, data: '0x06fdde03' }] }] },
@@ -606,10 +612,10 @@ async function freshBrowser() {
     /Request 1 of 2: this request is for a different network/.test(t), t.slice(0, 500));
   check('B-02 while the one for this chain is still read', /Request 2 of 2/.test(t), t.slice(0, 600));
   await page.close();
-}
+});
 
 // ---- B-03: the sender that is simulated is the sender that is described ----------
-{
+await t("check-page: B-03: the sender that is simulated is the sender that is described", async () => {
   // the mock records every `from` the page asks the node to simulate as, on this object
   const seen = {};
   const page = await open(browser, seen);
@@ -621,10 +627,10 @@ async function freshBrowser() {
     senders.length > 0 && senders.every((f) => String(f).toLowerCase() === '0x000000000000000000000000000000000000dead'),
     JSON.stringify(senders.slice(0, 4)));
   await page.close();
-}
+});
 
 // ---- B-04: no all-calls verdict when a call could not be included ----------------
-{
+await t("check-page: B-04: no all-calls verdict when a call could not be included", async () => {
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify([{ to: NFT, data: '0x06fdde03' }, { input: '0x60806040', value: '0x0' }]), ME, 7000);
   check('B-04 an unsimulatable entry withholds the all-calls verdict',
@@ -632,10 +638,10 @@ async function freshBrowser() {
   check('B-04 and says why the sequence cannot be judged',
     /cannot be checked as a sequence/.test(t), t.slice(0, 400));
   await page.close();
-}
+});
 
 // ---- B-01: a call cannot name its own sender in a wallet_sendCalls request -------
-{
+await t("check-page: B-01: a call cannot name its own sender in a wallet_sendCalls request", async () => {
   const seen = {};
   const page = await open(browser, seen);
   await page.fill('#input', JSON.stringify({
@@ -649,10 +655,10 @@ async function freshBrowser() {
   check('B-01 and the contradiction is pointed out',
     /contradicts itself about who sends it/.test(await page.textContent('#out')), (await page.textContent('#out')).slice(0, 300));
   await page.close();
-}
+});
 
 // ---- round 14 B-03: an unread top-level request taints the whole pasted set -------
-{
+await t("check-page: round 14 B-03: an unread top-level request taints the whole pasted set", async () => {
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify([
     { jsonrpc: '2.0', id: 1, method: 'personal_sign', params: ['0xdead', ME] },
@@ -667,10 +673,10 @@ async function freshBrowser() {
     /Request 2 of 2: run in order, every call succeeds — as read here/.test(t)
       && /no result below is a verdict on the pasted set/.test(t), t.slice(0, 1000));
   await page.close();
-}
+});
 
 // ---- round 15 B-03: one JSON-RPC transaction keeps its own sender ----------------
-{
+await t("check-page: round 15 B-03: one JSON-RPC transaction keeps its own sender", async () => {
   const seen = {};
   const page = await open(browser, seen);
   const declared = A(0x1111), ui = A(0x2222);
@@ -684,8 +690,8 @@ async function freshBrowser() {
   check('round-15 B-03 the single transaction surfaces the sender mismatch and says the request wins',
     /request names a different sender than the box/.test(t) && /request wins/.test(t), t.slice(0, 800));
   await page.close();
-}
-{
+});
+await t("check-page: round-15 B-03 an unreadable explicit sender is surfaced for a single transaction", async () => {
   const seen = {};
   const page = await open(browser, seen);
   const t = await ask(page, JSON.stringify({
@@ -699,10 +705,10 @@ async function freshBrowser() {
     // the negative check passed even with the pill present (round sixteen S-01).
     !/would succeed/.test(t) && !/run in order, every call succeeds(?! — as read here)/.test(t), t.slice(0, 900));
   await page.close();
-}
+});
 
 // ---- B-02: separate transactions are not one sequence ---------------------------
-{
+await t("check-page: B-02: separate transactions are not one sequence", async () => {
   const seen = {};
   const page = await open(browser, seen);
   await page.fill('#input', JSON.stringify([
@@ -716,10 +722,10 @@ async function freshBrowser() {
   const together = (seen.__simBatches || []).some((n) => n > 1);
   check('B-02 and they are never simulated together', !together, JSON.stringify(seen.__simBatches));
   await page.close();
-}
+});
 
 // ---- B-03: not required to be atomic is not a promise that earlier calls survive --
-{
+await t("check-page: B-03: not required to be atomic is not a promise that earlier calls survive", async () => {
   const page = await open(browser, { sequenceFailsAt: 1 });
   const t = await ask(page, JSON.stringify({
     method: 'wallet_sendCalls',
@@ -729,10 +735,10 @@ async function freshBrowser() {
     !/would still happen/.test(t), t.slice(0, 400));
   check('B-03 it states the range instead', /is not settled/.test(t), t.slice(0, 500));
   await page.close();
-}
+});
 
 // ---- S-03: a chain id that cannot be read is not "no chain named" ----------------
-{
+await t("check-page: S-03: a chain id that cannot be read is not \"no chain named\"", async () => {
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify({
     method: 'wallet_sendCalls',
@@ -741,13 +747,13 @@ async function freshBrowser() {
   check('S-03 an unreadable chain id refuses rather than defaulting to this page\'s network',
     /names a network that cannot be read/.test(t), t.slice(0, 300));
   await page.close();
-}
+});
 
 // ---- S-01: a near-miss request is not tidied into a clean answer -----------------
 // A wallet may refuse anything that does not match the EIP-5792 schema, so a page that coerces the value into
 // something readable is describing a request that will not necessarily run, in the voice it uses for ones
 // that will. Each of these is the auditor's own input.
-{
+await t("check-page: S-01: a near-miss request is not tidied into a clean answer", async () => {
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify({
     method: 'wallet_sendCalls',
@@ -759,8 +765,8 @@ async function freshBrowser() {
   check('S-01 and the request is named as one a wallet may refuse',
     /not a valid wallet_sendCalls request/.test(t), t.slice(0, 400));
   await page.close();
-}
-{
+});
+await t("check-page: S-01 a numeric chainId is not accepted in place of the required hex string", async () => {
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify({
     method: 'wallet_sendCalls',
@@ -771,8 +777,8 @@ async function freshBrowser() {
   check('S-01 and nothing about the destination is presented',
     !/Test/.test(t), t.slice(0, 400));
   await page.close();
-}
-{
+});
+await t("check-page: S-01 a broken member of a pasted list is named by its position, not skipped", async () => {
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify([{ to: NFT, data: '0x06fdde03' }, null, 'junk']), ME, 7000);
   check('S-01 a broken member of a pasted list is named by its position, not skipped',
@@ -780,8 +786,8 @@ async function freshBrowser() {
   check('S-01 and the page says what is shown is not all of what was pasted',
     /not the whole of what was pasted/.test(t), t.slice(0, 500));
   await page.close();
-}
-{
+});
+await t("check-page: the same thing one level down, where the list is the request's own calls array", async () => {
   // the same thing one level down, where the list is the request's own calls array
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify({
@@ -796,12 +802,12 @@ async function freshBrowser() {
   check('S-01 so no verdict is offered for the sequence',
     !/every call succeeds/.test(t) && /cannot be checked as a sequence/.test(t), t.slice(0, 900));
   await page.close();
-}
+});
 
 // ---- B-03 (round ten): a request is not read until every normative field is read ---------------
 // The round-nine schema check was partial, which is worse than absent: it made the page look like it had read
 // a request it had only skimmed. This is the auditor's exact input.
-{
+await t("check-page: B-03 (round ten): a request is not read until every normative field is read", async () => {
   const page = await open(browser, {});
   const r = await page.evaluate(() => {
     const j = { method: 'wallet_sendCalls', params: [{ chainId: '0xb626', atomicRequired: true, id: 7,
@@ -825,9 +831,9 @@ async function freshBrowser() {
     r.caps === 'not-an-object' && r.callCaps === 'not-an-object', JSON.stringify([r.caps, r.callCaps]));
   check('B-03 and the id is kept too', r.id === 7, JSON.stringify(r.id));
   await page.close();
-}
+});
 // ---- and a request carrying capabilities gets no whole-request verdict ------------------------
-{
+await t("check-page: and a request carrying capabilities gets no whole-request verdict", async () => {
   const page = await open(browser, {});
   const t = await ask(page, JSON.stringify({ method: 'wallet_sendCalls', params: [{ version: '2.0.0',
     chainId: '0xb626', from: ME, atomicRequired: true, capabilities: { paymasterService: { url: 'https://x' } },
@@ -841,11 +847,11 @@ async function freshBrowser() {
   check('and it says plainly that this is not a verdict on the request',
     !/every call succeeds/.test(t) || /not a verdict on the request/.test(t), t.slice(0, 600));
   await page.close();
-}
+});
 
 // ---- round eleven, the four blocking findings on this page ---------------------------------------------
 // Each of these was answered confidently and wrongly, in the sentence a non-technical reader actually reads.
-{
+await t("check-page: round eleven, the four blocking findings on this page", async () => {
   const MAXW = 'f'.repeat(64);
   const approveMax = '095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + MAXW;
 
@@ -916,9 +922,8 @@ async function freshBrowser() {
       /token id or amount/.test(t.split('The arguments')[0] || t), t.slice(0, 260));
     await page.close();
   }
-}
+});
 
 await browser.close();
-console.log(results.join('\n'));
-console.log('\n' + pass + ' passed, ' + fail + ' failed');
+console.log('\n' + summaryLine(pass, fail));
 process.exit(fail ? 1 : 0);
