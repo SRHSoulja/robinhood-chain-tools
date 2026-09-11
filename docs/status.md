@@ -1,6 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 11 September 2026, against BulkSend **v13** and round seventeen.
+Last updated 11 September 2026, against BulkSend **v13** and round eighteen.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -25,7 +25,7 @@ for three deployments, which is exactly why the rule is written down: available 
 nonce is 0.
 
 Current unreleased validation, 11 September 2026: the complete current-tree gate passed all five ordinary
-contract test files, 355/355 airdrop-page tests, 129/129 Check-page tests, and 21/21 publish-policy checks.
+contract test files, 362/362 airdrop-page tests, 129/129 Check-page tests, and 21/21 publish-policy checks.
 Every historical probe is now bound both to its complete source hash and to its exact assertion names and
 statuses; an ordinary Solidity failure can no longer hide by borrowing a probe-style function name. The
 reproducible WalletConnect rebuild matched its shipped and expected SHA-256. The separate read-only mainnet
@@ -38,10 +38,10 @@ tokens were accepted. No transaction was signed or broadcast and no ETH was spen
 ```
 ./test.sh                              # everything below except the live scripts
 forge test                             # 111 contract tests, plus 29 reviewer probes of which 9 must FAIL
-node test/web/client.test.mjs          # 355 airdrop page tests
+node test/web/client.test.mjs          # 362 airdrop page tests
 node test/web/check.test.mjs           # 129 Check page tests
 ./test/csp-gate.test.sh                #  21 checks that a weaker published CSP is refused
-node test/worker.test.mjs              #  23 checks on the Worker's mainnet explorer translation, offline
+node test/worker.test.mjs              #  31 checks on the Worker's mainnet explorer translation, offline
 forge test --match-path 'test/fork/MainnetGuards.t.sol'   # the paste guards against 20 real mainnet
                                        #   collections and 20 real tokens, on a read-only fork
 ```
@@ -140,6 +140,34 @@ ERC-1155 survey covers 6, which is every one that was findable and measurable. S
 a distribution, only its top, and the file says so.
 
 ## Open findings
+
+Round eighteen, 11 September 2026, against `79d6446`, on Opus. The full report is
+[`audit-2026-09-11-eighteenth-external.md`](audit-2026-09-11-eighteenth-external.md), published as written.
+**One release blocker**, live at the time: the Worker's new mainnet explorer translation read every unverified
+contract as verified, because a module-API answer that was not an answer (an unverified record with no ABI
+key, a rate-limit envelope, a rejected key, an unknown transaction) was translated into a field instead of
+into "could not check". Its probe is `test/web/audit-probe-18.mjs`.
+
+### Round eighteen findings
+
+| | | |
+| --- | --- | --- |
+| B-1 | every unverified mainnet contract read as verified, in green, on the live Check page | **closed**: every translated path requires the module API's success shape or returns the upstream-error envelope; verified means a non-empty ABI string was published; fixtures are verbatim captures of the real answers for an unverified contract, a rate limit, a rejected key and an unknown transaction |
+| B-2 | the same absence-is-an-answer defect in the other three paths | closed, same rule |
+| B-3 | an upstream error mid-way through the NFT inventory walk ended it as a complete inventory | closed: the envelope; and the twenty-page ceiling now says truncated |
+| S-1 | `0xabc,1,2,3` was three deliveries to the parser and the picker and one to Assign | closed: the shared quantity reader knows the multi-id form |
+| S-2 | the holder snapshot waited without Assign's guard; a network change mid-read blended two chains | closed: chain, address and account captured; the walk asks the captured chain; nothing written if any moved |
+| S-3 | the evidence gate did not fingerprint the Worker and publish-gate suites | closed |
+| S-4 | three regression tests proved less than their names | closed: the round-17 S-3 and gate-10 run-4 tests assert the positive, read mid-send |
+| S-5 | a failure reason found by re-running was headed as the reason at the time | closed: headed as today's answer |
+| S-6 | Assign re-paired an already-paired list without asking (round seventeen's S-2) | closed: it asks first; a No leaves the list untouched |
+| S-7 | the Worker edge-cached a failed upstream answer for a minute | closed: module subrequests are not edge-cached |
+| S-8 | the key in the subrequest URL was part of the edge cache key | closed by the same change |
+| S-9 | no gate covered the key's quota running out | recorded: a quota-out is now the envelope, which every reader treats as "could not check"; the integrity step reads a real holders page and two known contracts four times a day |
+| S-10 | the test run, the mid-send re-check and the gas estimate still read through the wallet's RPC | closed: the reads run on the page's RPC; the gas limit is estimated there and refused before broadcast if it cannot be |
+
+All seven of the reviewer's probe assertions read fixed. Every closure is against the reviewer's own
+reproduction or a verbatim capture, not against an argument.
 
 Round seventeen, 11 September 2026, against `4cc8a1c`. The full report is
 [`audit-2026-09-11-seventeenth-external.md`](audit-2026-09-11-seventeenth-external.md), published as written.

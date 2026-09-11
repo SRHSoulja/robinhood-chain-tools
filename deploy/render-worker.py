@@ -70,15 +70,23 @@ def render(src, target, wc_bundle, wc_sha, csp_hash):
         u.searchParams.set('apikey', env.BLOCKSCOUT_KEY);
         let r;
         try {
+          // Round eighteen S-7 and S-8: these subrequests are not cached at the edge. Cached for a minute, a NOTOK
+          // answer was everyone's answer for a minute, and the key in the URL was part of the cache key. Good
+          // answers are cached by this Worker's own response header; failures carry no-store.
           r = await fetch(u.toString(), {
             headers: { accept: 'application/json' },
             signal: AbortSignal.timeout(10000),
-            cf: { cacheEverything: true, cacheTtl: 60 },
+            cf: { cacheTtl: 0 },
           });
         } catch (e) { return { ok: false, status: 0 }; }
         const ct = String(r.headers.get('content-type') || '');
         if (!r.ok || !ct.includes('json')) return { ok: false, status: r.status };
-        try { return { ok: true, json: await r.json() }; } catch (e) { return { ok: false, status: r.status }; }
+        let json; try { json = await r.json(); } catch (e) { return { ok: false, status: r.status }; }
+        // Round eighteen B-1/B-2: a 200 with {"status":"0"} (not found, rate limit, NOTOK) or with no status at
+        // all ({"error":"Unauthorized"}) is not an answer, and deriving anything from it invented a field --
+        // every unverified contract read as verified. Only the success shape gets past this line.
+        if (!json || String(json.status || '') !== '1') return { ok: false, status: r.status };
+        return { ok: true, json };
       };
 
       let mm;
@@ -86,7 +94,8 @@ def render(src, target, wc_bundle, wc_sha, csp_hash):
         const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10) || 1);
         const res = await mod({ module: 'token', action: 'getTokenHolders', contractaddress: mm[1], page: String(page), offset: '100' });
         if (!res.ok) return upstreamFail(res.status);
-        const result = Array.isArray(res.json.result) ? res.json.result : [];
+        if (!Array.isArray(res.json.result)) return upstreamFail(res.status || 200);
+        const result = res.json.result;
         return upstreamOk({
           items: result.map((h) => ({ address: { hash: h.address }, value: h.value })),
           next_page_params: result.length === 100 ? { page: page + 1 } : null,
@@ -99,10 +108,11 @@ def render(src, target, wc_bundle, wc_sha, csp_hash):
         // at a time so the free tier's 5-requests-a-second limit is never burst. It stops as soon as a page
         // comes back short, which is the end of this address's history.
         const held = new Map();   // "contract|id" (lowercased) -> [net count, original contract, original id]
+        let hitCeiling = false;
         for (let page = 1; page <= 20; page++) {
           const res = await mod({ module: 'account', action: 'tokennfttx', address: mm[1], page: String(page), offset: '100', sort: 'desc' });
-          if (!res.ok) return upstreamFail(res.status);
-          const result = Array.isArray(res.json.result) ? res.json.result : [];
+          if (!res.ok || !Array.isArray(res.json.result)) return upstreamFail(res.status || 200);   // B-3: not a shorter inventory
+          const result = res.json.result;
           for (const t of result) {
             const key = String(t.contractAddress).toLowerCase() + '|' + String(t.tokenID);
             const cur = held.get(key) || [0, t.contractAddress, t.tokenID];
@@ -112,8 +122,9 @@ def render(src, target, wc_bundle, wc_sha, csp_hash):
             held.set(key, cur);
           }
           if (result.length < 100) break;
+          if (page === 20) hitCeiling = true;   // B-3: the walk stopped because of this limit, not because it was done
         }
-        let truncated = false;
+        let truncated = hitCeiling;
         let entries = [...held.values()].filter((e) => e[0] > 0);
         if (entries.length > 2000) { entries = entries.slice(0, 2000); truncated = true; }
         return upstreamOk({
@@ -125,7 +136,8 @@ def render(src, target, wc_bundle, wc_sha, csp_hash):
       if ((mm = x[2].match(/^\\/transactions\\/(0x[0-9a-fA-F]{64})$/))) {
         const res = await mod({ module: 'transaction', action: 'gettxinfo', txhash: mm[1] });
         if (!res.ok) return upstreamFail(res.status);
-        const r = res.json.result || {};
+        if (!res.json.result || typeof res.json.result !== 'object') return upstreamFail(res.status || 200);
+        const r = res.json.result;
         const success = r.success === true || r.success === 'true';
         const out = { hash: mm[1], status: success ? 'ok' : 'error', from: { hash: r.from || null }, to: { hash: r.to || null } };
         if (r.revertReason) out.revert_reason = r.revertReason;
@@ -134,8 +146,13 @@ def render(src, target, wc_bundle, wc_sha, csp_hash):
       if ((mm = x[2].match(/^\\/smart-contracts\\/(0x[0-9a-fA-F]{40})$/))) {
         const res = await mod({ module: 'contract', action: 'getsourcecode', address: mm[1] });
         if (!res.ok) return upstreamFail(res.status);
-        const r = (Array.isArray(res.json.result) ? res.json.result[0] : null) || {};
-        const isVerified = r.ABI !== 'Contract source code not verified';
+        const arr = Array.isArray(res.json.result) ? res.json.result : null;
+        if (!arr || !arr.length || typeof arr[0] !== 'object') return upstreamFail(res.status || 200);
+        const r = arr[0];
+        // An unverified contract on this chain answers status "1" with a record holding only its Address (captured
+        // 11 September 2026): no ABI key at all. So verified means a non-empty ABI string was published, and
+        // nothing else; the old test read a missing ABI as verified.
+        const isVerified = typeof r.ABI === 'string' && r.ABI.trim() !== '' && r.ABI !== 'Contract source code not verified';
         let abi = [];
         if (isVerified) { try { abi = JSON.parse(r.ABI); } catch (e) { abi = []; } }
         return upstreamOk({

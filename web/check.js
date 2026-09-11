@@ -726,12 +726,12 @@
     const failed = rc && rc.status === 0;
 
     // A receipt says a transaction failed but not why. Running it again against today's state usually does.
-    let why = null;
+    let why = null; let whyFromRerun = false;
     if (failed) {
       const ex = (await explorerJson('/transactions/' + hash)).data;
       if (ex && ex.revert_reason) why = typeof ex.revert_reason === 'string' ? ex.revert_reason : decodeRevert(ex.revert_reason.raw || '0x', target && target.abi ? new ethers.Interface(target.abi) : null);
       if (!why) {
-        try { const s = await simulate({ from: tx.from, to: tx.to, data: tx.data, value: tx.value }); if (!s.ok) why = decodeRevert(s.reason, target && target.abi ? new ethers.Interface(target.abi) : null); }
+        try { const s = await simulate({ from: tx.from, to: tx.to, data: tx.data, value: tx.value }); if (!s.ok) { why = decodeRevert(s.reason, target && target.abi ? new ethers.Interface(target.abi) : null); whyFromRerun = true; } }
         catch (e) {}
       }
     }
@@ -752,7 +752,8 @@
           tx && tx.value > 0n ? h('span', { class: 'pill warn', text: ethers.formatEther(tx.value) + ' ETH attached' }) : null,
           parsed.source ? h('span', { class: 'pill', text: 'read against ' + parsed.source }) : null,
         ]),
-        failed && why ? note('bad', 'Why it failed', why) : null,
+        // Round eighteen S-5: a reason found by running it again is today's answer, not necessarily then's.
+        failed && why ? note('bad', whyFromRerun ? 'Running it again now fails with' : 'Why it failed', why + (whyFromRerun ? ' That is today\u2019s answer. The reason it failed at the time may have been different.' : '')) : null,
         kv([
           ['From', link(tx ? tx.from : rc.from, short(tx ? tx.from : rc.from))],
           // "a new contract" is what an absent `to` means on a transaction that was read. On one that was not

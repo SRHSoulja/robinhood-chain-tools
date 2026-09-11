@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-fVSIkJ/4A2Ia6jA+8PD4/SCu/0527ZcR87u58Oryczg='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-SVyU9wp955CPcgg/fbdREEmqT6n6wUxnyUdRlh1Kz0c='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -443,10 +443,12 @@
   // directly; where this page is served by its own worker there is a read-only passthrough at /x/<chain>,
   // the same one Check uses (see check.js, "route === 'direct'"). Testnet answers a browser directly, so it
   // keeps going straight there.
-  const EXPLORER_API = () => (chainId() === 4663 && location.origin.endsWith('gmgnrepeat.com')
+  // The chain is a parameter, not a live read: a walk of many pages that started on one network must not send
+  // its later pages to another network's explorer because the dropdown moved (round eighteen S-1).
+  const EXPLORER_API = (chain = chainId()) => (chain === 4663 && location.origin.endsWith('gmgnrepeat.com')
     ? '/x/4663'
-    : chainId() === 4663 ? 'https://robinhoodchain.blockscout.com/api/v2' : 'https://explorer.testnet.chain.robinhood.com/api/v2');
-  async function explorer(path) { const r = await fetch(EXPLORER_API() + path, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error('explorer ' + r.status); return r.json(); }
+    : chain === 4663 ? 'https://robinhoodchain.blockscout.com/api/v2' : 'https://explorer.testnet.chain.robinhood.com/api/v2');
+  async function explorer(path, chain = chainId()) { const r = await fetch(EXPLORER_API(chain) + path, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error('explorer ' + r.status); return r.json(); }
   (async () => { try { const r = await fetch('https://api.coinbase.com/v2/prices/ETH-USD/spot'); ethUsd = Number((await r.json()).data.amount) || null; plan(); } catch (e) {} })();
 
   // What kind of token is this? ERC-165 answers it, so the user does not have to know.
@@ -977,6 +979,11 @@
     const parts = cells.filter(Boolean);
     const mult = parts.slice(1).find((x) => /^x\d+$/i.test(x));
     if (mult) return { n: wholeNumber(mult.slice(1)), raw: mult, named: false };
+    // Round eighteen S-1: "0xabc,1,2,3" is three deliveries to the parser and the picker, and was one to this
+    // reader, so Assign silently dropped two of them. Same rule as deliveriesOn: several whole numbers after
+    // the address are that many ids.
+    const rest = parts.slice(1);
+    if (rest.length > 1 && rest.every((x) => wholeText(x) !== null)) return { n: rest.length, raw: rest.join(','), named: false };
     return { n: fallback, raw: String(fallback), named: false };
   }
   // Some addresses are not recipients. The zero address burns; BulkSend has no owner and no rescue function,
@@ -1880,9 +1887,14 @@
       const rpBlock = new ethers.JsonRpcProvider(cfg().rpc);
       const startBlock = await rpBlock.getBlockNumber().catch(() => null);
       log('Reading holders of ' + addr.slice(0, 10) + '… from the explorer.');
+      // Round eighteen S-1: the same guard Assign has. Everything this read depends on is captured here, the
+      // walk asks the captured chain's explorer, and nothing is written if any of it moved meanwhile.
+      const chainAtStart = chainId(); const meAtStart = me;
+      const moved = () => chainId() !== chainAtStart ? 'the network' : $('snapAddr').value.trim() !== addr ? 'the collection address' : me !== meAtStart ? 'the connected account' : null;
       const holders = []; const heldBy = new Map(); let next = ''; let truncated = false;
       for (let page = 0; page < 200; page++) {
-        const d = await explorer('/tokens/' + addr + '/holders' + (next ? '?' + next : ''));
+        if (moved()) { const w = moved(); say('msgList', 'Fetch stopped: ' + w + ' changed while the holders were being read. Nothing has been changed. Press Fetch again.', 'bad'); log('Fetch stopped because ' + w + ' changed mid-read; the box is exactly as you left it.', 'bad'); return; }
+        const d = await explorer('/tokens/' + addr + '/holders' + (next ? '?' + next : ''), chainAtStart);
         for (const it of (d.items || [])) {
           const h = (it.address || {}).hash; if (!h) continue;
           // The explorer says how many each wallet holds. Keeping it is the difference between "one each"
@@ -1903,6 +1915,7 @@
       if (startBlock && endBlock && endBlock !== startBlock) {
         log('The chain moved from block ' + startBlock + ' to ' + endBlock + ' while this was being read. Those two numbers do not say which block the explorer had indexed, so they neither prove nor disprove that this list is consistent: someone who traded mid-read can appear twice or not at all.', 'warn');
       }
+      if (moved()) { const w = moved(); say('msgList', 'Fetch stopped: ' + w + ' changed while the holders were being read. Nothing has been changed. Press Fetch again.', 'bad'); log('Fetch stopped because ' + w + ' changed mid-read; the box is exactly as you left it.', 'bad'); return; }
       if (!confirmOverwrite()) return;
       $('list').value = uniq.join('\n');
       // Some holders are contracts: marketplace escrows, vaults, bridges. Tokens sent there are usually stuck.
@@ -1923,7 +1936,7 @@
       } catch (e) {}
       // Remember what they hold, so the proportional options below have something to work from.
       snap = {
-        chain: chainId(), collection: ethers.getAddress(addr), block: endBlock || startBlock || null,
+        chain: chainAtStart, collection: ethers.getAddress(addr), block: endBlock || startBlock || null,
         holdings: new Map([...heldBy].filter(([a]) => uniq.includes(a))), wallets: new Set(uniq),
       };
       const total = [...snap.holdings.values()].reduce((a, b) => a + b, 0);
@@ -2132,6 +2145,17 @@
       wants.push({ to: addr, n: q });
     }
     if (!wants.length) { say('msgList', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
+    // Round eighteen S-6 (round seventeen S-2): a list that already names an id on every line is a list that
+    // has been paired. Assign would re-pair it at random and say so only afterwards. Ask first.
+    {
+      const alreadyPaired = $('list').value.split(/\r?\n/).filter((l) => addressOn(l, col)).every((l) => {
+        const rest = splitRow(l.trim()).filter(Boolean).slice(1).filter((x) => !/^x\d+$/i.test(x));
+        return rest.length > 0 && rest.every((x) => wholeText(x) !== null);
+      });
+      if (alreadyPaired && !confirm('Every line already names its token ids. Assign would throw those pairings away and pair the wallets with your holdings again. Continue?')) {
+        say('msgList', 'Left as it is: every line already names its ids.', 'ok'); return;
+      }
+    }
     const wallets = wants.map(w => w.to);
     const totalWanted = wants.reduce((a, w) => a + w.n, 0);
     const sourceBeforeAssign = $('list').value;
@@ -3092,12 +3116,14 @@
       return { ok: good.length > 0, willDeliver: good.length, willSkip: bad.length, good, bad, list: ordered, why: good.length ? '' : 'none of these transfers would go through' };
     }
     let bulk;
-    try { bulk = new ethers.Contract(cfg().bulk, BULK_ABI, await new ethers.BrowserProvider(eth).getSigner()); }
+    // Round eighteen S-10: a read, so it goes to the page's RPC (gate 9's list), not the wallet's node. The
+    // wallet answers only what only it can: the account, the chain, and the signature.
+    try { bulk = new ethers.Contract(cfg().bulk, BULK_ABI, new ethers.JsonRpcProvider(cfg().rpc)); }
     catch (e) { return { ok: false, why: 'could not reach the wallet: ' + String(e.shortMessage || e.message) }; }
     const bs = batchSize(); let willDeliver = 0, willSkip = 0;
     for (let i = 0; i < ordered.length; i += bs) {
       const chunk = ordered.slice(i, i + bs); const [fn, args] = callArgs(chunk);
-      try { const res = await bulk[fn].staticCall(...args); willDeliver += Number(res[0]); willSkip += Number(res[1]); }
+      try { const res = await bulk[fn].staticCall(...args, { from: me }); willDeliver += Number(res[0]); willSkip += Number(res[1]); }
       catch (e) { const why = explainCallError(e); log('Test run stopped at batch ' + (Math.floor(i / bs) + 1) + ': ' + why, 'bad'); return { ok: false, why }; }
     }
     if (verbose) {
@@ -3293,6 +3319,8 @@
     const list = pre.list;   // exactly what the test run simulated, in the order it will go out
     if (std() !== '20' && list.length > 1 && String(list[0].id) !== String(rows[0].id)) log('Delivering in ascending token id order, which is much cheaper on lazily-minted collections. Everyone still gets the id you listed for them.');
     const bulkAddr = cfg().bulk, bulk = new ethers.Contract(bulkAddr, BULK_ABI, signer);
+    const pageRpc = new ethers.JsonRpcProvider(cfg().rpc);
+    const bulkRead = new ethers.Contract(bulkAddr, BULK_ABI, pageRpc);   // round eighteen S-10: reads on the page's RPC
     const bs = batchSize(); let sent = 0, skipped = 0;
     try {
       for (let i = 0; i < list.length; i += bs) {
@@ -3303,7 +3331,7 @@
         // so has everyone else, so each batch is checked again against the state it will actually meet.
         if (i > 0) {
           try {
-            const res = await bulk[fn].staticCall(...args);
+            const res = await bulkRead[fn].staticCall(...args, { from: me });
             if (Number(res[0]) === 0) { log('Stopped before batch ' + (Math.floor(i / bs) + 1) + ': as the chain stands now, none of it would be delivered. Nothing further was sent.', 'bad'); break; }
           } catch (e) { log('Stopped before batch ' + (Math.floor(i / bs) + 1) + ': ' + explainCallError(e) + '. The chain has changed since the test run, so nothing further was sent.', 'bad'); break; }
         }
@@ -3338,6 +3366,10 @@
         let tx;
         try {
           const req = await bulk[fn].populateTransaction(...args, onThisChain());
+          // Round eighteen S-10: without a gasLimit, sendUncheckedTransaction estimates through the wallet's node.
+          // Estimate on the page's RPC, with a tenth of headroom, and refuse before broadcast if it cannot.
+          req.from = me;
+          req.gasLimit = (await pageRpc.estimateGas(req)) * 110n / 100n;
           const hash = await signer.sendUncheckedTransaction(req);
           tx = { hash, to: bulkAddr, data: planned, value: 0n };
         } catch (err) {

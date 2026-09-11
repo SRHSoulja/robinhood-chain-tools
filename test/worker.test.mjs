@@ -58,33 +58,53 @@ const SC_UNVERIFIED = addrN(0x5eef);
 const SC_PROXY = addrN(0x5ee0);
 const SC_IMPL = addrN(0x5ee1);
 const VERIFIED_ABI = [{ type: 'function', name: 'foo', inputs: [], outputs: [], stateMutability: 'view' }];
+// Round eighteen: the shapes the module API answers when there is NO answer, captured verbatim on chain 4663.
+// An unverified contract is status "1" with a record holding only its Address -- no ABI key at all -- which the
+// first translation read as verified. A rate limit, a rejected key and an unknown transaction are below.
+const SC_UNVERIFIED_REAL = addrN(0x0259);   // {"message":"OK","result":[{"Address":"0x…"}],"status":"1"}
+const SC_RATELIMIT = addrN(0x11a7);         // {"status":"0","message":"NOTOK","result":"Max rate limit reached"}
+const SC_BADKEY = addrN(0xbad1);            // {"error":"Unauthorized"}  (no status field at all)
+const TX_NOTFOUND = '0x' + 'c3'.repeat(32); // {"message":"Transaction not found","result":null,"status":"0"}
+const HOLDERS_NOT_A_TOKEN = addrN(0x0001);  // {"message":"OK","result":[],"status":"1"}
+const WALLET_MIDWALK = addrN(0x3a1d);       // page 1 full, page 2 a NOTOK envelope
+const WALLET_CEILING = addrN(0xce11);       // twenty full pages
 
 // ---------- the fake upstream: api.blockscout.com (module API), and both direct explorer hosts ----------
 const okJson = (body) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
 
 function makeFetch(callLog) {
-  return async function fetchMock(url) {
+  return async function fetchMock(url, init) {
     const u = new URL(String(url));
     if (u.hostname === 'api.blockscout.com') {
       callLog.push(u.toString());
+      (fetchMock.inits = fetchMock.inits || []).push(init || {});
       const mod = u.searchParams.get('module'), action = u.searchParams.get('action');
       if (mod === 'token' && action === 'getTokenHolders') {
         const page = u.searchParams.get('page');
+        if (String(u.searchParams.get('contractaddress') || '').toLowerCase() === HOLDERS_NOT_A_TOKEN.toLowerCase()) return okJson({ message: 'OK', result: [], status: '1' });
         const result = page === '2' ? holdersPage2 : holdersPage1;
         return okJson({ status: '1', message: 'OK', result });
       }
       if (mod === 'account' && action === 'tokennfttx') {
         const page = u.searchParams.get('page');
+        const who = String(u.searchParams.get('address') || '').toLowerCase();
+        const fullPage = (n) => Array.from({ length: 100 }, (_, i) => ({ contractAddress: COLLECTION, tokenID: String(n * 1000 + i), from: ZERO, to: who, hash: '0x' + '77'.repeat(32), blockNumber: String(n * 100 + i) }));
+        if (who === WALLET_MIDWALK.toLowerCase()) return page === '1' ? okJson({ status: '1', message: 'OK', result: fullPage(1) }) : okJson({ status: '0', message: 'NOTOK', result: 'Max rate limit reached' });
+        if (who === WALLET_CEILING.toLowerCase()) return okJson({ status: '1', message: 'OK', result: fullPage(Number(page)) });
         return okJson({ status: '1', message: 'OK', result: page === '1' ? nftRecords : [] });
       }
       if (mod === 'transaction' && action === 'gettxinfo') {
         const hash = u.searchParams.get('txhash');
+        if (hash === TX_NOTFOUND) return okJson({ message: 'Transaction not found', result: null, status: '0' });
         if (hash === TX_REVERTED) return okJson({ status: '1', message: 'OK', result: { success: false, revertReason: 'Ownable: caller is not the owner', from: TX_FROM, to: TX_TO, input: '0xdeadbeef', logs: [] } });
         if (hash === TX_OK) return okJson({ status: '1', message: 'OK', result: { success: true, revertReason: '', from: TX_FROM, to: TX_TO, input: '0x', logs: [] } });
         return okJson({ status: '0', message: 'NOTOK', result: 'not found' });
       }
       if (mod === 'contract' && action === 'getsourcecode') {
         const addr = String(u.searchParams.get('address') || '').toLowerCase();
+        if (addr === SC_UNVERIFIED_REAL.toLowerCase()) return okJson({ message: 'OK', result: [{ Address: SC_UNVERIFIED_REAL }], status: '1' });
+        if (addr === SC_RATELIMIT.toLowerCase()) return okJson({ status: '0', message: 'NOTOK', result: 'Max rate limit reached' });
+        if (addr === SC_BADKEY.toLowerCase()) return okJson({ error: 'Unauthorized' });
         if (addr === SC_VERIFIED.toLowerCase()) return okJson({ status: '1', message: 'OK', result: [{
           ABI: JSON.stringify(VERIFIED_ABI), ContractName: 'Foo', CompilerVersion: 'v0.8.19+commit.7dd6d404',
           OptimizationUsed: '1', Runs: '200', EVMVersion: 'paris', IsProxy: 'false', ImplementationAddress: '',
@@ -172,6 +192,28 @@ async function run() {
       !b.items.some((it) => it.id === NFT_ID_NOT_HELD), JSON.stringify(b.items));
     check('nft inventory: next_page_params is null (the whole inventory is one answer)', b.next_page_params === null, b.next_page_params);
     check('nft inventory: truncated is false (well under the 2,000-id cap)', b.truncated === false, b.truncated);
+    // ---- round eighteen: an absence is never an answer ----
+    {
+      globalThis.fetch = makeFetch([]);
+      const env18 = KEYED_ENV;
+      const isEnvelope = (b) => b && b.error === 'upstream';
+      let r = await airdropWorker.fetch(mkReq('/x/4663/smart-contracts/' + SC_UNVERIFIED_REAL), env18); let b = await r.json();
+      check('R18 B-1: an unverified contract (verbatim: a record with only its Address) reads is_verified false', b.is_verified === false && b.name === null, JSON.stringify(b).slice(0, 160));
+      r = await airdropWorker.fetch(mkReq('/x/4663/smart-contracts/' + SC_RATELIMIT), env18); b = await r.json();
+      check('R18 B-1: a rate-limit NOTOK envelope is the upstream-error envelope, not a verified contract', isEnvelope(b), JSON.stringify(b).slice(0, 160));
+      r = await airdropWorker.fetch(mkReq('/x/4663/smart-contracts/' + SC_BADKEY), env18); b = await r.json();
+      check('R18 B-1: a rejected key ({"error":"Unauthorized"}, no status) is the envelope', isEnvelope(b), JSON.stringify(b).slice(0, 160));
+      r = await airdropWorker.fetch(mkReq('/x/4663/transactions/' + TX_NOTFOUND), env18); b = await r.json();
+      check('R18 B-2: an unknown transaction is the envelope, not status "error"', isEnvelope(b) && b.status !== 'error', JSON.stringify(b).slice(0, 160));
+      r = await airdropWorker.fetch(mkReq('/x/4663/tokens/' + HOLDERS_NOT_A_TOKEN + '/holders'), env18); b = await r.json();
+      check('R18 B-2: a real empty holders list (status "1", result []) is an empty page, not the envelope', Array.isArray(b.items) && b.items.length === 0 && b.next_page_params === null, JSON.stringify(b).slice(0, 160));
+      r = await airdropWorker.fetch(mkReq('/x/4663/addresses/' + WALLET_MIDWALK + '/nft?type=ERC-721%2CERC-1155'), env18); b = await r.json();
+      check('R18 B-3: an upstream error mid-walk is the envelope, never a shorter inventory', isEnvelope(b), JSON.stringify(b).slice(0, 160));
+      r = await airdropWorker.fetch(mkReq('/x/4663/addresses/' + WALLET_CEILING + '/nft?type=ERC-721%2CERC-1155'), env18); b = await r.json();
+      check('R18 B-3: twenty full pages stops at the ceiling and says truncated', Array.isArray(b.items) && b.truncated === true, JSON.stringify({ n: (b.items || []).length, truncated: b.truncated }));
+      const inits = (globalThis.fetch.inits || []);
+      check('R18 S-7/S-8: every module subrequest is made with cacheTtl 0 (no edge cache of a keyed URL or of a failure)', inits.length > 0 && inits.every((o) => o && o.cf && o.cf.cacheTtl === 0), JSON.stringify(inits.slice(0, 2)));
+    }
   }
 
   // ---- transactions: revert_reason, and the fields alongside it ----

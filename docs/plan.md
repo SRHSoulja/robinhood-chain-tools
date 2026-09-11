@@ -2,13 +2,13 @@
 
 > ## Start here
 >
-> **State on 11 September 2026, night, commit `7eae0f6`.** Every gate before the mainnet question is now done:
-> round seventeen found no blocker; gate 10 (four real-wallet runs) is done with both findings fixed; gate 9
-> (three RPC endpoints per chain, probed in order, monitored) and gate 11 (the mainnet explorer through the
-> Worker via Blockscout's PRO API behind a bound key, read live) are done; gate 12 was proven by the phone run.
-> Both pages are byte-identical live. **What remains:** round eighteen on Opus against this state as the final
-> review of the code that would go to mainnet, then the deploy of v13 (about 0.0003 ETH) only on the
-> maintainer's explicit word. Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0.
+> **State on 12 September 2026, the commit that carries this file.** Round eighteen, on Opus against `79d6446`, found one
+> blocker in the day-old mainnet explorer translation: every unverified contract read as verified, live. It and
+> its root cause, plus all ten should-fix items, are closed against the reviewer's own probe, which reads seven
+> of seven fixed. Every gate before the mainnet question is done. **What remains:** round nineteen on Opus
+> against this commit, the final review of the code that would go to mainnet, then the deploy of v13 (about
+> 0.0003 ETH) only on the maintainer's explicit word. Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1,
+> 2, 4, 5, 1, 0, 1.
 >
 > - **BulkSend v13 is DEPLOYED on testnet** at `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (tx `0x5cb0037f…`), byte-identical
 >   at 9,752 bytes, fully verified. The on-chain B-1 reproduction against it reverts `IsAnNft`

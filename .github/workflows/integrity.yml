@@ -231,10 +231,19 @@ jobs:
       - name: the mainnet explorer answers through the Worker, not the upstream-error envelope
         run: |
           set -euo pipefail
-          body="$(curl -sS --max-time 25 'https://rhcheck.gmgnrepeat.com/x/4663/tokens/0xdFa5D366Cc9B2bdf08d44A7d7e891012C893385b/holders')"
-          echo "  ${body:0:160}"
-          printf '%s' "$body" | grep -q '"items"' || { echo "the Worker did not answer with a holders page; the mainnet explorer path is dark"; exit 1; }
-          printf '%s' "$body" | grep -q '"error":"upstream"' && { echo "upstream-error envelope"; exit 1; } || true
+          # Round eighteen: assert real answers, not the presence of a word. A holders page must carry a non-empty
+          # items array; a contract known to be unverified must read false; one known to be verified must read
+          # true with its name. An envelope, a void, or an inversion fails here.
+          j() { curl -sS --max-time 25 "https://rhcheck.gmgnrepeat.com/x/4663$1"; }
+          h="$(j /tokens/0xdFa5D366Cc9B2bdf08d44A7d7e891012C893385b/holders)"; echo "  holders: ${h:0:120}"
+          printf '%s' "$h" | python3 -c 'import sys,json; d=json.load(sys.stdin); it=d.get("items"); assert isinstance(it,list) and len(it)>0 and it[0]["address"]["hash"].startswith("0x"), d' \
+            || { echo "the holders page is not a non-empty items list; the mainnet explorer path is dark or wrong"; exit 1; }
+          u="$(j /smart-contracts/0x324f1fddc6df85859e52f43f365d6b06670b74a1)"; echo "  unverified: ${u:0:120}"
+          printf '%s' "$u" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("is_verified") is False, d' \
+            || { echo "a contract known to be unverified does not read is_verified false"; exit 1; }
+          v="$(j /smart-contracts/0x8876789976decbfcbbbe364623c63652db8c0904)"; echo "  verified: ${v:0:120}"
+          printf '%s' "$v" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("is_verified") is True and d.get("name")=="UniversalRouter" and len(d.get("abi") or [])>0, {k:d.get(k) for k in ("is_verified","name")}' \
+            || { echo "a contract known to be verified does not read as verified with its name and ABI"; exit 1; }
       - name: say so somewhere public if this failed
         if: failure()
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea   # v7

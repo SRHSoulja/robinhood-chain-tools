@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# One directory per run. The suite outputs used to be fixed names under /tmp, and two runs on one machine (a
+# reviewer's verify in its clone and the maintainer's in the repository) read each other's files: one saw the
+# other's half-written output as "the suite did not finish". Round eighteen, while the fix for it was verifying.
+RH_TMP="$(mktemp -d /tmp/rh-run.XXXXXX)"
+trap 'rm -rf "$RH_TMP"' EXIT
 # Everything, and then the question the suites cannot answer on their own.
 #
 #   ./verify.sh
@@ -82,10 +87,10 @@ for f in test/*.t.sol; do
   case "$(basename "$f")" in Audit*.t.sol) continue ;; esac
   ordinary_contracts+=("$f")
 done
-: >/tmp/rh-forge.txt
+: >$RH_TMP/rh-forge.txt
 contract_files_passed=0
 for f in "${ordinary_contracts[@]}"; do
-  tmp="/tmp/rh-forge-$(basename "$f" .t.sol).txt"
+  tmp="$RH_TMP/rh-forge-$(basename "$f" .t.sol).txt"
   if forge test --match-path "$f" >"$tmp" 2>&1; then
     contract_files_passed=$((contract_files_passed + 1))
   else
@@ -93,14 +98,14 @@ for f in "${ordinary_contracts[@]}"; do
     grep -E '^\[FAIL|^Error:|^Suite result:' "$tmp" | sed 's/^/        /'
     fail=1
   fi
-  cat "$tmp" >>/tmp/rh-forge.txt
+  cat "$tmp" >>$RH_TMP/rh-forge.txt
 done
 say "  contracts: $contract_files_passed of ${#ordinary_contracts[@]} ordinary test files passed"
 
 suite_files=""
 for suite in client check; do
-  node "test/web/$suite.test.mjs" >"/tmp/rh-$suite.txt" 2>&1
-  line="$(grep -E '^[0-9]+ passed, [0-9]+ failed' "/tmp/rh-$suite.txt" | tail -1)"
+  node "test/web/$suite.test.mjs" >"$RH_TMP/rh-$suite.txt" 2>&1
+  line="$(grep -E '^[0-9]+ passed, [0-9]+ failed' "$RH_TMP/rh-$suite.txt" | tail -1)"
   # The suite must pass, and its reviewed source must still be the suite whose pass is being cited. Pinning the
   # whole file makes deleting or rewriting an assertion a baseline change rather than a quieter green run.
   assertion_sha="$(sha256sum "test/web/$suite.test.mjs" | cut -d' ' -f1)"
@@ -109,28 +114,28 @@ for suite in client check; do
   say "  $suite page: ${line:-DID NOT FINISH}"
   case "$line" in
     *' 0 failed') ;;
-    '') say "  FAIL  the $suite suite did not finish; see /tmp/rh-$suite.txt"; fail=1 ;;
-    *)  say "  FAIL  the $suite suite has failures:"; grep -E '^  FAIL' "/tmp/rh-$suite.txt" | sed 's/^/      /'; fail=1 ;;
+    '') say "  FAIL  the $suite suite did not finish; see $RH_TMP/rh-$suite.txt"; fail=1 ;;
+    *)  say "  FAIL  the $suite suite has failures:"; grep -E '^  FAIL' "$RH_TMP/rh-$suite.txt" | sed 's/^/      /'; fail=1 ;;
   esac
 done
 
 say ""
 say "=== the publish gate: can a weaker policy get out ==="
-if ./test/csp-gate.test.sh >/tmp/rh-csp.txt 2>&1; then
-  say "  $(grep -E '^[0-9]+ passed' /tmp/rh-csp.txt | tail -1), every weakening refused"
+if ./test/csp-gate.test.sh >$RH_TMP/rh-csp.txt 2>&1; then
+  say "  $(grep -E '^[0-9]+ passed' $RH_TMP/rh-csp.txt | tail -1), every weakening refused"
 else
-  say "  FAIL  the CSP gate let something through; see /tmp/rh-csp.txt"
-  grep -E '^  FAIL' /tmp/rh-csp.txt | sed 's/^/      /'
+  say "  FAIL  the CSP gate let something through; see $RH_TMP/rh-csp.txt"
+  grep -E '^  FAIL' $RH_TMP/rh-csp.txt | sed 's/^/      /'
   fail=1
 fi
 
 say ""
 say "=== gate 11: the Worker's mainnet explorer translation ==="
-if node test/worker.test.mjs >/tmp/rh-worker.txt 2>&1; then
-  say "  $(grep -E '^[0-9]+ passed' /tmp/rh-worker.txt | tail -1)"
+if node test/worker.test.mjs >$RH_TMP/rh-worker.txt 2>&1; then
+  say "  $(grep -E '^[0-9]+ passed' $RH_TMP/rh-worker.txt | tail -1)"
 else
   say "  FAIL  the worker suite has failures:"
-  grep -E '^  FAIL' /tmp/rh-worker.txt | sed 's/^/      /'
+  grep -E '^  FAIL' $RH_TMP/rh-worker.txt | sed 's/^/      /'
   fail=1
 fi
 
@@ -140,7 +145,7 @@ web_probe_files=""
 for f in test/web/audit-probe*.mjs; do
   [ -e "$f" ] || continue
   n="$(basename "$f" .mjs)"
-  tmp="/tmp/rh-${n}.txt"
+  tmp="$RH_TMP/rh-${n}.txt"
   node "$f" >"$tmp" 2>&1
   c="$(grep -oE '^[0-9]+ demonstrated' "$tmp" | grep -oE '^[0-9]+' | tail -1)"
   # Hash status plus assertion name, not the diagnostic after `<-`: diagnostics legitimately contain wall-clock
@@ -152,14 +157,14 @@ for f in test/web/audit-probe*.mjs; do
   eval "now_web_${n//-/_}_sha=\$assertion_sha"
   web_probe_files="$web_probe_files $n"
 done
-rm -f /tmp/rh-probe-sol.txt
+rm -f $RH_TMP/rh-probe-sol.txt
 probe_files=""
 for f in test/Audit*.t.sol; do
   [ -e "$f" ] || continue
   n="$(basename "$f" .t.sol)"
-  tmp="/tmp/rh-probe-${n}.txt"
+  tmp="$RH_TMP/rh-probe-${n}.txt"
   forge test --match-path "$f" >"$tmp" 2>&1 || true
-  cat "$tmp" >>"/tmp/rh-probe-sol.txt"
+  cat "$tmp" >>"$RH_TMP/rh-probe-sol.txt"
   c="$(grep -oE '[0-9]+ passed' "$tmp" | grep -oE '^[0-9]+' | tail -1)"
   assertion_sha="$(sed -n -E 's/^\[PASS\] ([^ (]+).*/PASS \1/p; s/^\[FAIL[^]]*\] ([^ (]+).*/FAIL \1/p' "$tmp" \
     | sort | sha256sum | cut -d' ' -f1)"
@@ -225,6 +230,19 @@ done
 
 say ""
 if [ "$fail" -eq 0 ]; then
+# Round eighteen S-3: the two newest suites exit 0 and print a count, and nothing pinned their source, so a file
+# reduced to one check would still print "passed". The same rule as the browser suites: the reviewed source
+# must be the source whose pass is being cited.
+for pair in "worker:test/worker.test.mjs" "csp_gate:test/csp-gate.test.sh"; do
+  key="${pair%%:*}"; file="${pair#*:}"
+  now="$(sha256sum "$file" | cut -d' ' -f1)"
+  was="$(python3 -c "import json;print(json.load(open('$BASELINE')).get('suite_files',{}).get('$key','none'))")"
+  if [ "$now" != "$was" ]; then
+    say "  FAIL  $key suite file fingerprint changed ($file). Update the baseline only after reviewing the exact change."; fail=1
+  else
+    say "  ok    $key suite file fingerprint exactly matches the baseline"
+  fi
+done
   say "Everything passes, and nothing that was closed has reopened."
   say ""
   say "Not covered by any of the above, and not claimed to be:"

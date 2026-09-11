@@ -278,7 +278,7 @@ async function open(_stale, opts = {}) {
     if (url.startsWith('file://')) return route.continue();
     if (url.includes('cdnjs.cloudflare.com')) return route.continue();   // the real ethers build
     if ((opts.deadRpcHosts || []).some((h) => url.includes(h))) return route.abort('connectionrefused');   // gate 9: an endpoint that is down
-    if (url.includes('/holders')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(opts.explorer || { items: [] }) });
+    if (url.includes('/holders')) { if (opts.delayHoldersMs) await new Promise((r) => setTimeout(r, opts.delayHoldersMs)); (opts.__holdersHosts = opts.__holdersHosts || []).push(new URL(url).host || 'self'); return route.fulfill({ contentType: 'application/json', body: JSON.stringify(opts.explorer || { items: [] }) }); }
     if (url.includes('/nft')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(opts.ownedNfts || { items: [] }) });
     if (url.includes('api.coinbase.com')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { amount: '2500' } }) });
     if (url.includes('rpc.') && req.method() === 'POST') {
@@ -1075,6 +1075,51 @@ async function freshBrowser() {
   await page.close();
 }
 
+// ---- round 18 S-1: several ids on one line count the same to Assign as to the parser and the picker ----
+{
+  const page = await open(browser, { approved: true, ownedIds: [31, 32, 33, 34, 35] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x111) + ',11,12,13\n' + A(0x222) + ',21,22\n');
+  const parsed = await text(page, '#parseOut');
+  page.removeAllListeners('dialog'); page.on('dialog', (d) => d.dismiss());   // Assign asks before re-pairing a paired list (S-6)
+  await page.click('#assign'); await page.waitForTimeout(2500);
+  const list = await val(page, '#list');
+  check('round-18 S-1 the parser sees five deliveries', /5 recipients/.test(parsed), parsed.slice(0, 80));
+  check('round-18 S-6 Assign asks before throwing away a list that already names every id, and a No leaves it untouched', list === A(0x111) + ',11,12,13\n' + A(0x222) + ',21,22\n', JSON.stringify(list));
+  await page.close();
+}
+{
+  const page = await open(browser, { approved: true, ownedIds: [31, 32, 33, 34, 35] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x111) + ',11,12,13\n' + A(0x222) + ',21,22\n');
+  await page.click('#assign'); await page.waitForTimeout(2500);   // dialogs are accepted by default: re-pair
+  const lines = (await val(page, '#list')).split('\n').filter(Boolean);
+  check('round-18 S-1 Assign asks for five ids, one line each, not two', lines.length === 5, JSON.stringify(lines));
+  await page.close();
+}
+
+// ---- round 18 S-1: the holder snapshot is a reader that waits; a network change mid-read must not blend chains --
+{
+  const opts = { explorer: { items: [{ address: { hash: A(0x5a01) }, value: '1' }, { address: { hash: A(0x5a02) }, value: '1' }] }, delayHoldersMs: 1500 };
+  const page = await open(browser, opts);
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await page.fill('#list', A(0x5a09) + '\n');
+  await page.fill('#snapAddr', NFT);
+  await page.click('#snap');
+  await page.waitForTimeout(400);
+  // The mainnet option is disabled while mainnet is off, so the input that moves here is the collection
+  // address: the same guard, the same refusal, one of the three captured inputs.
+  await page.fill('#snapAddr', TOK);   // changed while page one is still in flight
+  await page.waitForTimeout(2500);
+  const msg = await text(page, '#msgList'); const list = await val(page, '#list');
+  check('round-18 S-1 an input change during the holder read stops it and names the input', /Fetch stopped: the collection address changed/.test(msg), msg.slice(0, 160));
+  check('round-18 S-1 and the box is exactly as it was', list === A(0x5a09) + '\n', JSON.stringify(list));
+  check('round-18 S-1 and the read stopped after the page in flight', (opts.__holdersHosts || []).length <= 1, JSON.stringify(opts.__holdersHosts));
+  await page.close();
+}
+
 // ---- gate 9: when the endpoint listed first is down, the page reads through the next one and says so ----
 {
   const opts = { deadRpcHosts: ['rpc.testnet.chain.robinhood.com'] };
@@ -1121,6 +1166,11 @@ async function freshBrowser() {
   await page.waitForTimeout(9000);
   const end = await text(page, '#log');
   check('gate-10 run-4 and the send still completes', /done: 1 arrived|Finished\. 1 delivered/.test(end), end.slice(-300));
+  // Round eighteen S-4: the positive. After the send, the ledger holds the row once and nothing is pending or
+  // held: a reconciliation that had judged the in-flight batch would have left a held record behind.
+  const after = await page.evaluate(() => ({ pending: Object.keys(localStorage).filter((k) => k.startsWith('bulksend:pending:')).length,
+    delivered: Object.keys(localStorage).filter((k) => /^bulksend:46630:/.test(k)).map((k) => JSON.parse(localStorage.getItem(k) || '[]').length) }));
+  check('gate-10 run-4 nothing was held by the reconnect: no pending record remains and the delivery is recorded once', after.pending === 0 && after.delivered.some((n) => n === 1), JSON.stringify(after));
   await page.close();
 }
 
@@ -1147,17 +1197,19 @@ async function freshBrowser() {
 
 // ---- round 17 S-3: the hash comes from eth_sendTransaction, and the wait runs on the page's RPC ----------
 {
-  const O = { approved: true, ownedIds: [7], txByHashThrows: true, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 }, ownerOf: A(0x41) };
+  const O = { approved: true, ownedIds: [7], txByHashThrows: true, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 }, ownerOf: A(0x41),
+    slowMethod: { method: 'eth_getTransactionReceipt', ms: 3000 } };   // round eighteen S-4: hold the receipt so the record can be read mid-send
   const page = await open(browser, O);
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
   await setList(page, A(0x41) + ',7\n');
   await page.click('#parse'); await page.waitForTimeout(500);
-  await page.click('#send'); await page.waitForTimeout(9000);
+  await page.click('#send'); await page.waitForTimeout(1500);
+  const midSend = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('bulksend:pending:')).map((k) => JSON.parse(localStorage.getItem(k))));
+  check('round-17 S-3 the hash the wallet returned is written down at once (read mid-send, positively)', midSend.length === 1 && /^0x[0-9a-f]{64}$/.test(String(midSend[0].hash)), JSON.stringify(midSend.map((p) => p.hash)));
+  await page.waitForTimeout(8000);
   const logText = await text(page, '#log');
-  const pend = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('bulksend:pending:')).map((k) => JSON.parse(localStorage.getItem(k))));
   check('round-17 S-3 a wallet that cannot look its own transaction up no longer hangs the send', /sent, waiting/.test(logText) && !(await page.$eval('#list', (b) => b.disabled)), logText.slice(-300));
-  check('round-17 S-3 the hash the wallet returned is written down at once', pend.length === 0 || pend.every((p) => p.hash !== null), JSON.stringify(pend.map((p) => p.hash)));
   check('round-17 S-3 and the batch completes on the page\'s own RPC', /done: 1 arrived|Finished\. 1 delivered/.test(logText), logText.slice(-300));
   await page.close();
 }

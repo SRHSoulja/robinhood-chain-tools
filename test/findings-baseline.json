@@ -11,7 +11,8 @@
   "audit-probe-check2": 1,
   "audit-probe-12": 0,
   "audit-probe-13": 0,
-  "audit-probe-17": 3
+  "audit-probe-17": 2,
+  "audit-probe-18": 0
  },
  "contract_probe_sources": {
   "AuditProbe": "0417777234c0aad9ab68ff2c0d9a432b38273f21d92ee4554fe3ffdb2e7f4008",
@@ -24,7 +25,8 @@
   "audit-probe-check2": "504dd3f1afd34402c18c6d2c8fbf3d914b5946ebbe09a3e9d8f42f51094a16b3",
   "audit-probe-12": "4504e1fb1acb6b099577504b99bd54f6051dd353e9f7297c892df514b579c164",
   "audit-probe-13": "6e1103f443cce95365115e55d5fa21c4edeaf2f966fb6a9b42eb5c564b0126b8",
-  "audit-probe-17": "169a6bd9cd5be2afa026d8b72f9ca6c1d4478b281b7bab586925208c0b31df22"
+  "audit-probe-17": "169a6bd9cd5be2afa026d8b72f9ca6c1d4478b281b7bab586925208c0b31df22",
+  "audit-probe-18": "51842812215103de7df4e766aad447e8edeb68e53b23e8a4dbb5566dfb779869"
  },
  "contract_probe_assertions": {
   "AuditProbe": "58faa4fe9f082e1bbd74e487087307e4f66ace155d99da8d6452c582ca4033fc",
@@ -37,10 +39,13 @@
   "audit-probe-check2": "dac13131a5880f215737b0c883ee235eca81cbbea174193cc8bb1f9b042c53f5",
   "audit-probe-12": "acbbc2352c12463333d233e78920ed5b7022b37baffe45d834be20d35a564732",
   "audit-probe-13": "7ff803e37c9db1cbb502f83b1ce95007288956b683b152a99b16333d903a18a3",
-  "audit-probe-17": "b39ab85024942e6fd41df24bcd2fd9cfe7ed7742e79fa9f3badb16c7b9fb2c58"
+  "audit-probe-17": "a67c628d24cf6dd194af08bc3331d1268a7344d1c681a34469706d5d1a866f68",
+  "audit-probe-18": "d74e0ba57261c7f39a640dd829cd99e3e4fc5ad009cae87f7e36b4c52be83bf4"
  },
  "suite_files": {
-  "client": "01cf59795867c08407c097fdeb8dca98c13fd028f86220b2c71dbb6ff0461e3d",
-  "check": "893be492e5641298ad8e8b842e446b40bae9bea0a4dc872455da8e6ee85c623b"
+  "client": "39fa00f74720db339d9414ea492cf2236c313a449ed314157197b53b2e9703b4",
+  "check": "893be492e5641298ad8e8b842e446b40bae9bea0a4dc872455da8e6ee85c623b",
+  "worker": "9cb4c862c20ffd73b8ad58529c0952f061c1fd914160ea300d762b555c8f8f2a",
+  "csp_gate": "812e911013a4a36566b993660edd8cca87c5a464821db385a5f070fc91813604"
  }
 }
