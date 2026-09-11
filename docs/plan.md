@@ -72,6 +72,7 @@ than this project can verify right now.
 | | |
 | --- | --- |
 | **Covers** | B-1, plus anything Phase 1 finds in the contract |
+| **Status** | **code done, NOT DEPLOYED.** v13 is built and tested; it goes to testnet in Phase 6 so the contract is deployed once. |
 | **Done when** | v13 deployed to testnet, verified on the explorer, runtime byte-identical to the build; the B-1 probe FAILS; and the real-chain reproduction is re-run and now refuses. |
 
 B-1 is proven on chain against v12, not only in a test:
@@ -84,6 +85,7 @@ checked the same way: the same paste, against v13, must refuse.
 | | |
 | --- | --- |
 | **Covers** | B-2 |
+| **Status** | **done.** Probe S13-1 reads fixed, and the probe itself had to be repaired first: its mock answered a two-value function with one value, so the page never signed and the probe measured nothing. |
 | **Done when** | probe `S13-1` reports fixed: a pending record exists in `localStorage` *while the wallet still has the request*, and a tab killed mid-signature holds those recipients on the next load rather than offering them again. |
 
 Nothing is written down until the wallet answers, so a batch signed on a phone and lost with the tab is paid
@@ -95,6 +97,7 @@ creates one. The page's own footer states the opposite of the current behaviour.
 | | |
 | --- | --- |
 | **Covers** | S-1, S-2, S-5 |
+| **Status** | **done**, with the `applyWeight` instance the map found, plus two more the tests found underneath it. |
 | **Done when** | each probe reports fixed, and each fix names in its commit message every reader of that input that was checked. |
 
 The commit-message rule is the habit round thirteen asked for, and it is the only part of this plan that is
@@ -105,6 +108,7 @@ about process rather than code: **when a reader is fixed, list every other reade
 | | |
 | --- | --- |
 | **Covers** | S-4, S-6, S-7 |
+| **Status** | **done.** All six of round thirteen's browser probes read fixed, from six reproducing. |
 | **Done when** | the quoted cost cannot understate by 3x; `SECURITY.md` describes the approval scope truthfully for all three standards; every one of the contract's fifteen errors reaches the user as a sentence, not a hex selector. |
 
 These are not crashes. They are the page being wrong about itself, which is the failure this whole tool
@@ -144,6 +148,33 @@ Three of these become work rather than notes:
 - **The guards get tested against real collections in Phase 2**, on a mainnet fork, before v13 is deployed.
   B-1 is exactly the question "does the guard agree with reality", and reality is 58 contracts that exist.
 - **Invariants and a gas snapshot land with v13**, because that is when the contract changes.
+
+## Where this stands, and what the next session picks up
+
+**Phases 0 to 5 are done and pushed.** Round thirteen: both blockers closed, all seven should-fix closed, and
+its probe files are in the repository and in the baseline, so they gate like every other round.
+
+| set | reproducing |
+| --- | --- |
+| round thirteen browser probes | **0 of 6** |
+| round twelve browser probes | 0 |
+| round eleven airdrop probes | 8 (the acknowledged inherent limits) |
+| Check page, set two | 1 (correct behaviour; the finding was the combination, and that half is fixed) |
+
+**Phase 6 is what remains, and it is the one that needs the chain:**
+
+1. Deploy **v13 to testnet** (46630), verify on the explorer, confirm the runtime is byte-identical.
+2. Re-run the on-chain B-1 reproduction against v13. Against v12 it produced two ERC-721 `Transfer` events and
+   an `Airdrop20(sent 2, skipped 1)` in one transaction
+   ([`0xc6b4cf63…`](https://explorer.testnet.chain.robinhood.com/tx/0xc6b4cf63b9e63eea42950973f0c8269ccfbe0f9eb6cb5d889359a1063dad9295)).
+   The same paste against v13 must be refused with `IsAnNft`.
+3. Update `deployments.testnet.json`, the page, the tests and the CHANGELOG together — preflight enforces that
+   they agree, and the doc check now covers published documents too.
+4. All four live scripts against v13, and **read every transaction back from the explorer**, not from this
+   repository's own receipt parsing.
+5. Publish both pages, then round fourteen.
+
+Nothing is deployed yet and the mainnet deployer is still at nonce 0.
 
 ## Standing practices adopted this round
 
