@@ -12,6 +12,7 @@
     "postinstall": "playwright install chromium --only-shell || true"
   },
   "devDependencies": {
+    "ethers": "^6.15.0",
     "playwright": "1.61.1"
   }
 }
