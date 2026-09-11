@@ -72,6 +72,31 @@ if ok: print('  ok     no published document names a superseded BulkSend')
 sys.exit(0 if ok else 1)
 PY
 
+# 3b. Every error the contract can revert with must reach the user as a sentence.
+#     Six of fifteen were declared in the page's decoder, so nine -- including every guard added in v11 and
+#     v12 -- arrived as "reverted with 0x16102772". Two of those nine already had sentences written for them
+#     and were unreachable because the interface never named them. Being stopped correctly and told nothing
+#     you can act on is its own defect, and it is the kind that returns the moment a new error is added.
+if [ -f out/BulkSend.sol/BulkSend.json ]; then
+python3 - <<'PY' || bad=1
+import io, json, re, sys
+abi = json.load(open('out/BulkSend.sol/BulkSend.json'))['abi']
+errs = [e['name'] for e in abi if e['type'] == 'error']
+page = io.open('web/index.html', encoding='utf-8').read()
+declared = set(re.findall(r"'error (\w+)\(", page))
+worded = set(re.findall(r"^\s*(\w+): '", page, re.M))
+missing = [e for e in errs if e not in declared]
+unworded = [e for e in errs if e in declared and e not in worded]
+if missing or unworded:
+    for e in missing:  print('  FAIL   the contract can revert %s() and the page does not declare it, so it reaches the user as hex' % e)
+    for e in unworded: print('  FAIL   %s() is declared but has no sentence, so the user is shown its name and nothing to do' % e)
+    sys.exit(1)
+print('  ok     all %d contract errors reach the user as a sentence' % len(errs))
+PY
+else
+  note ok "contract errors: skipped, no build in out/ (run forge build)"
+fi
+
 # 4. Nothing personal, and no key material, in anything tracked.
 HOMEPAT='/home/''arson'   # split so this file does not match its own search
 if git grep -qIl "$HOMEPAT" -- . ':!preflight.sh' 2>/dev/null; then

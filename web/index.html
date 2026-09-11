@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-0vPO4zCWzwIp7nSJwNBi1wdYwhdLt4M5C5bCffb6ZcI='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-hA+J59CZdSMLcRXsiOc96JeCl5Y15UNLSyeDGjKZL8A='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -2157,7 +2157,12 @@
       ['network', c.name],
       ['sent by', how],
       ['', n + ' recipients in ' + batches + ' transaction' + (batches === 1 ? '' : 's')],
-      ['at most', costLine(n)],
+      ...(perRecipient
+            ? [['about', costLine(n)],
+               ...(fallbackPer() > gasPerRecipient()
+                     ? [['at most', costLine(n, fallbackPer()) + ', if it turns out dearer than it measured']]
+                     : [])]
+            : [['at most', costLine(n)]]),
     ]);
     const strictSplit = !lenient() && batches > 1;
     if (strictSplit) ready = false;
@@ -2239,10 +2244,12 @@
     try { gasPriceWei = BigInt(await new ethers.JsonRpcProvider(cfg().rpc).send('eth_gasPrice', [])); gasPriceFor = id; plan(); } catch (e) {}
   }
   refreshGasPrice();
-  function costLine(n) {
+  // `per` overrides the figure this is worked out from, so the same arithmetic can produce both the measured
+  // estimate and the real ceiling without two copies of it.
+  function costLine(n, per) {
     if (!n) return 'nothing yet';
     const batches = BigInt(Math.ceil(n / batchSize()));
-    const gas = BigInt(n) * BigInt(gasPerRecipient()) + batches * BigInt(TX_BASE);   // the base cost is per transaction, not per recipient
+    const gas = BigInt(n) * BigInt(per || gasPerRecipient()) + batches * BigInt(TX_BASE);   // the base cost is per transaction, not per recipient
     if (!gasPriceWei || gasPriceFor !== chainId()) return gas.toLocaleString() + ' gas in total';
     const wei = gas * gasPriceWei; const eth = Number(ethers.formatEther(wei));
     const usd = ethUsd ? ' (about $' + (eth * ethUsd).toFixed(2) + ')' : '';   // "about" is the price, not the gas
@@ -2910,7 +2917,12 @@
       } else {
         const t = new ethers.Contract(token, ERC721_ABI, signer);
         if (await t.isApprovedForAll(me, bulk)) { log('Already approved for this collection.', 'ok'); return; }
-        const tx = await t.setApprovalForAll(bulk, true, onThisChain()); log('Approving BulkSend as operator for this collection …', '', tx.hash); await tx.wait();
+        const tx = await t.setApprovalForAll(bulk, true, onThisChain());
+        log('Approving BulkSend as operator for this collection. This is wider than this batch: '
+          + (std() === '1155' ? 'it covers every id and quantity you hold in this contract' : 'it covers every NFT you own in this collection')
+          + ', including any you acquire later, until you revoke it. Neither standard offers a narrower operator approval. '
+          + 'Use "Revoke" when the airdrop is done — the button is on this page.', 'warn', tx.hash);
+        await tx.wait();
         log('Approved. Revoke it from your wallet or the explorer when the airdrop is done.', 'ok');
       }
     } catch (e) { log('Approval failed: ' + explainCallError(e), 'bad'); }
@@ -3319,9 +3331,17 @@
   // BulkSend's own errors, filled in at load from the deployed ABI so they read as instructions, not hex
   const OURS = {};
   try {
+    // All fifteen the contract declares, and there is a test that fails if the contract grows a sixteenth.
+    // Six were declared here before, so the other nine -- including every guard added in v11 and v12 -- reached
+    // the user as "reverted with 0x16102772". Two of them, GasOutOfRange and GasIsForLenientOnly, already had
+    // sentences written for them in the map below and were unreachable because the interface never named them.
     const iface = new ethers.Interface([
       'error LengthMismatch()', 'error EmptyBatch()', 'error TransferFailed(address to,uint256 id)',
       'error NotAContract(address token)', 'error ZeroRecipient(uint256 index)', 'error OutOfGasForBatch(uint256 index)',
+      'error AmbiguousResult(address to,uint256 index)', 'error DelegatedWallet(address token)',
+      'error GasIsForLenientOnly()', 'error GasOutOfRange(uint256 asked,uint256 min,uint256 max)',
+      'error IsAnNft(address token)', 'error NotAnNft(address token)', 'error Reentered()',
+      'error SelfRecipient(uint256 index)', 'error ZeroAmount(uint256 index)',
     ]);
     const words = {
       LengthMismatch: 'the recipient list and the id or amount list are different lengths',
@@ -3332,6 +3352,15 @@
       OutOfGasForBatch: 'this batch does not carry enough gas to give every recipient its full allowance; send fewer per transaction, lower the gas allowed per transfer, or raise the gas limit in your wallet',
       GasOutOfRange: 'the gas allowance you chose is outside the range the contract accepts',
       GasIsForLenientOnly: 'a gas allowance per transfer only applies when skipping is allowed; all-or-nothing forwards everything',
+      // Each of these says what to do next, because being stopped correctly and told nothing you can act on
+      // is its own defect: the user has a list, a wallet and no way forward.
+      AmbiguousResult: 'one token answered in a way that cannot be read as either a success or a refusal, so the whole batch was undone rather than risk recording a payment that happened as a skip. Nothing moved. Check that token on the explorer before sending to that list again',
+      DelegatedWallet: 'the token address you gave is a wallet that has been upgraded (EIP-7702) rather than a token contract. Check the address',
+      IsAnNft: 'that address is an NFT collection, and this is the token form, so the amounts would have been spent as token ids. Nothing moved. Switch the standard to ERC-721 and use the id list instead',
+      NotAnNft: 'that address does not answer as an NFT collection, so this page will not send it through the NFT form. If it really is one, check the address; if it is a token, switch the standard to ERC-20',
+      Reentered: 'a recipient called BulkSend again from inside its own receive hook, which is refused. Nothing moved. That recipient is a contract doing something unusual: check it before sending to it',
+      SelfRecipient: 'one of the recipients is BulkSend itself or the token contract, and neither can give anything back. Remove that line',
+      ZeroAmount: 'one line asks to send nothing. Give it an amount or remove it',
     };
     iface.forEachError((f) => { OURS[f.selector] = words[f.name] || f.name; });
   } catch {}

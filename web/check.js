@@ -1362,7 +1362,13 @@
           // B-04: only a list where every call can be simulated may earn an all-calls verdict.
           // ADDR_RE, not ethers.isAddress: a lowercase address is one a wallet sends to and one this page can
           // simulate, and refusing to simulate over a checksum would be inventing a limit that is not there.
-          const simulatable = calls.every((c) => ADDR_RE.test(String(c.to || '')));
+          // And no entry whose calldata could not be read. Simulating one of those means sending `0x`, which
+          // is a plain transfer of ETH, so the sequence that earns the verdict is not the sequence that was
+          // pasted. The card a few lines above already says "No verdict is given for the sequence as a
+          // whole" when an entry could not be read; this is what makes that sentence true. Without it the
+          // page printed that card and then, directly beneath it, "run in order, every call succeeds".
+          const unreadableCall = calls.some((c) => c.invalid);
+          const simulatable = !unreadableCall && calls.every((c) => ADDR_RE.test(String(c.to || '')));
           let ordered = null, orderedErr = null;
           if (simulatable) {
             try { ordered = await simulateInOrder(calls); }
@@ -1396,6 +1402,11 @@
               + 'This is not a verdict on the request: parts of it were not read, and what is above says which.'));
             else cards.push(note('ok', label + 'run in order, every call succeeds',
               'Simulated as one sequence, as ' + short(calls[0].from || ethers.ZeroAddress) + ', against the chain as it is now.'));
+          } else if (unreadableCall) {
+            cards.push(note('bad', label + 'these have not been run in order, and will not be',
+              'One of them carries calldata this page could not read. Running the sequence would mean sending empty '
+              + 'calldata in its place, which is a plain transfer of ETH and not what was pasted, so the answer would '
+              + 'describe a different request. Each call below is shown on its own terms instead.'));
           } else {
             cards.push(note('warn', label + 'these could not be run in order', (orderedErr || 'the node would not do it')
               + '. Each call below was checked on its own instead, which misses anything that only fails because of what an earlier call did.'));

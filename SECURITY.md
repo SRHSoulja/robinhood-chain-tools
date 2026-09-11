@@ -46,9 +46,28 @@ cannot move anything on its own, and it cannot be made to do so later by anyone,
 It cannot give anything back. There is no rescue function, so anything sent **to** the contract is lost. The
 contract refuses itself as a recipient, and the page refuses it too.
 
-Approving a bulk sender is a real risk in general: an allowance outlives the transaction that used it. The page
-approves the exact batch total rather than an unlimited amount, and tells you to revoke afterwards. Revoke
-afterwards.
+Approving a bulk sender is a real risk in general: an allowance outlives the transaction that used it. **What
+that exposure is depends on the standard, and it is not the same for all three:**
+
+| | what the page asks you to approve | what that lets BulkSend move until you revoke |
+| --- | --- | --- |
+| **ERC-20** | `approve(BulkSend, exact batch total)` | that amount of that token, and no more |
+| **ERC-721** | `setApprovalForAll(BulkSend, true)` | **every NFT you own in that collection**, now and any you acquire later |
+| **ERC-1155** | `setApprovalForAll(BulkSend, true)` | **every id and quantity you own in that contract**, now and later |
+
+That is not a choice this page made. ERC-721 and ERC-1155 define no per-token operator approval that a batch
+sender can use: `setApprovalForAll` is the only one either standard has, and it is all-or-nothing over the
+whole contract. The single-token `approve(to, tokenId)` on ERC-721 grants one id to one address, which cannot
+express "these forty ids to this contract".
+
+So for the two NFT standards the honest statement is that **the approval is wider than the batch**, it lasts
+until you revoke it, and the thing that keeps it safe is that `BulkSend` has no owner, no upgrade path and no
+way to move anything except inside a transaction you sign. The page offers a Revoke button and tells you to
+use it. Use it.
+
+There is one route that needs no approval at all: if your wallet supports EIP-5792 batching, the page sends
+the transfers as your own wallet and `BulkSend` is never approved for anything. The page prefers that route
+when the wallet offers it.
 
 ## What a delivery count means
 
