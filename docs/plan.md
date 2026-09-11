@@ -31,6 +31,9 @@
 >    purpose and are written down in `status.md`: the guard probes' unbounded returndata copy, which needs a
 >    v14 and is not an asset-loss path, and nothing else. The next round is pointed at the Assign fix and its
 >    twins first.
+>    **Round seventeen is running** against `4cc8a1c`, launched 11 September 2026 in the usual way (a fresh
+>    `claude -p` in the harness directory reading `PROMPT.md`). Both pages were published from `4cc8a1c` and
+>    are byte-identical live; integrity issue #1 is closed with the record. Triage when `AUDIT.md` completes.
 > 9. **Production RPC is now an explicit gate.** Robinhood's public mainnet endpoint is suitable for the
 >    present read-only rehearsal but its own documentation calls it rate-limited and not recommended for
 >    production. Select a dedicated provider, keep its credential in the Worker rather than `index.html`, and
