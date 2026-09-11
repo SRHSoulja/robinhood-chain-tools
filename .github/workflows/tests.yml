@@ -25,20 +25,6 @@ jobs:
       # they ran only for whoever had configured them.
       - name: preflight, the cheap consistency checks
         run: ./preflight.sh
-      - name: the deployed bytecode is what this source builds
-        run: |
-          set -euo pipefail
-          forge build
-          addr="$(python3 -c "import json;print(json.load(open('deployments.testnet.json'))['BulkSend'])")"
-          chain="$(curl -sS --max-time 30 -X POST https://rpc.testnet.chain.robinhood.com \
-            -H 'content-type: application/json' \
-            -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"$addr\",\"latest\"]}" \
-            | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"])')"
-          built="$(python3 -c "import json;print(json.load(open('out/BulkSend.sol/BulkSend.json'))['deployedBytecode']['object'])")"
-          # Equality. Printing a length and calling it an equality check is how a step's name outlives what
-          # it does.
-          [ "$chain" = "$built" ] || { echo "the deployed runtime is not what this source builds"; exit 1; }
-          echo "  ok    $(( (${#built} - 2) / 2 )) bytes, identical at $addr"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4
         with:
           node-version: '22.20.0'   # pinned: a major line moves under you
@@ -60,6 +46,24 @@ jobs:
       # has been added with nothing watching it.
       - name: everything, including the probes that pin every closed finding
         run: ./verify.sh
+      # Last, on purpose. This step fails by design whenever the contract in src/ is built but not yet deployed,
+      # and when it ran second it stopped the job before a single suite had run: CI was red for eight commits
+      # and nobody could tell a deploy gap from a broken test. Now the suites and the probes report first, and
+      # this step's failure is its own line with its own name.
+      - name: the deployed bytecode is what this source builds
+        run: |
+          set -euo pipefail
+          forge build
+          addr="$(python3 -c "import json;print(json.load(open('deployments.testnet.json'))['BulkSend'])")"
+          chain="$(curl -sS --max-time 30 -X POST https://rpc.testnet.chain.robinhood.com \
+            -H 'content-type: application/json' \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"$addr\",\"latest\"]}" \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"])')"
+          built="$(python3 -c "import json;print(json.load(open('out/BulkSend.sol/BulkSend.json'))['deployedBytecode']['object'])")"
+          # Equality. Printing a length and calling it an equality check is how a step's name outlives what
+          # it does.
+          [ "$chain" = "$built" ] || { echo "the deployed runtime is not what this source builds"; exit 1; }
+          echo "  ok    $(( (${#built} - 2) / 2 )) bytes, identical at $addr"
       - name: the connector is reproducible from its pinned source
         run: |
           set -euo pipefail

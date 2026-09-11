@@ -56,7 +56,16 @@ if not page or page.group(1).lower() != man:
     print('  FAIL   the page sends to %s, the manifest says %s' % (page.group(1) if page else '?', man)); ok = False
 if man not in tests.lower():
     print('  FAIL   client.test.mjs does not mention %s, so it is asserting against a different contract' % man); ok = False
-if ok: print('  ok     page, manifest and tests name the same BulkSend')
+# The reviewers' browser probes hardcode the address too, and they were not in this check: at the v13 deploy
+# the list of files to update was written as five when nine named the address. Every probe that names a
+# BulkSend must name the live one, or it is measuring a contract that is no longer there.
+import glob
+for f in sorted(glob.glob('test/web/audit-probe*.mjs')):
+    body = io.open(f, encoding='utf-8').read().lower()
+    for hit in sorted(set(re.findall(r'0x[0-9a-f]{40}', body))):
+        if hit != man and hit in {v.lower() for k, v in json.load(open('deployments.testnet.json')).items() if k.startswith('BulkSend')}:
+            print('  FAIL   %s names %s, a superseded BulkSend. The live one is %s.' % (f, hit, man)); ok = False
+if ok: print('  ok     page, manifest, tests and probes name the same BulkSend')
 
 # And the published documents, which drifted three deploys behind before anything noticed. The dated audit
 # reports are excluded on purpose: each was written against a particular deployment, and rewriting them would
