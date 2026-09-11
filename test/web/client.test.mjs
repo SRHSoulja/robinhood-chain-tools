@@ -277,6 +277,7 @@ async function open(_stale, opts = {}) {
     const req = route.request(); const url = req.url();
     if (url.startsWith('file://')) return route.continue();
     if (url.includes('cdnjs.cloudflare.com')) return route.continue();   // the real ethers build
+    if ((opts.deadRpcHosts || []).some((h) => url.includes(h))) return route.abort('connectionrefused');   // gate 9: an endpoint that is down
     if (url.includes('/holders')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(opts.explorer || { items: [] }) });
     if (url.includes('/nft')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(opts.ownedNfts || { items: [] }) });
     if (url.includes('api.coinbase.com')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { amount: '2500' } }) });
@@ -295,6 +296,7 @@ async function open(_stale, opts = {}) {
       if (opts.slowMethod && (Array.isArray(body) ? body : [body]).some((r) => r && r.method === opts.slowMethod.method)) {
         await new Promise((resolve) => setTimeout(resolve, opts.slowMethod.ms));
       }
+      try { (opts.__rpcHosts = opts.__rpcHosts || new Set()).add(new URL(url).host); } catch (e) {}   // which endpoints the page read through
       const one = (r) => { try { const result = answer(r.method, r.params || []); return { jsonrpc: '2.0', id: r.id, result }; }
                            catch (e) { return { jsonrpc: '2.0', id: r.id, error: { code: e.code || 3, message: String(e.message || 'execution reverted'), data: e.revertData } }; } };
       const out = Array.isArray(body) ? body.map(one) : one(body);
@@ -1070,6 +1072,28 @@ async function freshBrowser() {
     /not a whole number/.test(await text(page, '#msgList')), await text(page, '#msgList'));
   check('round-15 B-02 a refused named quantity leaves the source bytes unchanged',
     (await val(page, '#list')) === before, await val(page, '#list'));
+  await page.close();
+}
+
+// ---- gate 9: when the endpoint listed first is down, the page reads through the next one and says so ----
+{
+  const opts = { deadRpcHosts: ['rpc.testnet.chain.robinhood.com'] };
+  const page = await open(browser, opts);
+  await page.click('#connect'); await page.waitForTimeout(1500);
+  await useToken(page, NFT, '721'); await page.waitForTimeout(800);   // a read the page makes through cfg().rpc
+  const logText = await text(page, '#log');
+  const hosts = [...(opts.__rpcHosts || [])];
+  check('gate-9 with the first endpoint down, reads go through the next listed endpoint', hosts.includes('robinhood-sepolia-rpc.publicnode.com'), JSON.stringify(hosts));
+  check('gate-9 and the page says which endpoint it is reading through', /Reading Robinhood Chain Testnet through robinhood-sepolia-rpc\.publicnode\.com/.test(logText), logText.slice(0, 300));
+  await page.close();
+}
+{
+  const opts = {};
+  const page = await open(browser, opts);
+  await page.click('#connect'); await page.waitForTimeout(1200);
+  await useToken(page, NFT, '721'); await page.waitForTimeout(800);
+  const hosts = [...(opts.__rpcHosts || [])];
+  check('gate-9 with the first endpoint up, nothing else is asked and nothing is said', hosts.every((h) => h === 'rpc.testnet.chain.robinhood.com') && !/Reading Robinhood Chain Testnet through/.test(await text(page, '#log')), JSON.stringify(hosts));
   await page.close();
 }
 

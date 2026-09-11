@@ -164,8 +164,15 @@ x_route = """
   // A worker can: it is a server. Read-only, one host per chain id, and nothing but the API path is passed on.
   const x = url.pathname.match(/^\\/x\\/(4663|46630)(\\/[A-Za-z0-9_\\-\\/.]{1,200})$/);
   if (x) {
+    // Gate 11, not yet: the mainnet explorer challenges every non-browser client, this worker included, so
+    // every /x/4663/* answer is the {"error":"upstream"} envelope. Blockscout's PRO API serves chain 4663 behind
+    // a key, but only in the Etherscan-style module API (module=token&action=getTokenHolders ...), not in
+    // this REST shape -- checked with a key on 11 September 2026 -- so answering these paths on mainnet means
+    // translating each one, which is the gate-11 work in docs/plan.md. The BLOCKSCOUT_KEY binding below is
+    // the plumbing for it; with or without the binding, this path is unchanged today.
     const base = EXPLORERS[x[1]];
     if (!base || x[2].includes('..')) return new Response('bad path', { status: 400, headers: secure() });
+    const search = url.search;
     // The mainnet explorer answers browsers and challenges everything else, so ask the way a browser does.
     // One reader's lookup at a time, cached at the edge for a minute so it stays that way.
     // The user-agent below no longer buys anything: Blockscout's managed challenge fires on the mainnet
@@ -173,7 +180,7 @@ x_route = """
     // testnet explorer still answers, but it is not a working spoof and the code should not imply it is.
     // `redirect: 'manual'` because following one would let an explorer decide which host gets to put a
     // document on this origin.
-    const upstream = await fetch(base + '/api/v2' + x[2] + url.search, {
+    const upstream = await fetch(base + '/api/v2' + x[2] + search, {
       headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' },
       redirect: 'manual',
       cf: { cacheEverything: true, cacheTtl: 60 },
@@ -224,7 +231,7 @@ const secure = () => ({
   // inside it says about itself.
   'content-security-policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; sandbox",
 });
-export default { async fetch(request) {
+export default { async fetch(request, env) {
   const url = new URL(request.url);
   const visitor = request.headers.get('cf-visitor') || '';
   if (url.protocol === 'http:' || visitor.includes('"scheme":"http"')) {
@@ -279,9 +286,17 @@ if [ "$TARGET" = "airdrop" ] && [ -n "${WC_BUNDLE_URL:-}" ]; then
     exit 1
   fi
 fi
+# Gate 11: bind the Blockscout PRO API key as a Worker secret when deploy/local.env names a file holding it.
+# Without it the Worker behaves exactly as before. The key is read here and sent only in this upload.
+META='{"main_module":"worker.js","compatibility_date":"2026-09-01"}'
+if [ -n "${BLOCKSCOUT_KEY_FILE:-}" ] && [ -f "$BLOCKSCOUT_KEY_FILE" ]; then
+  BK="$(tr -d '[:space:]' < "$BLOCKSCOUT_KEY_FILE")"
+  META="$(python3 -c "import json,sys;print(json.dumps({'main_module':'worker.js','compatibility_date':'2026-09-01','bindings':[{'type':'secret_text','name':'BLOCKSCOUT_KEY','text':sys.argv[1]}]}))" "$BK")"
+  echo "explorer: mainnet reads will go through Blockscout's PRO API (key bound as a Worker secret)"
+fi
 
 curl -s -m 90 -X PUT -H "Authorization: Bearer $CF_API_TOKEN" \
-  -F 'metadata={"main_module":"worker.js","compatibility_date":"2026-09-01"};type=application/json' \
+  -F "metadata=$META;type=application/json" \
   -F "worker.js=@$WORK/worker.js;type=application/javascript+module" \
   "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/$WORKER" \
   | python3 -c "import sys,json;d=json.load(sys.stdin);ok=d.get('success');print('worker',('published' if ok else 'FAILED'),[(e.get('code'),e.get('message')) for e in d.get('errors',[])][:2]);sys.exit(0 if ok else 1)"

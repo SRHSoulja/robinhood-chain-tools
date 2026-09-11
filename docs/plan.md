@@ -47,6 +47,12 @@
 >    present read-only rehearsal but its own documentation calls it rate-limited and not recommended for
 >    production. Select a dedicated provider, keep its credential in the Worker rather than `index.html`, and
 >    add an independently operated fallback/monitor before mainnet is enabled.
+>     **Done, 11 September 2026.** Each chain lists three endpoints in order (Robinhood's own, then PublicNode,
+>     then Pocket on mainnet; Robinhood's, PublicNode and dRPC on testnet), all answering the right chain id and
+>     `eth_simulateV1` when checked; the page probes them in order at connect and on a network change and reads
+>     through the first that answers, saying so when it is not the first. The integrity workflow probes every
+>     listed endpoint four times a day and fails if the first, or every fallback, for a chain stops answering.
+>     No credential: all three are public. The Worker keeps no RPC.
 > 10. **Repeat the real-wallet boundary once, on the final testnet page.** The v13 live scripts are green but
 >     their wallets are test implementations, and the manual MetaMask run predates v10. Complete one injected-
 >     wallet and one phone/WalletConnect airdrop with freshly minted testnet assets, then read both back before
@@ -65,6 +71,18 @@
 >     holder snapshots and Check's source verification and revert reasons would all be dark. An API key, an
 >     allowlisted origin, or a different indexer; proven by an integrity step that fails on the
 >     `{"error":"upstream"}` envelope for `/x/4663/`, which today it would.
+>      **Wired, 11 September 2026, inert until a key exists.** Blockscout is retiring per-instance API keys for a
+>      multichain PRO API (`api.blockscout.com/chains/4663/api/v2/…`, same REST shape, free tier 5 requests a
+>      second, 100K credits a day). The Worker now reads the mainnet explorer through it whenever a
+>      `BLOCKSCOUT_KEY` secret is bound, and behaves exactly as before when it is not; `deploy/publish.sh` binds
+>      the key from `BLOCKSCOUT_KEY_FILE` in `deploy/local.env`. Verified only as far as a missing key allows:
+>      the PRO API answers "proceed with API key", so whether it serves chain 4663 in the REST shape is
+>      confirmed the day the maintainer signs up. **Confirmed the same evening, and it changed the shape of the
+>      work:** the PRO API serves chain 4663 only in the Etherscan-style module API, not the REST shape the pages
+>      use, so the Worker needs a translation layer for four paths and the airdrop page must route through the
+>      Worker on mainnet. The spec is [`gate-11-explorer.md`](gate-11-explorer.md). Sonnet-sized work from that
+>      spec, then one verify, a publish with the key bound, and the integrity step that fails on the
+>      `{"error":"upstream"}` envelope closes this gate.
 >  12. **The send path must not depend on the wallet's RPC** (round seventeen S-8, second item). S-3's fix
 >     takes the hash from `eth_sendTransaction` and waits on this page's RPC; gate 9's production endpoint
 >     then covers every read the page makes. Proven by the S-3 regression and by one real-wallet send under

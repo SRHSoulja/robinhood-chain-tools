@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-dFzZDoTFvrD+tJZoZIo/ti7MGFTkRcFWD5xjH5ciUDQ='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-4OD2pcq1VY2fstJxJS6P1jE4hMgjD3aB+/6QCgOmfmk='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -171,8 +171,13 @@
   // ---- chain config; BulkSend addresses are filled in after each deploy ----
   const CHAINS = {
     46630: { name: 'Robinhood Chain Testnet', rpc: 'https://rpc.testnet.chain.robinhood.com', explorer: 'https://explorer.testnet.chain.robinhood.com',
+             rpcs: ['https://rpc.testnet.chain.robinhood.com', 'https://robinhood-sepolia-rpc.publicnode.com', 'https://robinhood-testnet.drpc.org'],
              addChain: 'https://faucet.testnet.chain.robinhood.com/add-chain', bulk: '0xf2ed6359f5dee0334d68cd21d306d9d3e7a49232' },
-    4663:  { name: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com', bulk: '{{BULKSEND_MAINNET}}' },
+    // Robinhood's own endpoint first; its documentation calls it rate-limited and not for production, so two
+    // independently operated public endpoints follow it (both answer chain 4663 and eth_simulateV1, checked
+    // 11 September 2026; chainlist marks neither as tracking). pickRpc() decides which is in use.
+    4663:  { name: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com',
+             rpcs: ['https://rpc.mainnet.chain.robinhood.com', 'https://robinhood-rpc.publicnode.com', 'https://robinhood.api.pocket.network'], bulk: '{{BULKSEND_MAINNET}}' },
   };
   const BULK_ABI = [
     'function airdrop721(address token,address[] to,uint256[] ids,bool safe,bool lenient) returns (uint256 sent,uint256 skipped)',
@@ -246,6 +251,29 @@
   };
   let badLines = 0, badLinesOk = false;
   // Held so they can be taken off the provider they were put on, which is not always the current one.
+  // ---- which RPC ----
+  // One endpoint is one witness (I-1), and the one listed first is rate-limited by its own documentation. So
+  // each chain lists more than one, in order of preference, and the first time a chain is used, and whenever
+  // it is switched to, the page asks them in that order for the chain id, three seconds each. The first that
+  // answers with the right id is the one every read goes through until the next switch; every reader still
+  // asks cfg().rpc, so nothing else changes. A fallback in use is said out loud, once.
+  async function pickRpc(chain) {
+    const c = CHAINS[chain]; if (!c || !Array.isArray(c.rpcs)) return;
+    for (const url of c.rpcs) {
+      try {
+        const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 3000);
+        const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: ctl.signal,
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }) });
+        clearTimeout(t);
+        const j = await r.json();
+        if (Number(j && j.result) !== Number(chain)) continue;
+        if (c.rpc !== url) { c.rpc = url; log('Reading ' + c.name + ' through ' + new URL(url).host + ': the endpoint listed first did not answer in time.', 'warn'); }
+        return;
+      } catch (e) { /* try the next */ }
+    }
+    // None answered. The first stays in place and every reader reports its own failure, as before.
+  }
+
   const walletListeners = { eth: null, chainChanged: null, accountsChanged: null };
   function dropWalletListeners() {
     const w = walletListeners;
@@ -613,7 +641,7 @@
       // since replaced could still fire and clear the connection for a wallet that was no longer in use.
       dropWalletListeners();
       walletListeners.eth = eth;
-      walletListeners.chainChanged = () => { if (sending) { stopFlag = true; log('The wallet changed network mid-airdrop. Stopping after this batch.', 'bad'); } };
+      walletListeners.chainChanged = () => { if (sending) { stopFlag = true; log('The wallet changed network mid-airdrop. Stopping after this batch.', 'bad'); } pickRpc(chainId()).catch(() => {}); };
       eth.on('chainChanged', walletListeners.chainChanged);
       walletListeners.accountsChanged = async (accts) => {
         if (sending) { stopFlag = true; log('The wallet changed account mid-airdrop. Stopping after this batch.', 'bad'); return; }
@@ -630,7 +658,7 @@
       };
       eth.on('accountsChanged', walletListeners.accountsChanged);
     }
-    await switchChain(); await detectWalletBatch(); refreshRevoke(); plan();
+    await switchChain(); await pickRpc(chainId()); await detectWalletBatch(); refreshRevoke(); plan();
     if (!sending) reconcilePending(false).catch(() => {});   // a reconnect mid-send is not the moment to judge that send
     } catch (e) { me = null; provider = null; signer = null; say('msgTop', walletError(e), 'bad'); plan(); }
   }

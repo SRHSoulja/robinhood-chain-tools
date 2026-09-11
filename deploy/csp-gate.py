@@ -75,6 +75,8 @@ HOSTS = {
     "connect-src": {
         "'self'",
         "https://rpc.testnet.chain.robinhood.com", "https://rpc.mainnet.chain.robinhood.com",
+        "https://robinhood-sepolia-rpc.publicnode.com", "https://robinhood-testnet.drpc.org",   # gate 9: the fallback RPCs
+        "https://robinhood-rpc.publicnode.com", "https://robinhood.api.pocket.network",
         "https://robinhoodchain.blockscout.com", "https://explorer.testnet.chain.robinhood.com",
         "https://api.coinbase.com",
         "wss://relay.walletconnect.org", "wss://relay.walletconnect.com",

@@ -199,6 +199,31 @@ jobs:
       # A monitor whose only channel is one person's e-mail is a monitor that fails quietly. This opens an
       # issue on the repository, which is public, searchable, and does not depend on anyone reading their
       # mail on a weekend.
+      # Gate 9. The page lists more than one RPC per chain and falls back down the list; this checks the list is
+      # still a list: the endpoint listed first must answer, and so must at least one fallback per chain, each
+      # with the right chain id and eth_simulateV1, which the page's test run depends on. Every answer is printed.
+      - name: the RPC endpoints the page lists still answer, first and fallback
+        run: |
+          set -euo pipefail
+          probe() {
+            local url="$1" want="$2" id sim
+            id="$(curl -sS --max-time 15 -X POST "$url" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' | tr -d ' \n' | sed -n 's/.*"result":"0x\([0-9a-fA-F]*\)".*/\1/p' || true)"
+            id="$(printf '%d' "0x${id:-0}" 2>/dev/null || echo 0)"
+            sim="$(curl -sS --max-time 20 -X POST "$url" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"eth_simulateV1","params":[{"blockStateCalls":[{"calls":[{"to":"0x0000000000000000000000000000000000000001","data":"0x"}]}],"validation":false},"latest"]}' | grep -q '"result"' && echo ok || echo no)"
+            echo "  chain $id simulate $sim  $url"
+            [ "$id" = "$want" ] && [ "$sim" = "ok" ]
+          }
+          fail=0
+          for chain in 46630 4663; do
+            # the rpcs list for this chain, as written in the page
+            list="$(tr -d '\n' < web/index.html | grep -oE "$chain: *\{[^}]*rpcs: *\[[^]]*\]" | grep -oE "https://[^' ]+" )"
+            first="$(echo "$list" | head -1)"; rest="$(echo "$list" | tail -n +2)"
+            [ -n "$first" ] || { echo "no rpcs list found for $chain in web/index.html"; fail=1; continue; }
+            probe "$first" "$chain" || { echo "the endpoint listed first for $chain does not answer"; fail=1; }
+            ok=0; for u in $rest; do probe "$u" "$chain" && ok=1; done
+            [ "$ok" = 1 ] || { echo "no fallback answers for $chain"; fail=1; }
+          done
+          [ "$fail" = 0 ]
       - name: say so somewhere public if this failed
         if: failure()
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea   # v7
