@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Everything, in one command. Contracts first, then both pages in a real browser with every answer mocked.
+# Everything, in one command. Contracts first, then the page's pure readers in node, then both pages in a
+# real browser with every answer mocked.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 echo "=== contracts ==="
@@ -8,8 +9,12 @@ echo "=== contracts ==="
 # commits. ./verify.sh runs them and interprets a failure as a finding that is fixed.
 forge test --no-match-path 'test/{Audit*.t.sol,fork/*.t.sol}'
 echo
-echo "=== pages ==="
+echo "=== readers ==="
+# The page's own pure functions, extracted from web/index.html and run outside a browser. See docs/harness.md.
 [ -d node_modules ] || npm install --no-audit --no-fund
+node test/readers.test.mjs
+echo
+echo "=== pages ==="
 node test/web/client.test.mjs
 node test/web/check.test.mjs
 

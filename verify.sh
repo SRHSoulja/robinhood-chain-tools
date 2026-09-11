@@ -76,7 +76,7 @@ fi
 
 [ -d node_modules ] || npm install --no-audit --no-fund >/dev/null 2>&1
 
-say "=== the suites: does everything still work ==="
+say "=== contracts: every ordinary test file on its own ==="
 # Run every ordinary contract test file on its own. Probe suites intentionally contain failing reproductions;
 # excluding failures by a test-name prefix let an ordinary failure hide merely by borrowing that prefix.
 # File membership is the trust boundary: Audit*.t.sol is evidence, fork/ is the separate live-state check,
@@ -102,8 +102,26 @@ for f in "${ordinary_contracts[@]}"; do
 done
 say "  contracts: $contract_files_passed of ${#ordinary_contracts[@]} ordinary test files passed"
 
+say ""
+say "=== readers: the page's own pure functions, extracted from web/index.html and run in node ==="
+# The fast layer docs/harness.md adds: the recipient-box readers, run outside a browser, before the two
+# suites that need one. It is not a substitute for them -- it covers what a pure function can prove, and
+# nothing about the DOM -- but a reader regression is caught here in under a second instead of the length of
+# a full browser run.
+unset ONLY   # a stray filter in the environment must never let a partial run of anything below pass as complete
+if node test/readers.test.mjs >$RH_TMP/rh-readers.txt 2>&1; then
+  say "  $(grep -E '^[0-9]+ passed' $RH_TMP/rh-readers.txt | tail -1)"
+else
+  say "  FAIL  the readers suite has failures:"
+  grep -E '^  FAIL' $RH_TMP/rh-readers.txt | sed 's/^/      /'
+  fail=1
+fi
+
+say ""
+say "=== the suites: does everything still work ==="
 suite_files=""
 for suite in client check; do
+  unset ONLY
   node "test/web/$suite.test.mjs" >"$RH_TMP/rh-$suite.txt" 2>&1
   line="$(grep -E '^[0-9]+ passed, [0-9]+ failed' "$RH_TMP/rh-$suite.txt" | tail -1)"
   # The suite must pass, and its reviewed source must still be the suite whose pass is being cited. Pinning the
@@ -113,6 +131,11 @@ for suite in client check; do
   suite_files="$suite_files $suite"
   say "  $suite page: ${line:-DID NOT FINISH}"
   case "$line" in
+    *'cases run'*)
+      # test/web/lib.mjs's ONLY=<regex> filter names how much of the file it covered in exactly this phrase.
+      # verify.sh's whole reason to run these suites is to prove the WHOLE file still passes, so a filtered
+      # run -- however green -- proves nothing about the rest and must never be read as a clean result.
+      say "  FAIL  the $suite suite ran filtered, not whole: $line"; fail=1 ;;
     *' 0 failed') ;;
     '') say "  FAIL  the $suite suite did not finish; see $RH_TMP/rh-$suite.txt"; fail=1 ;;
     *)  say "  FAIL  the $suite suite has failures:"; grep -E '^  FAIL' "$RH_TMP/rh-$suite.txt" | sed 's/^/      /'; fail=1 ;;
@@ -233,7 +256,8 @@ if [ "$fail" -eq 0 ]; then
 # Round eighteen S-3: the two newest suites exit 0 and print a count, and nothing pinned their source, so a file
 # reduced to one check would still print "passed". The same rule as the browser suites: the reviewed source
 # must be the source whose pass is being cited.
-for pair in "worker:test/worker.test.mjs" "csp_gate:test/csp-gate.test.sh"; do
+for pair in "worker:test/worker.test.mjs" "csp_gate:test/csp-gate.test.sh" \
+            "readers:test/readers.test.mjs" "lib:test/web/lib.mjs"; do
   key="${pair%%:*}"; file="${pair#*:}"
   now="$(sha256sum "$file" | cut -d' ' -f1)"
   was="$(python3 -c "import json;print(json.load(open('$BASELINE')).get('suite_files',{}).get('$key','none'))")"
