@@ -2,7 +2,13 @@
 
 > ## Start here
 >
-> **State on 10 September 2026, commit `05336f7`.** Working tree clean, everything pushed, CI green.
+> **State on 10 September 2026, commit `a81f69c`, re-evaluated before Phase 6.** Working tree clean, everything
+> pushed. **CI is red and has been for eight commits**, since `66a370e` put v13 into `src/`: the bytecode step
+> compares the chain's v12 against this source's v13 build, fails by design, and every step after it is
+> skipped -- so CI has not run the browser suites or the probes since then, and an earlier note here that said
+> "CI green" was wrong. A local `./verify.sh` is the only full run. Deploying v13 turns it green; the step
+> order is also to be changed so a deliberate deploy gap cannot hide a test result again (round twelve's S-1
+> was exactly "CI red for 8 commits").
 >
 > - **BulkSend v13 is built and tested but NOT DEPLOYED.** Testnet still runs v12 at
 >   `0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481` (17,938 chars on chain; the build here is 18,876). That gap
@@ -13,29 +19,116 @@
 > - **Mainnet is at nonce 0 and nothing may touch it.** Testnet gas and nonces move for reasons unrelated to
 >   this project -- the deployer is shared with the maintainer's game NFT experiments. See `status.md`.
 >
-> **The next actions, in order:**
+> **The next actions, in order.** The re-evaluation below found work that has to come BEFORE the deploy, because
+> the contract deploys once, and work that has to come before round fourteen, because the reviewer would find
+> it. The chain steps are unchanged.
 >
-> 1. `forge test --match-path 'test/fork/MainnetGuards.t.sol'` -- the guards against 20 real mainnet
->    collections and 20 real tokens, read-only, no gas. Should be 4 passed.
-> 2. Deploy v13 to **testnet 46630**, verify on the explorer, confirm the runtime is byte-identical.
-> 3. Re-run the on-chain B-1 reproduction against v13: mint two ids, leave a third unminted, paste the
->    collection into the ERC-20 form with those ids as amounts. Against v12 it produced two ERC-721 `Transfer`
->    events and an `Airdrop20(sent 2, skipped 1)` in one transaction
+> 0. **Pre-deploy gate, contract side** (item list in the re-evaluation): a passing test for v13's own new
+>    branch and for the nine arms `readers.md` listed and nobody wrote; invariant tests; `.gas-snapshot`;
+>    assertions in `test_gas_400_recipients`. If any of these finds a defect, v13 becomes v14 *before* it is
+>    deployed, which is the point of doing them first.
+> 1. **Pre-round gate, page and documents:** the Check page's three missing error sentences; publish round
+>    thirteen's report; `status.md`, `README.md`, `for-reviewers.md` brought to round thirteen; `checkTotals`
+>    given its ERC-721 branch; CI step order.
+> 2. `forge test --match-path 'test/fork/MainnetGuards.t.sol'` -- 4 passed on 10 September, re-run right
+>    before the deploy.
+> 3. Deploy v13 to **testnet 46630** with the deployer key in a Foundry keystore (never on a command line),
+>    verify on the explorer, confirm `cast code` equals the artifact's `deployedBytecode.object` whole.
+>    Rehearsed on an anvil fork of testnet from the real deployer on 10 September: 2,700,921 gas, 9,437 bytes,
+>    byte-identical.
+> 4. Re-run the on-chain B-1 reproduction against v13, from `testnet-plain`, against `OZ721`, with two fresh
+>    ids minted in a decade no live script uses and a third left unminted. Against v12 it produced two ERC-721
+>    `Transfer` events and an `Airdrop20(sent 2, skipped 1)` in one transaction
 >    (`0xc6b4cf63b9e63eea42950973f0c8269ccfbe0f9eb6cb5d889359a1063dad9295`). Against v13 it must revert
->    `IsAnNft`, and that is the check that closes the blocker on chain rather than in a test.
-> 4. Update `deployments.testnet.json`, `web/index.html`, `test/web/client.test.mjs`,
->    `test/web/audit-probe-12.mjs` and `docs/CHANGELOG.md` **together** -- `preflight.sh` fails if they
->    disagree, and it now also fails if a published document names a superseded address.
-> 5. `web/sync.sh`, `./verify.sh`, then all four live scripts, and **read every transaction back from the
+>    `IsAnNft`, read back from the explorer.
+> 5. Update **all nine** files that name the address together, not the five this block used to list:
+>    `deployments.testnet.json`, `web/index.html`, `README.md`, `docs/for-reviewers.md`, `docs/CHANGELOG.md`,
+>    `test/web/client.test.mjs`, `test/web/audit-probe-12.mjs`, `test/web/audit-probe-13.mjs`, and this file.
+>    `preflight.sh` catches the page, manifest, tests and three of the documents; it does not read the probes
+>    or this file.
+> 6. `web/sync.sh`, `./verify.sh`, then all four live scripts, and **read every transaction back from the
 >    explorer** rather than from this repository's own receipt parsing.
-> 6. `./deploy/publish.sh airdrop` and `check`.
-> 7. Round fourteen, against v13. It has been reviewed by nobody but me.
+> 7. `./deploy/publish.sh airdrop` and `check`. The live pages are at `44e6350`, the commit round thirteen
+>    reviewed, so B-2 and that round's six should-fix items are live on the testnet page until this step.
+> 8. Rewrite the reviewer prompt for round fourteen (it is written for thirteen, against v12), refresh the
+>    harness clone, launch. Point it at v13's guard, then at the Check page's error reader, then at the
+>    reader map.
 >
 > **What a "clean" round means, so it is not mistaken for something easier.** The gate asks for a round with
 > **no release blockers**, not a round with no findings. Blockers by round so far: 15, 11, 5, 9, 9, 4, 6, 3,
 > 4, 3, 5, 1, 2. It has not trended to zero, and twice a fix from one round became the next round's finding in
 > the contract specifically. v13 changed a guard, so v13 is the least trustworthy thing in the repository and
 > the next round should be pointed at it first.
+
+## Re-evaluated before Phase 6, 10 September 2026
+
+Before touching the chain, every tool the round needs was exercised read-only, and the repository was checked
+against what this plan claims about it. Numbers, then what was found.
+
+**The tools, each run today, each working:**
+
+| tool | result |
+| --- | --- |
+| explorer API (`/api/v2`) | v12 fully verified: compiler 0.8.36, cancun, 10,000 runs, ABI carries all 15 errors. Decodes the B-1 transaction's four logs and its input against the verified ABI. Needs a browser User-Agent. |
+| `forge` / `cast` 1.8.1 | at `~/.foundry/bin`, **not on PATH in a fresh shell**; `verify.sh` exports it. Both reach both RPCs. |
+| fork suite | 4 passed: 20 real ERC-721 collections accepted by the NFT guard and refused by the ERC-20 guard, 20 real ERC-20s accepted, and 20 of 20 let through by v12. |
+| anvil fork of testnet | the deploy rehearsed from the real deployer, impersonated, no key: 2,700,921 gas, runtime 9,437 bytes, byte-identical to `out/BulkSend.sol/BulkSend.json`. The deployer is EIP-7702-delegated to this project's own `Batch7702`, and contract creation from a delegated account works. |
+| `forge verify-contract --show-standard-json-input` | builds; one source, settings match `foundry.toml`. |
+| `forge coverage` on v13 | 82.46% of branches, **10 uncovered arms** -- the nine `readers.md` listed, plus one new: v13's own second probe in `_mustNotBeNft` (line 456). |
+| Slither 0.11.6 on v13 | 0 High, 0 Medium, 6 Low (all `calls-loop`), 13 informational. Now installed at `~/.local/bin/slither`; it had been living in a session scratchpad and would have vanished. |
+| `forge snapshot` | 97 entries, produced, not yet committed. |
+| balances | deployer 0.001634 ETH on testnet at 0.01 gwei (about 65 deploys), `testnet-sender` 0.003972, `testnet-plain` 0.002983. Mainnet: deployer 0.002047 ETH, **nonce 0**; the test keys hold nothing there. |
+| the live pages | both at `44e6350`, the commit round thirteen reviewed. |
+| CI | red for eight commits; see "Start here". |
+
+**Found, and must close before the deploy** (the contract deploys once; a defect found by any of these after
+the deploy is a v14):
+
+1. **v13's own new branch has no passing test.** `_mustNotBeNft` catching a collection that does not answer
+   `supportsInterface` by its *last* id when the first is dead is the exact B-1 shape, and the only thing that
+   reaches that arm is round thirteen's probe, which is written to fail. `testBareRevert721_throughTheErc20Path_isCaughtByTheIdProbe`
+   puts the live id first, so the first probe catches it and the second is never asked.
+2. **The nine arms `readers.md` listed on 10 September were never written**: `AmbiguousResult` on the 721 path
+   (178), `LengthMismatch` and `EmptyBatch` on the 1155 path (233, 234), the 1155 lenient zero-address skip
+   (241), `AmbiguousResult` 1155 lenient and strict (245, 256), `ZeroRecipient` 1155 strict (252), and
+   `LengthMismatch` and `EmptyBatch` on the 20 path (296, 297). The map called this "the ERC-721 path is
+   better tested than the other two" and then left it so.
+3. **Invariant tests: promised "with v13", zero exist.** `sent + skipped == n`; nothing leaves that was not
+   approved; BulkSend holds nothing afterwards. The fuzz runs exist and assert examples.
+4. **`.gas-snapshot`: promised with v13, not committed.**
+5. **`test_gas_400_recipients` asserts nothing** (round thirteen, "where the tests are weaker", item 7). Four
+   `log_named_uint`s and no `assertLt`, under a cap derived from a 30,000,000 budget.
+
+**Found, and must close before round fourteen** (the reviewer would find them, and each is a known finding
+walking into the round that is supposed to find none):
+
+6. **The Check page decodes 12 of the contract's 15 errors.** `IsAnNft`, `NotAnNft` and `Reentered` reach the
+   user as a bare selector. That is round thirteen's S-7 surviving on the twin reader: `preflight.sh` check
+   3b reads `web/index.html` and not `web/check.js`. The two most likely refusals a user of v13 will ever see
+   are the two it cannot name.
+7. **Round thirteen's report is not published in `docs/`.** Every other round is, and the reviewer prompt tells
+   the next reviewer the reports are published unedited.
+8. **`status.md` describes round twelve** and calls v12 current with no mention of thirteen; "three further
+   scripts" introduces a list of four. `README.md` says 82 contract and 166 browser tests (118, 316 and 116).
+   `for-reviewers.md`'s "Previous review" ends at twelve.
+9. **`checkTotals` has no ERC-721 branch** (round thirteen, item 8): the ERC-20 and ERC-1155 paths pre-check
+   the aggregate and say so; the NFT path leaves it to the per-batch `staticCall`. In a tool whose point is
+   three standards to one standard, that is a product gap, not a test gap.
+10. **This block listed five files to update at deploy; nine name the address.**
+11. **The reviewer prompt is written for round thirteen against v12.**
+12. **CI's step order.** The bytecode check runs second and stops the job, so a deliberate not-yet-deployed
+    change hides every suite behind it. Move it last, or into its own job.
+
+**Not done, and decided not to do before this round**, so it is on the record rather than forgotten: round
+thirteen's harness items 2, 3 and 4 (the mock answers `eth_estimateGas` with a constant and checks `data` but
+not `to`; the mock's `eth_call` falls through to a plausible word for any unknown selector; dialogs are
+auto-accepted by default). Items 2 and 3 are small and worth doing with the page work; item 4 changes the
+default for 316 tests and is a round of its own.
+
+**Key handling for the deploy.** Previous deploys read the key into a shell variable and passed it as
+`--private-key`, which puts it in a process argument list for the duration of the command. It never reached a
+transcript or a tracked file, but it need not be there at all: import it once into a Foundry keystore and
+deploy with `--account`. The live scripts read the key files in node and are unaffected.
 
 `status.md` says what is true today. This says what happens next, in what order, and how each step is known
 to be done. It is updated as steps close, and a step is only ticked when the check beside it passes.
