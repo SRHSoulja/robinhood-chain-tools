@@ -37,6 +37,13 @@ SHA-256 hash rather than allowing inline scripts generally, and permits `cdnjs.c
 ethers build (which also carries Subresource Integrity) and `static.cloudflareinsights.com` for the analytics
 beacon Cloudflare injects at the edge. It is sent as a response header as well as a meta tag.
 
+## Chain evidence
+
+Every balance, owner, receipt and simulation the pages show comes through one configured RPC endpoint. A
+token can lie in its own read functions or events, and a node can be stale, faulty or dishonest. The block
+explorer is a separate service and a useful comparison, not cryptographic proof. If the page and explorer
+disagree, stop rather than treating either answer as permission to pay a recipient again.
+
 ## What this software can and cannot do to you
 
 `BulkSend` has no owner, no upgrade path, no fee, no pause and no stored state. Every transfer it makes is
@@ -79,7 +86,7 @@ check this from the inside. Treat the count as what was attempted and the chain 
 
 Deployed on testnet only. Nothing here has been reviewed by a human audit firm.
 [docs/for-reviewers.md](docs/for-reviewers.md) is the current threat model and the full review history;
-[docs/audit-2026-09-10-twelfth-external.md](docs/audit-2026-09-10-twelfth-external.md) is the most recent
+[docs/audit-2026-09-10-thirteenth-external.md](docs/audit-2026-09-10-thirteenth-external.md) is the most recent
 review in full, and [docs/status.md](docs/status.md) says which of its findings are closed and which are not. Every audit is in [docs/](docs/), unedited and in order. Read the newest one: the older reports describe
 code that has since been rewritten, and several of their findings were themselves introduced by the fix for an
 earlier one.

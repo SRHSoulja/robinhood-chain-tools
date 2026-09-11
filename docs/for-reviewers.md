@@ -96,9 +96,11 @@ failing.
 
 **What this repository cannot prove**, and what a reviewer should ask the operator about rather than infer:
 how the Cloudflare, registrar, GitHub and Reown accounts are secured; whether the deployment token is scoped
-to Worker scripts alone; whether the registrar has a transfer lock; and whether DNSSEC and CAA are set. Those
-are control-plane facts, and client-side hashes cannot protect anyone if the domain or the deploy credential
-is taken.
+to Worker scripts alone; whether the registrar has a transfer lock; whether DNSSEC and CAA are set; and
+whether the configured RPC and explorer are current and honest. Every chain answer in the browser reaches it
+through that RPC, and the explorer is a separate comparison rather than cryptographic proof. Those are
+control-plane facts, and client-side hashes cannot protect anyone if the domain, deploy credential or chain
+data source is taken.
 
 ## Independent monitoring
 
@@ -133,11 +135,12 @@ which is the case worth monitoring for.
   reader of each shared input, listed, and a commit that fixes one names the others.
 - **The contract is no longer the settled part of this repository.** It was clean and unchanged for seven
   rounds; round eleven found two real findings in it, round twelve three more, and round thirteen found that
-  round twelve's guard was not the mirror it claimed to be. The source is now **v13**; the chain still runs
-  v12 until v13 is deployed, and v13 has been through every mechanical check here -- 100% branch coverage,
+  round twelve's guard was not the mirror it claimed to be. The source is now **v13**, and that bytecode is
+  deployed and verified on testnet. It has been through every mechanical check here -- 100% branch coverage,
   invariants over random sequences, Slither, a fork suite against 20 real mainnet collections and 20 real
-  tokens -- and through no reviewer. **The unreviewed thing in this repository is always whatever was written
-  last**, and right now that is the contract.
+  tokens -- plus the live v13 testnet runs recorded in `status.md`. It has not had a fresh independent review
+  since round thirteen's findings were fixed. **The unreviewed thing in this repository is always whatever
+  was written last**, and right now that includes those contract fixes.
 - Three times before that, a fix from one round has been the next round's finding. That is the most useful thing this
   history shows, and it is why recently changed code is listed first in the review scope rather than last.
 - No human audit firm has looked at this.

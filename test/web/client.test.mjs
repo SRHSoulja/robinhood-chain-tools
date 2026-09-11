@@ -156,7 +156,8 @@ function chainAnswer(O) {
         return (O.contractHolders || []).map((x) => x.toLowerCase()).includes(a) ? '0x60006000' : '0x';
       }
       case 'eth_call': {
-        const to = String(params[0].to || '').toLowerCase(), data = String(params[0].data || ''), sel = data.slice(0, 10);
+        const to = String(params[0].to || '').toLowerCase(), from = String(params[0].from || '').toLowerCase();
+        const data = String(params[0].data || ''), sel = data.slice(0, 10);
         if (sel === '0x2f745c59' && O.ownedIds) {                      // tokenOfOwnerByIndex
           const i = Number(BigInt('0x' + data.slice(74)));
           return i < O.ownedIds.length ? enc(O.ownedIds[i]) : null;
@@ -213,7 +214,18 @@ function chainAnswer(O) {
         if (sel === '0x5f2a9f41') return enc(5000000);
         if (BULK_SELECTORS.includes(sel)) return enc(O.willDeliver ?? 1) + enc(O.willSkip ?? 0).slice(2);
         if (O.callFails) { const e = new Error('execution reverted'); e.revertData = '0x7e273289'; throw e; }
-        return enc(1);
+        // Direct wallet-batch simulations. Model only the exact standard call against the matching fixture,
+        // from the connected account; a wrong selector, token or sender must reach the loud fallback below.
+        if (from === me.toLowerCase()) {
+          if (to === NFT && (sel === '0x42842e0e' || sel === '0x23b872dd')) return '0x';
+          if (to === ED && sel === '0xf242432a') return '0x';
+          if (to === TOK && (sel === '0xa9059cbb' || sel === '0x23b872dd')) return enc(1);
+        }
+        // An unknown call used to receive a plausible word. That lets production code call the wrong
+        // function while the harness helpfully invents a successful answer a real contract would not give.
+        const e = new Error('unmocked eth_call ' + sel + ' to ' + to);
+        e.revertData = '0x';
+        throw e;
       }
       default: return null;
     }
@@ -1143,8 +1155,8 @@ async function freshBrowser() {
   check('S-13 and the cap is still derived from the same margined figure',
     q && q.cap === Math.min(400, Math.max(1, Math.floor(30000000 / (q.measured * q.margin)))), JSON.stringify(q));
   const plan = await text(page, '#plan');
-  check('S-13 the cost is labelled a ceiling rather than an estimate',
-    /at most/.test(plan) && !/\babout\s+[\d.]+\s*ETH/.test(plan), plan.slice(0, 200));
+  check('S-13 the cost is labelled an estimate rather than a ceiling',
+    /estimate/.test(plan) && !/at most/.test(plan), plan.slice(0, 240));
   const note = await text(page, '#batchNote');
   // The figure this sentence leads with is what a sender reads as the per-wallet cost, so it has to be the
   // one the page works from. It also has to make the rest of the sentence true: 40,000 x 400 is 16,000,000,
@@ -2436,7 +2448,7 @@ async function freshBrowser() {
   await setList(page, Array.from({ length: 450 }, (_, i) => A(0x1000 + i) + ',' + (i + 1)).join('\n'));
   await page.waitForTimeout(800);
   check('the field explains what the number costs instead of only holding it',
-    /less per wallet/.test(await text(page, '#batchNote')) && /at most/.test(await text(page, '#batchNote')),
+    /less per wallet/.test(await text(page, '#batchNote')) && /will put at most/.test(await text(page, '#batchNote')),
     await text(page, '#batchNote'));
   await page.fill('#batch', '9999'); await page.waitForTimeout(500);
   check('asking for more than the cap is answered, not silently ignored',
@@ -2492,8 +2504,8 @@ async function freshBrowser() {
       await cap(page) === '200', await cap(page));
     check('and says so rather than claiming a measurement it does not have',
       /has not been measured yet/.test(await text(page, '#batchNote')), await text(page, '#batchNote'));
-    check('the plan calls that figure a bound, which is what an unmeasured one honestly is',
-      (await text(page, '#plan')).includes('at most'), await text(page, '#plan'));
+    check('the plan calls an unmeasured figure a fallback, not a ceiling',
+      (await text(page, '#plan')).includes('fallback') && !(await text(page, '#plan')).includes('at most'), await text(page, '#plan'));
     await page.close();
   }
 }
@@ -2506,7 +2518,10 @@ async function freshBrowser() {
 {
   const SEL = { safe721: '0x42842e0e', plain721: '0x23b872dd', safe1155: '0xf242432a', erc20: '0xa9059cbb' };
   const asked = (o) => (o.probes || []).map((p) => String(p.data || '').slice(0, 10).toLowerCase());
-  const sent = (o, sel) => asked(o).includes(sel);
+  const sent = (o, sel, to) => (o.probes || []).some((p) =>
+    String(p.data || '').slice(0, 10).toLowerCase() === sel
+      && String(p.to || '').toLowerCase() === String(to).toLowerCase()
+      && String(p.from || '').toLowerCase() === RUN_ME.toLowerCase());
 
   {
     const o = { estimateGas: 90000 };
@@ -2514,11 +2529,11 @@ async function freshBrowser() {
     await page.click('#connect'); await page.waitForTimeout(600);
     await useToken(page, NFT, '721');
     await setList(page, A(0x21) + ',7\n'); await page.waitForTimeout(900);
-    check('an NFT with the recipient check on is measured by safeTransferFrom, the call it will really make',
-      sent(o, SEL.safe721), asked(o).join(' '));
+    check('an NFT with the recipient check on is measured from this wallet against the selected collection',
+      sent(o, SEL.safe721, NFT), JSON.stringify(o.probes));
     await page.uncheck('#safe'); await page.selectOption('#mode', 'strict'); await page.waitForTimeout(900);
-    check('and with the check off it is measured by the plain transfer, because that is the cheaper call',
-      sent(o, SEL.plain721), asked(o).join(' '));
+    check('and with the check off the same collection is measured by the plain transfer',
+      sent(o, SEL.plain721, NFT), JSON.stringify(o.probes));
     await page.close();
   }
   {
@@ -2527,8 +2542,8 @@ async function freshBrowser() {
     await page.click('#connect'); await page.waitForTimeout(600);
     await useToken(page, ED, '1155');
     await setList(page, A(0x22) + ',5,2\n'); await page.waitForTimeout(900);
-    check('an ERC-1155 is measured by its own five-argument safeTransferFrom, not the NFT one',
-      sent(o, SEL.safe1155) && !sent(o, SEL.safe721), asked(o).join(' '));
+    check('an ERC-1155 is measured from this wallet against its own contract with its five-argument call',
+      sent(o, SEL.safe1155, ED) && !sent(o, SEL.safe721, ED), JSON.stringify(o.probes));
     check('and the cap it produces is a real number rather than the untouched fallback',
       await page.getAttribute('#batch', 'max') !== '200', await page.getAttribute('#batch', 'max'));
     await page.close();
@@ -2539,8 +2554,8 @@ async function freshBrowser() {
     await page.click('#connect'); await page.waitForTimeout(600);
     await useToken(page, TOK, '20');
     await setList(page, A(0x23) + ',1\n'); await page.waitForTimeout(900);
-    check('an ERC-20 is measured by transfer, which is the only one of the four it would answer',
-      sent(o, SEL.erc20), asked(o).join(' '));
+    check('an ERC-20 is measured from this wallet against the selected token by transfer',
+      sent(o, SEL.erc20, TOK), JSON.stringify(o.probes));
     await page.close();
   }
   {
@@ -2554,7 +2569,7 @@ async function freshBrowser() {
     await useToken(page, ED, '1155');
     await setList(page, A(0x25) + ',5,2\n'); await page.waitForTimeout(900);
     check('changing the token asks again rather than keeping the last token\'s number',
-      (o.probes || []).length > first && sent(o, SEL.safe1155), asked(o).join(' '));
+      (o.probes || []).length > first && sent(o, SEL.safe1155, ED), JSON.stringify(o.probes));
     await page.close();
   }
 }

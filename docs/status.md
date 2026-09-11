@@ -11,16 +11,24 @@ it. Where something has not been tested, it says so; where a finding is open, it
 **Testnet only. Mainnet is switched off in the page itself**, not by intent: the mainnet BulkSend address is
 an unsubstituted `{{BULKSEND_MAINNET}}` placeholder, so `bulkReady()` is false and the send refuses there.
 
-Two things have to be true before that changes, and both are currently false:
+Four things have to be true before that changes, and all are currently false:
 
 | | state |
 | --- | --- |
 | a review round with no release blockers | **not met** — round thirteen found two, both fixed, along with every one of its seven should-fix items. The round that finds none has not happened |
+| a production mainnet RPC plan | **not met** — the page names Robinhood's free public endpoint, which [the official documentation](https://docs.robinhood.com/chain/connecting/) calls rate-limited and not recommended for production. Choose a production provider, keep credentials out of the page, and monitor/fail over reads before enabling mainnet |
+| a current real-wallet rehearsal on testnet | **not met** — the v13 live scripts are green, but their wallets are written by this repository. The one manual MetaMask run predates v10. Run the final page through an injected wallet and the phone/WalletConnect path on testnet once each |
 | explicit permission from the maintainer, given after that round | **not given** |
 
-Neither alone is enough. The deployer holds about 0.002 mainnet ETH that someone else sent, which is enough
+No one item alone is enough. The deployer holds about 0.002 mainnet ETH that someone else sent, which is enough
 for three deployments, which is exactly why the rule is written down: available is not permitted. Its mainnet
 nonce is 0.
+
+Current unreleased validation, 10 September 2026: `./verify.sh` completed with 319/319 airdrop-page tests,
+122/122 Check-page tests, 21/21 CSP checks, all ordinary contract tests green, and every historical finding
+probe unchanged from its baseline. The separate read-only mainnet fork also passed all four tests: 20/20 real
+ERC-721 collections were accepted by the NFT guard and refused by the ERC-20 guard, and 20/20 real ERC-20
+tokens were accepted. No transaction was signed or broadcast and no ETH was spent.
 
 ## What runs
 
@@ -97,7 +105,7 @@ They sign with a testnet-only key that holds no mainnet balance and refuse to ru
 | ERC-20 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding exactly 1.5, to the wei | ✅ |
 | any of it against a real wallet extension, automatically | **no** — every wallet in every test here is written by this repository | ❌ |
 | any of it against a real wallet extension, by hand | **yes, once** — the maintainer drove the page from a phone with MetaMask and it worked. That was against an earlier BulkSend, before v10, so it is evidence about the page and not about the contract now deployed. Not repeated since, deliberately: more of it is worth doing when the software is otherwise finished, not while it is still changing under the tester | ⚠️ |
-| behaviour on mainnet | **never, by design** | ❌ |
+| a real broadcast transaction on mainnet | **never, by design**; current evidence is read-only calls and local fork execution only | ❌ |
 
 ## Reading the testnet deployer's activity
 
@@ -169,7 +177,7 @@ never signed and the probe measured nothing.
 | S-1 | every headed CSV refused by "Use these" and "Assign" | closed, plus a third instance in `applyWeight` the round did not find |
 | S-2 | `deliveriesOn` took the column map and never read it | closed |
 | S-3 | CI ran none of `verify.sh`, the CSP gate or `preflight.sh` | closed; proven by reopening a finding on a branch and watching CI go red |
-| S-4 | a low estimate understated the quoted cost about 3x while labelled "at most" | closed: "about" for the measurement, a real ceiling row |
+| S-4 | a low estimate understated the quoted cost about 3x while labelled "at most" | closed: the measurement is an estimate; the dearest surveyed comparison is explicitly a fallback, not a ceiling |
 | S-5 | Check simulated a call whose calldata it could not read | closed |
 | S-6 | `SECURITY.md`'s "approves the exact batch total" false for ERC-721 and ERC-1155 | closed |
 | S-7 | 9 of the contract's 15 errors reached the user as a bare selector | closed on the airdrop page in the round; **closed on the Check page afterwards**, where the same three newest errors were still unnamed, and `preflight.sh` now reads both pages |
@@ -181,8 +189,10 @@ reader names its twins.
 
 ### Inherent limits — 1
 
-I-1: one RPC endpoint is the sole witness for every "arrived", "skipped" and "held" verdict. That cannot be
-engineered away in a browser page; it is disclosed, not solved.
+I-1: one RPC endpoint is the sole witness for every "arrived", "skipped" and "held" verdict. No browser can
+turn a token's own answer into independent proof, but relying on one node is still reducible operational risk,
+not an excuse to stop at disclosure. A production provider plus an independently operated fallback/monitor is
+now part of the mainnet gate above.
 
 ### Round twelve, 10 September 2026 — all closed, one declined
 

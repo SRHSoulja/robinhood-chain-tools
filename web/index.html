@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-e4l1ifK6iA8JP2CnHKSmg3BMRgxnEZqAwCecRzsZeEo='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-wCXnHXZOtGTl1x05rmoFwgajzkHynuAQP+6pywjoxvU='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -158,7 +158,7 @@
 </main>
 <footer>
   Reviewed by several independent automated audits, not by a human audit firm.
-  After every batch this page asks the chain whether the recipients actually hold what was sent, and records only those. A token that accepts a transfer and moves nothing, or takes a cut on the way, is reported rather than counted. An actively hostile token can lie in its own read functions too, so the explorer is the final word.
+  After every batch this page asks whether the recipients hold what was sent, through one configured RPC node, and records only those. A token that accepts a transfer and moves nothing, or takes a cut on the way, is reported rather than counted. A hostile token can lie in its read functions, and a node can be stale or wrong. The explorer is a separate reading to compare, not proof; if they disagree, stop and verify before sending again.
   This page keeps a note, in this browser and for this account only, of what it has already delivered, so reloading the tab will not repeat it. A batch that was signed but never confirmed here is written down too, and read back from the chain next time before anything else is sent. It is a convenience, not a guarantee: another browser, another device, a cleared cache or a private window will not know about it. What has actually been sent is on the chain, and that is the record to trust.
   <span id="contractLine"></span>
   To read any Robinhood Chain transaction or contract in plain English before you sign it, including the ones this page builds, use <a href="https://rhcheck.gmgnrepeat.com/">Check</a>.
@@ -315,11 +315,10 @@
   let perRecipient = null;       // measured gas for one more recipient, null while unasked or unanswerable
   let gasProbeKey = null;        // everything the answer depends on, so one is never read for another question
   let probeRefused = false;      // the chain answered, and the answer was not believable
-  // When the chain will not answer, these stand in. They are not an average, they are the dearest thing of
-  // that kind found alive on this chain, so a figure derived from them is a real upper bound and can be
-  // labelled as one. The old table held 32,000 for an ERC-20, which nine of the twenty-nine surveyed beat,
-  // the tokenised equities among them at 57,318 each. An average would be wrong half the time and would not
-  // say which half.
+  // When the chain will not answer, these stand in. They are not an average: they are the dearest thing of
+  // that kind found in the survey on this chain. That makes them a useful conservative planning figure, not
+  // an upper bound on contracts the survey never saw. The old table held 32,000 for an ERC-20, which nine of
+  // the twenty-nine surveyed beat, the tokenised equities among them at 57,318 each.
   const fallbackPer = () => (std() === '20' ? 57500 : std() === '1155' ? 76000 : 153000);
   // What the sender is quoted, which is not the same as what was measured. measuredCap() divides the measured
   // figure by PROBE_MARGIN before deciding how many fit in a transaction, for the reason written above it:
@@ -329,8 +328,8 @@
   // afford the airdrop was understated by up to a quarter. Both ends of the same measurement now agree.
   //
   // The fallback figures get no margin because they are not a measurement: each is the dearest token of its
-  // kind found alive on this chain, already an upper bound, and multiplying a bound by a margin invents a
-  // number nothing supports. Either way what is quoted is a ceiling, which is why it is labelled "at most".
+  // kind found in a finite survey, and multiplying it by a margin invents a number nothing supports. Neither
+  // that sample maximum nor one estimate of one row is a ceiling on what an arbitrary later transfer costs.
   const gasPerRecipient = () => (perRecipient ? Math.ceil(perRecipient * PROBE_MARGIN) : fallbackPer());
   // Attached to every transaction this page asks a wallet to sign. Without it the eth_sendTransaction request
   // carries no chainId at all, so a wallet that is on a different network than it reports signs rather than
@@ -2158,11 +2157,11 @@
       ['sent by', how],
       ['', n + ' recipients in ' + batches + ' transaction' + (batches === 1 ? '' : 's')],
       ...(perRecipient
-            ? [['about', costLine(n)],
+            ? [['estimate', costLine(n)],
                ...(fallbackPer() > gasPerRecipient()
-                     ? [['at most', costLine(n, fallbackPer()) + ', if it turns out dearer than it measured']]
+                     ? [['fallback', costLine(n, fallbackPer()) + ', using the dearest comparable token found in the survey; not a ceiling']]
                      : [])]
-            : [['at most', costLine(n)]]),
+            : [['fallback', costLine(n) + ', using the dearest comparable token found in the survey; not a ceiling']]),
     ]);
     const strictSplit = !lenient() && batches > 1;
     if (strictSplit) ready = false;
@@ -2221,16 +2220,17 @@
       + 'the difference between 400 at a time and 100 is about 8%. '
       + (perRecipient
           ? 'This collection was measured rather than assumed: about ' + Math.ceil(perRecipient * PROBE_MARGIN).toLocaleString()
-            + ' gas a wallet, so at most ' + cap + " fit inside one transaction's 32,000,000 gas. "
+            + ' gas a wallet. From that estimate this page will put at most ' + cap + ' in one transaction, '
+            + 'using 30,000,000 of the chain\'s 32,000,000 gas limit as its working budget. '
             + 'That is the ' + perRecipient.toLocaleString() + ' the chain quoted for moving it as its owner, plus '
             + Math.round((PROBE_MARGIN - 1) * 100) + '%: this page moves it as an operator, and some collections charge more for that in a '
-            + 'way nothing outside them can see. Both the cost above and the batch size come from the larger figure. '
+            + 'way nothing outside them can see. A later transfer can still cost more; if the transaction does not fit, it reverts rather than partly delivering. '
           : (probeRefused
               ? 'The chain answered when asked what this collection costs, and the answer was too small to be '
-                + 'real, so it has not been used. The figures above are the dearest token of its kind found '
-                + 'alive on this chain instead, and this page will use at most ' + cap + ' per transaction. '
-              : 'This collection has not been measured yet, so the figures above are the dearest token of its '
-                + 'kind found alive on this chain rather than this one, and this page will use at most ' + cap
+                + 'real, so it has not been used. The planning figure above is the dearest comparable token '
+                + 'found in the survey, not a guarantee about this one, and this page will use at most ' + cap + ' per transaction. '
+              : 'This collection has not been measured yet, so the planning figure above is the dearest comparable '
+                + 'token found in the survey, not a guarantee about this one, and this page will use at most ' + cap
                 + ' per transaction. '))
       + why;
     say('batchClamp', over
@@ -2245,7 +2245,7 @@
   }
   refreshGasPrice();
   // `per` overrides the figure this is worked out from, so the same arithmetic can produce both the measured
-  // estimate and the real ceiling without two copies of it.
+  // estimate and the fallback comparison without two copies of it.
   function costLine(n, per) {
     if (!n) return 'nothing yet';
     const batches = BigInt(Math.ceil(n / batchSize()));
@@ -2410,7 +2410,7 @@
       log('  ' + check.unknown.length + ' could not be checked because the chain would not answer. They stay held back until it does.', 'warn', hash);
     }
     if (check.arrived.length) {
-      log('  ' + check.arrived.length + ' read back as held by their recipient after the transfer. That is the token\u2019s own answer about its own state, which is the strongest evidence available from a browser and still not proof: a token written to lie can lie here too. The transaction is the record.', '', hash);
+      log('  ' + check.arrived.length + ' read back as held by their recipient after the transfer. That is the token\u2019s own answer, delivered through one configured RPC node. It is evidence, not proof: a hostile token can lie and a node can be stale or wrong. Compare the transaction on the explorer; if the two disagree, stop before sending again.', '', hash);
     }
     return { deliver: check.arrived, unsettled };
   }

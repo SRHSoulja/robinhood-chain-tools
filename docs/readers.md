@@ -57,7 +57,7 @@ And one that is sound and is recorded so nobody re-opens it:
 | guard | on | probes | mirror-complete? |
 | --- | --- | --- | --- |
 | `_mustBeNft` | `airdrop721` | `ownerOf(ids[0])`, then `ownerOf(ids[n-1])`, then `supportsInterface(0x80ac58cd)` | yes, since v12 |
-| `_mustNotBeNft` | `airdrop20` | `ownerOf(amounts[0])` **only** | **no — this is round 13's B-1** |
+| `_mustNotBeNft` | `airdrop20` | `supportsInterface(ERC721)`, `isApprovedForAll(sender, BulkSend)`, `ownerOf(amounts[0])`, `ownerOf(amounts[n-1])` | yes, since v13 |
 | *(none)* | `airdrop1155` | — | **not needed, and here is why** |
 
 ### Why `airdrop1155` needs no guard
@@ -74,12 +74,12 @@ ERC-1155 safeTransferFrom(address,address,uint256,uint256,bytes) 0xf242432a   <-
 `airdrop1155` calls `0xf242432a`, which no ERC-20 or ERC-721 implements, so a token of another standard passed
 to it reverts on the first row instead of quietly moving something. The reverse directions are also closed:
 an ERC-1155 sent to `airdrop721` fails `_mustBeNft` (no `ownerOf`, and `supportsInterface(0x80ac58cd)` is
-false), and one sent to `airdrop20` passes `_mustNotBeNft` but then calls `0x23b872dd`, which an ERC-1155 does
-not implement, so every row reverts and nothing moves.
+false), and one sent to `airdrop20` is refused by `_mustNotBeNft` because ERC-1155 also requires
+`isApprovedForAll(address,address)`.
 
-**This is the finding the map exists to produce: the v13 change set is B-1 and nothing else.** Without
-checking, the safe-looking assumption would have been "add a guard to all three", which would have cost a
-staticcall per batch on a path that cannot be reached that way.
+**This is the finding the map existed to produce: round thirteen's v13 change set was B-1 and nothing else.**
+The pre-deploy coverage pass then made that guard independent of the ids by adding the operator question;
+`airdrop1155` still needed no guard of its own.
 
 ---
 

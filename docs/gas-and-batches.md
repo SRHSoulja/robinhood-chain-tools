@@ -193,9 +193,9 @@ Neither changes the cap. 200, the fallback, clears both with room: the dearest E
 transaction and the dearest ERC-1155 fits 423.
 
 Both change what the page says when it cannot measure. The fallbacks now hold the dearest token of each kind
-found alive on this chain, 57,500 for an ERC-20, 76,000 for an ERC-1155 and 153,000 for an NFT, so a figure
-derived from them is a real upper bound rather than a middling guess, and the plan calls it "at most". A
-measurement still gets called "about", because that is what it is.
+found in this survey, 57,500 for an ERC-20, 76,000 for an ERC-1155 and 153,000 for an NFT. That is a more
+conservative planning figure than a median, not an upper bound on contracts the survey never saw. The page
+calls it a fallback and says it is not a ceiling. A measurement is called an estimate for the same reason.
 
 ### Is the probe measuring the right thing?
 

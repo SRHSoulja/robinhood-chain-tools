@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The cheap half. Everything here runs in well under a second and needs no browser, no chain and no network.
+# The cheap half. Everything here runs in seconds and needs no browser, no chain and no network.
 #
 #   ./preflight.sh
 #
@@ -86,10 +86,19 @@ PY
 #     v12 -- arrived as "reverted with 0x16102772". Two of those nine already had sentences written for them
 #     and were unreachable because the interface never named them. Being stopped correctly and told nothing
 #     you can act on is its own defect, and it is the kind that returns the moment a new error is added.
-if [ -f out/BulkSend.sol/BulkSend.json ]; then
-python3 - <<'PY' || bad=1
+#
+#     Always ask Foundry for an ABI from the current source. `out/` is ignored, so reading it directly made
+#     this check skip itself on a fresh CI clone; when it did exist locally it could also be stale. `inspect`
+#     validates the cache or rebuilds before answering, and its output is independent of either case.
+audit_abi_file="$(mktemp)"
+audit_forge="$(command -v forge 2>/dev/null || true)"
+if [ -z "$audit_forge" ] && [ -x "${HOME:-}/.foundry/bin/forge" ]; then
+  audit_forge="${HOME}/.foundry/bin/forge"
+fi
+if [ -n "$audit_forge" ] && "$audit_forge" inspect src/BulkSend.sol:BulkSend abi --json >"$audit_abi_file"; then
+python3 - "$audit_abi_file" <<'PY' || bad=1
 import io, json, re, sys
-abi = json.load(open('out/BulkSend.sol/BulkSend.json'))['abi']
+abi = json.load(open(sys.argv[1]))
 errs = [e['name'] for e in abi if e['type'] == 'error']
 bad = False
 # Both pages read this contract's errors, and round thirteen's fix taught only one of them (S-7 on the twin
@@ -112,8 +121,9 @@ if bad: sys.exit(1)
 print('  ok     all %d contract errors reach the user as a sentence, on both pages' % len(errs))
 PY
 else
-  note ok "contract errors: skipped, no build in out/ (run forge build)"
+  fail "could not build the current BulkSend ABI, so contract-error coverage was not checked"
 fi
+rm -f "$audit_abi_file"
 
 # 4. Nothing personal, and no key material, in anything tracked.
 HOMEPAT='/home/''arson'   # split so this file does not match its own search

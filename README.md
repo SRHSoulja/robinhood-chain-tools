@@ -32,6 +32,10 @@ project in one place: which suites run and what each one actually proves, what h
 marked so, every finding from the last review with open or closed beside it, and the two conditions that have
 to be true before this touches mainnet. Every number in it is reproducible by the command printed next to it.
 
+**What already exists:** [docs/prior-art.md](docs/prior-art.md) compares the closest public contracts and
+standards at pinned revisions: what this project reused, what those tools do better, and which recovery and
+safety behavior would be lost by treating one as a drop-in replacement.
+
 **What a batch costs:** [docs/gas-and-batches.md](docs/gas-and-batches.md) is every gas figure this tool
 relies on, measured on the chain rather than estimated: what one recipient costs for each kind of token, what
 a thousand-piece airdrop costs at each batch size, where one transaction stops (819 recipients, 32.2M gas),

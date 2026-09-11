@@ -27,11 +27,20 @@
 >
 > 7. **Done.** Both pages published from `790c9b5`; live bytes identical to the repository (the publisher's own
 >    post-publish check, and an independent fetch).
-> 8. **Round fourteen is running** against `790c9b5` and v13, launched the evening of 10 September 2026 in the
->    usual way (a fresh `claude -p` in the harness directory, outside this repository, reading `PROMPT.md`).
->    The prompt points it at the guard first, then the Check page's error reader, then the reader map, and
->    names the three harness weaknesses left open on purpose. Triage when `AUDIT.md` completes: publish the
->    report as written, close every blocker against its probe, and only then does the mainnet question exist.
+> 8. **Round fourteen has not run.** The evening attempt against `790c9b5` created the report headings, read
+>    `PROMPT.md`, and then hit its session limit before examining the code; `AUDIT.md` has no findings or
+>    verdict. The prompt points the next attempt at the guard first, then the Check page's error reader, then
+>    the reader map, and names the three harness weaknesses left open on purpose. Triage when a complete
+>    `AUDIT.md` exists: publish the report as written, close every blocker against its probe, and only then
+>    does the mainnet question exist.
+> 9. **Production RPC is now an explicit gate.** Robinhood's public mainnet endpoint is suitable for the
+>    present read-only rehearsal but its own documentation calls it rate-limited and not recommended for
+>    production. Select a dedicated provider, keep its credential in the Worker rather than `index.html`, and
+>    add an independently operated fallback/monitor before mainnet is enabled.
+> 10. **Repeat the real-wallet boundary once, on the final testnet page.** The v13 live scripts are green but
+>     their wallets are test implementations, and the manual MetaMask run predates v10. Complete one injected-
+>     wallet and one phone/WalletConnect airdrop with freshly minted testnet assets, then read both back before
+>     changing the mainnet placeholder.
 >
 > **Deferred on purpose, and written down so it is not forgotten:** the four live scripts and the on-chain
 > B-1 script sign with `cast send --private-key`, which puts a testnet-only key in a process argument list
