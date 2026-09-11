@@ -47,7 +47,7 @@ One contract, three functions. It holds nothing: every transfer is `transferFrom
 only move what you approved, inside the transaction you signed. **No owner, no upgrade path, no fees, no
 pause.** If you want it to stop, stop calling it.
 
-Deployed at [`0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481`](https://explorer.testnet.chain.robinhood.com/address/0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481),
+Deployed at [`0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232`](https://explorer.testnet.chain.robinhood.com/address/0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232),
 verified, runtime bytecode byte-for-byte equal to what this repository builds.
 
 ### Modes

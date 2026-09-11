@@ -3,12 +3,12 @@
 ## The thing that matters
 
 `src/BulkSend.sol`, about 300 lines. It is deployed at
-[`0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481`](https://explorer.testnet.chain.robinhood.com/address/0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481)
+[`0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232`](https://explorer.testnet.chain.robinhood.com/address/0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232)
 on Robinhood Chain testnet, verified, and its runtime bytecode is byte-for-byte equal to what this repository
 builds. Check that yourself:
 
     forge build
-    cast code 0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481 --rpc-url https://rpc.testnet.chain.robinhood.com
+    cast code 0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232 --rpc-url https://rpc.testnet.chain.robinhood.com
     # compare with out/BulkSend.sol/BulkSend.json -> deployedBytecode.object
 
 The two pages under `web/` are what people actually use, and the live copies are byte-identical to the files

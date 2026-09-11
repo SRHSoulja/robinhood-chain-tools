@@ -10,7 +10,7 @@ const AIRDROP = pathToFileURL(new URL('../../web/index.html', import.meta.url).p
 const CHECK = pathToFileURL(new URL('../../web/check.html', import.meta.url).pathname).href;
 const A = (n) => '0x' + n.toString(16).padStart(40, '0');
 const NFT = A(0x721), TOK = A(0x20), RUN_ME = A(0xdead);
-const BULK = '0xc2e4a9c4c9215600d1b348d02b63c6148d0ef481';
+const BULK = '0xf2ed6359f5dee0334d68cd21d306d9d3e7a49232';
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
 let demonstrated = 0, notReproduced = 0;

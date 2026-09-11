@@ -5,7 +5,36 @@ explorer. Nothing has been deployed to mainnet. Superseded addresses are left in
 [`deployments.testnet.json`](../deployments.testnet.json) as tombstones so any transaction referring to one
 can still be traced.
 
-## v12 — `0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481` (current)
+## v13 — `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (current)
+
+Round thirteen's contract blocker, and the thing writing its test showed.
+
+- **`_mustNotBeNft` was not the mirror it said it was.** v12 taught `_mustBeNft` that probing one id is not
+  enough -- the id in hand can be burned or never minted -- and wrote its mirror the same day probing one
+  value. A sender holding ids 2 and 3 of a collection, with id 1 unminted, pasting the collection into the
+  token form got two real ERC-721 `Transfer` events and an `Airdrop20(sent 2, skipped 1)` in one transaction.
+  Demonstrated on chain against v12 (`0xc6b4cf63…`), and the same paste against v13 is refused on chain
+  with `IsAnNft` ([`0x5b46a00557…`](https://explorer.testnet.chain.robinhood.com/tx/0x5b46a00557302eb7ec212a655e10e0d77707ba1b2d115076a2559fb656aae851)): the explorer decodes the
+  revert, records no log, and both ids are still with the sender. The guard is now the same shape as its twin: ERC-165
+  first, then the first id, then the last.
+- **And then one question that does not depend on ids at all.** Writing the test for that second probe showed
+  what two id probes cannot see: a collection with no ERC-165 whose live ids are in the middle of the list
+  answers neither. So the guard also asks `isApprovedForAll(address,address)`, which every ERC-721 and every
+  ERC-1155 must have and no ERC-20 has. A 32-byte answer means the thing pasted into the token form is an NFT
+  contract of one kind or the other. A hybrid that is both, ERC-404 style, is refused too, on purpose: in such
+  a token an amount that happens to be a live id moves an NFT, which is this exact hazard. Against a read-only
+  fork of mainnet, 20 of 20 real collections are refused and 20 of 20 real ERC-20s still deliver.
+- **The residual, written down.** A contract with `ownerOf` and `transferFrom` but neither ERC-165 nor
+  `isApprovedForAll` is not an ERC-721 by the standard's own definition, and when both probed ids are dead
+  there is nothing left to ask that a token would not also answer. Pinned as a known limit in
+  `testBareRevert721_withNeitherIntrospectionNorOperators_isTheResidual`.
+- Cost: four staticcalls on every ERC-20 batch, about 10,000 gas, against a batch that costs tens of millions.
+  Nothing else in the contract changed; the diff against v12 is one function and its call.
+- Every branch of the contract now has a test (100% branch coverage, from 82%), its properties hold over
+  2,304 random calls in `test/Invariants.t.sol`, and `.gas-snapshot` records the gas of every test.
+- Deployed and verified; runtime is 9,437 bytes, byte-for-byte equal to what this repository builds.
+
+## v12 — `0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481`
 
 Round twelve's contract findings, and one of them declined with its reason written down.
 

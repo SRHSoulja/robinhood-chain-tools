@@ -1,7 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 10 September 2026, against BulkSend **v12 on chain and v13 in the source, built and not yet
-deployed**, and round thirteen.
+Last updated 10 September 2026, against BulkSend **v13** and round thirteen.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -60,7 +59,12 @@ node test/web/live-send-all.mjs        # real ERC-1155 and ERC-20 airdrops, bala
 ```
 
 All four were last run green against BulkSend **v12** on 10 September 2026: 4, 10, 12 and 18 checks, 44 in
-total. **None has run against v13**, because v13 is not deployed; that is the next thing that happens. Between them, every one of the three standards has been delivered on chain through the current
+total. **All four ran green against v13 the same day**, right after it was deployed: 4, 10, 18 and 12 checks. And
+every transaction they sent was then read back from the **block explorer**, which decodes against the verified
+ABI independently of this repository's own receipt parsing: `airdrop721` with `Airdrop721` and three
+`Transfer`s, `airdrop1155` with `Airdrop1155` and three `TransferSingle`s, `airdrop20` with `Airdrop20` and
+three `Transfer`s, all to `0xf2eD…9232`, and the no-approval path as one `execute` from the delegated account
+carrying three `Transfer`s with BulkSend nowhere in it. Between them, every one of the three standards has been delivered on chain through the current
 contract and the balances read back afterwards -- three NFTs to three fresh addresses, three recipients each
 holding 2 of an ERC-1155 edition, and three each holding exactly 1.5 of an ERC-20, to the wei.
 
@@ -85,7 +89,7 @@ They sign with a testnet-only key that holds no mainnet balance and refuse to ru
 | a batch of ERC-721 really lands | `live-send.mjs`, on chain, three fresh addresses | ✅ |
 | the no-approval path really works with no approval | `live-wallet-batch.mjs`, on chain, BulkSend approved for nothing before or after | ✅ |
 | the gas probe gets a sane answer from a real chain | `live-chain.mjs`, four token types | ✅ |
-| deployed bytecode matches what this repository builds | **no, deliberately, for now**: the chain runs v12 (8,968 bytes, verified) and this source builds v13 (9,437 bytes). CI's bytecode step is red for exactly this reason until v13 is deployed | ❌ |
+| deployed bytecode matches what this repository builds | v13, byte-identical, 9,752 bytes, fully verified on the explorer (compiler 0.8.36, cancun, 10,000 runs) | ✅ |
 | the paste guards agree with real mainnet contracts | `test/fork/MainnetGuards.t.sol` on a read-only fork: 20 real collections refused by the ERC-20 guard and accepted by the NFT guard, 20 real tokens accepted; v12's guard let 20 of 20 through | ✅ |
 | the contract's properties hold over random sequences, all three standards | `test/Invariants.t.sol`, 2,304 calls, 0 reverts | ✅ |
 | the deployed pages match these files | `deploy/publish.sh` verifies the hash after publishing | ✅ |
@@ -144,15 +148,15 @@ A finding is marked closed only when the probe that demonstrated it stops reprod
 
 | | | |
 | --- | --- | --- |
-| B-1 | `_mustNotBeNft` probed one id where its twin probed three; NFTs spent as ERC-20 amounts | closed in **v13**, built, not yet deployed |
+| B-1 | `_mustNotBeNft` probed one id where its twin probed three; NFTs spent as ERC-20 amounts | closed in **v13**, and proven on chain: the same paste is refused with `IsAnNft` ([`0x5b46a00557…`](https://explorer.testnet.chain.robinhood.com/tx/0x5b46a00557302eb7ec212a655e10e0d77707ba1b2d115076a2559fb656aae851)) |
 | B-2 | nothing written down until the wallet answers; a batch lost with the tab is paid twice | closed |
 
 B-1 was proven on chain against v12, not only in a test: one transaction recorded two ERC-721 `Transfer`
 events and an `Airdrop20(sent 2, skipped 1)`. v13 makes the guard the same shape as its twin and then goes
 one further: it also asks `isApprovedForAll(address,address)`, which every ERC-721 and ERC-1155 must have and
 no ERC-20 has, so the answer no longer depends on which ids the sender typed. The same paste against v13 is
-refused with `IsAnNft` in the test suite; it will be refused on chain when v13 is deployed, and that is the
-check that closes it.
+refused with `IsAnNft` on chain against v13, read back from the explorer: the revert decoded, no log emitted,
+both ids still with the sender. That is the check that closes it.
 
 B-2 is closed by writing the pending record *before* the wallet is asked and dropping it only on a definite
 rejection. Its probe had to be repaired first: it answered a two-value function with one value, so the page
@@ -240,10 +244,10 @@ is the reason the newest code is always reviewed first.
 
 The contract had been unchanged and clean for seven rounds. Round eleven ended that, round twelve found three
 more things in it, and round thirteen found that round twelve's own guard was not the mirror it claimed to be.
-BulkSend is now **v13 in the source and v12 on the chain**. v13 has been through every mechanical check this
-repository has -- 100% branch coverage, invariants, Slither, the fork suite against real mainnet contracts --
-and through no reviewer. It should go through a round before it goes anywhere near mainnet, and that round
-should see v13 deployed.
+BulkSend is now **v13**, deployed and verified. It has been through every mechanical check this repository
+has -- 100% branch coverage, invariants, Slither, the fork suite against real mainnet contracts -- and
+through no reviewer. It should go through a round before it goes anywhere near mainnet, and that round sees
+v13.
 
 Round twelve's own shape is the argument for that rule. Its single blocker and two of its three most serious
 should-fix items were written the night before it ran: a fix applied to one reader and not its twin, a CI job

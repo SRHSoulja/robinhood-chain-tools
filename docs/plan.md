@@ -10,49 +10,29 @@
 > order is also to be changed so a deliberate deploy gap cannot hide a test result again (round twelve's S-1
 > was exactly "CI red for 8 commits").
 >
-> - **BulkSend v13 is built and tested but NOT DEPLOYED.** Testnet still runs v12 at
->   `0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481` (17,938 chars on chain; the build here is 18,876). That gap
->   is deliberate: the contract is deployed **once**, after the reader-parity map settled the change set.
+> - **BulkSend v13 is DEPLOYED on testnet** at `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (tx `0x5cb0037f…`), byte-identical
+>   at 9,752 bytes, fully verified. The on-chain B-1 reproduction against it reverts `IsAnNft`
+>   ([`0x5b46a00557…`](https://explorer.testnet.chain.robinhood.com/tx/0x5b46a00557302eb7ec212a655e10e0d77707ba1b2d115076a2559fb656aae851)). v12 at `0xc2e4…f481` is a tombstone.
 > - **Rounds twelve and thirteen are fully closed.** Every probe file in the repository is at its baseline,
 >   and round thirteen's six browser probes are at **0 of 6**.
 > - **Phases 0 to 5 of this plan are done.** Phase 6 is the only one left and it needs the chain.
 > - **Mainnet is at nonce 0 and nothing may touch it.** Testnet gas and nonces move for reasons unrelated to
 >   this project -- the deployer is shared with the maintainer's game NFT experiments. See `status.md`.
 >
-> **The next actions, in order.** The re-evaluation below found work that has to come BEFORE the deploy, because
-> the contract deploys once, and work that has to come before round fourteen, because the reviewer would find
-> it. The chain steps are unchanged.
+> **Phase 6, as of the evening of 10 September 2026.** Steps 0 to 6 are done: the pre-deploy gate (every branch
+> tested, invariants, snapshot, the gas assertion), the pre-round gate (both pages name all fifteen errors,
+> the report published, status and README and for-reviewers current, the NFT path's unheld-id line, CI's
+> bytecode step last, the probes in preflight's address check), the fork suite, the deploy, the on-chain
+> B-1 refusal, the nine files, and all four live scripts read back from the explorer. What remains:
 >
-> 0. **Pre-deploy gate, contract side** (item list in the re-evaluation): a passing test for v13's own new
->    branch and for the nine arms `readers.md` listed and nobody wrote; invariant tests; `.gas-snapshot`;
->    assertions in `test_gas_400_recipients`. If any of these finds a defect, v13 becomes v14 *before* it is
->    deployed, which is the point of doing them first.
-> 1. **Pre-round gate, page and documents:** the Check page's three missing error sentences; publish round
->    thirteen's report; `status.md`, `README.md`, `for-reviewers.md` brought to round thirteen; `checkTotals`
->    given its ERC-721 branch; CI step order.
-> 2. `forge test --match-path 'test/fork/MainnetGuards.t.sol'` -- 4 passed on 10 September, re-run right
->    before the deploy.
-> 3. Deploy v13 to **testnet 46630** with the deployer key in a Foundry keystore (never on a command line),
->    verify on the explorer, confirm `cast code` equals the artifact's `deployedBytecode.object` whole.
->    Rehearsed on an anvil fork of testnet from the real deployer on 10 September: 2,700,921 gas, 9,437 bytes,
->    byte-identical.
-> 4. Re-run the on-chain B-1 reproduction against v13, from `testnet-plain`, against `OZ721`, with two fresh
->    ids minted in a decade no live script uses and a third left unminted. Against v12 it produced two ERC-721
->    `Transfer` events and an `Airdrop20(sent 2, skipped 1)` in one transaction
->    (`0xc6b4cf63b9e63eea42950973f0c8269ccfbe0f9eb6cb5d889359a1063dad9295`). Against v13 it must revert
->    `IsAnNft`, read back from the explorer.
-> 5. Update **all nine** files that name the address together, not the five this block used to list:
->    `deployments.testnet.json`, `web/index.html`, `README.md`, `docs/for-reviewers.md`, `docs/CHANGELOG.md`,
->    `test/web/client.test.mjs`, `test/web/audit-probe-12.mjs`, `test/web/audit-probe-13.mjs`, and this file.
->    `preflight.sh` catches the page, manifest, tests and three of the documents; it does not read the probes
->    or this file.
-> 6. `web/sync.sh`, `./verify.sh`, then all four live scripts, and **read every transaction back from the
->    explorer** rather than from this repository's own receipt parsing.
-> 7. `./deploy/publish.sh airdrop` and `check`. The live pages are at `44e6350`, the commit round thirteen
->    reviewed, so B-2 and that round's six should-fix items are live on the testnet page until this step.
-> 8. Rewrite the reviewer prompt for round fourteen (it is written for thirteen, against v12), refresh the
->    harness clone, launch. Point it at v13's guard, then at the Check page's error reader, then at the
->    reader map.
+> 7. `./deploy/publish.sh airdrop` and `check`, then the live bytes compared to the repository.
+> 8. Round fourteen against v13: the prompt is drafted, pointed at the guard first, then the Check page's
+>    error reader, then the reader map. Refresh the harness clone, launch, triage when the report completes.
+>
+> **Deferred on purpose, and written down so it is not forgotten:** the four live scripts and the on-chain
+> B-1 script sign with `cast send --private-key`, which puts a testnet-only key in a process argument list
+> for the length of the command. The deployer key no longer does (the deploy script reads the environment).
+> A keystore import for the two testnet keys is the fix; it is not release-relevant and it is not done.
 >
 > **What a "clean" round means, so it is not mistaken for something easier.** The gate asks for a round with
 > **no release blockers**, not a round with no findings. Blockers by round so far: 15, 11, 5, 9, 9, 4, 6, 3,
