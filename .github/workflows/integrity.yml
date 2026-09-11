@@ -126,8 +126,8 @@ jobs:
             for path in "/x/46630/tokens/0x0000000000000000000000000000000000000000" "/x/4663/stats"; do
               hdr="$(curl -sI --max-time 25 "https://$host$path")"
               # The status is the second field of the status line. Stripping non-digits from the whole line turned
-    # "HTTP/2 200" into "2200", and this step failed on every run since it was added while the site was fine.
-    code="$(printf '%s' "$hdr" | head -1 | awk '{print $2}')"
+              # "HTTP/2 200" into "2200", and this step failed on every run since it was added while the site was fine.
+              code="$(printf '%s' "$hdr" | head -1 | awk '{print $2}')"
               [ "$code" = "200" ] || { echo "$path answered $code; a non-2xx from here is replaced by Cloudflare with our own page"; exit 1; }
               printf '%s' "$hdr" | grep -qi '^content-type: application/json' \
                 || { echo "$path did not answer JSON; it must never pass a third-party document through"; exit 1; }
