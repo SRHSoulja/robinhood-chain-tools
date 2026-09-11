@@ -31,7 +31,7 @@ contract Handler is Test {
     uint256 public nextId = 1;      // 721 ids minted so far
     uint256 public minted1155;
     uint256 public minted20;
-    bool public approved721 = true; bool public approved1155 = true;
+    bool public approved721 = true; bool public approved1155 = true; bool public approved20 = true;
 
     constructor() {
         bulk = new BulkSend(); nft = new OZ721(); multi = new OZ1155(); tok = new OZ20();
@@ -96,15 +96,22 @@ contract Handler is Test {
         tok.mint(sender, total); minted20 += total;
         address[] memory to = _recipients(n, seed, withZero);
         vm.prank(sender);
+        if (!approved20) {
+            if (!lenient) { vm.expectRevert(); bulk.airdrop20(address(tok), to, amts, false); return; }
+            (uint256 s, uint256 k) = bulk.airdrop20(address(tok), to, amts, true);
+            assertEq(s, 0, "unapproved: nothing may be reported sent"); assertEq(k, n);
+            rows20 += n; skipped20 += k; return;
+        }
         (uint256 sent, uint256 skipped) = bulk.airdrop20(address(tok), to, amts, lenient);
         rows20 += n; sent20 += sent; skipped20 += skipped;
         for (uint256 i; i < n; i++) if (to[i] != address(0)) wei20Sent += amts[i];
     }
 
-    function setApproval(bool on721, bool on1155) external {
+    function setApproval(bool on721, bool on1155, bool on20) external {
         vm.startPrank(sender);
         nft.setApprovalForAll(address(bulk), on721); approved721 = on721;
         multi.setApprovalForAll(address(bulk), on1155); approved1155 = on1155;
+        tok.approve(address(bulk), on20 ? type(uint256).max : 0); approved20 = on20;
         vm.stopPrank();
     }
 
@@ -117,6 +124,16 @@ contract BulkSendInvariants is StdInvariant, Test {
     function setUp() public {
         h = new Handler();
         targetContract(address(h));
+    }
+
+    function test_erc20ApprovalWithdrawalIsActuallyExercised() public {
+        h.setApproval(true, true, false);
+        h.drop20(3, true, 17, false);
+        assertEq(h.rows20(), 3, "the withdrawn-allowance rows were exercised");
+        assertEq(h.sent20(), 0, "withdrawn allowance moved tokens");
+        assertEq(h.skipped20(), 3, "lenient withdrawal did not account for every row");
+        h.drop20(2, false, 19, false); // the handler expects and consumes the strict-path revert
+        assertEq(h.rows20(), 3, "a reverted strict batch must not enter the accounting totals");
     }
 
     function invariant_everyRowIsAccountedFor() public view {

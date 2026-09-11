@@ -125,11 +125,13 @@ else
 fi
 rm -f "$audit_abi_file"
 
-# 4. Nothing personal, and no key material, in anything tracked.
+# 4. Nothing personal, and no key material, in anything tracked. Dated audit reports are immutable external
+# records and can name the auditor's local workspace; do not rewrite those paths merely to make this check
+# green. They remain covered by the key-material check below.
 HOMEPAT='/home/''arson'   # split so this file does not match its own search
-if git grep -qIl "$HOMEPAT" -- . ':!preflight.sh' 2>/dev/null; then
+if git grep -qIl "$HOMEPAT" -- . ':!preflight.sh' ':(exclude,glob)docs/audit-*.md' 2>/dev/null; then
   fail "a tracked file contains an absolute home path"
-  git grep -Il "$HOMEPAT" -- . ':!preflight.sh' | sed 's/^/         /'
+  git grep -Il "$HOMEPAT" -- . ':!preflight.sh' ':(exclude,glob)docs/audit-*.md' | sed 's/^/         /'
 else
   note ok "no absolute home paths in tracked files"
 fi

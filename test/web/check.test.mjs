@@ -651,6 +651,24 @@ async function freshBrowser() {
   await page.close();
 }
 
+// ---- round 14 B-03: an unread top-level request taints the whole pasted set -------
+{
+  const page = await open(browser, {});
+  const t = await ask(page, JSON.stringify([
+    { jsonrpc: '2.0', id: 1, method: 'personal_sign', params: ['0xdead', ME] },
+    { jsonrpc: '2.0', id: 2, method: 'wallet_sendCalls', params: [{ version: '2.0.0', chainId: '0xb626',
+      from: ME, atomicRequired: true, calls: [{ to: NFT, data: '0x06fdde03' }] }] },
+  ]), ME, 7000);
+  check('round-14 B-03 the unsupported first request is preserved at its original position',
+    /Request 1 of 2: `personal_sign` is a method this page does not read/.test(t), t.slice(0, 600));
+  check('round-14 B-03 the accepted second request keeps its original numbering',
+    /Request 2 of 2:/.test(t), t.slice(0, 700));
+  check('round-14 B-03 the accepted subset is qualified and the pasted set gets no green verdict',
+    /Request 2 of 2: run in order, every call succeeds — as read here/.test(t)
+      && /no result below is a verdict on the pasted set/.test(t), t.slice(0, 1000));
+  await page.close();
+}
+
 // ---- B-02: separate transactions are not one sequence ---------------------------
 {
   const seen = {};

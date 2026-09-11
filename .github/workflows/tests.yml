@@ -46,6 +46,21 @@ jobs:
       # has been added with nothing watching it.
       - name: everything, including the probes that pin every closed finding
         run: ./verify.sh
+      # Prove the signing-page dependency before the deliberate deployed-bytecode gate below can stop the job.
+      - name: the connector is reproducible from its pinned source
+        run: |
+          set -euo pipefail
+          cd web/wc-build
+          npm ci --no-audit --no-fund
+          npx esbuild entry.js --bundle --format=esm --minify --platform=browser --target=es2020 --outfile=/tmp/wc-rebuilt.js
+          built="$(sha256sum /tmp/wc-rebuilt.js | cut -d' ' -f1)"
+          shipped="$(sha256sum ../wc.js | cut -d' ' -f1)"
+          expected="$(tr -d '[:space:]' < EXPECTED-SHA256)"
+          echo "  rebuilt  $built"
+          echo "  shipped  $shipped"
+          echo "  expected $expected"
+          [ "$built" = "$shipped" ] || { echo "the pinned source no longer produces the shipped bundle"; exit 1; }
+          [ "$built" = "$expected" ] || { echo "the shipped bundle no longer matches its reviewed digest"; exit 1; }
       # Last, on purpose. This step fails by design whenever the contract in src/ is built but not yet deployed,
       # and when it ran second it stopped the job before a single suite had run: CI was red for eight commits
       # and nobody could tell a deploy gap from a broken test. Now the suites and the probes report first, and
@@ -64,17 +79,3 @@ jobs:
           # it does.
           [ "$chain" = "$built" ] || { echo "the deployed runtime is not what this source builds"; exit 1; }
           echo "  ok    $(( (${#built} - 2) / 2 )) bytes, identical at $addr"
-      - name: the connector is reproducible from its pinned source
-        run: |
-          set -euo pipefail
-          cd web/wc-build
-          npm ci --no-audit --no-fund
-          npx esbuild entry.js --bundle --format=esm --minify --platform=browser --target=es2020 --outfile=/tmp/wc-rebuilt.js
-          built="$(sha256sum /tmp/wc-rebuilt.js | cut -d' ' -f1)"
-          shipped="$(sha256sum ../wc.js | cut -d' ' -f1)"
-          expected="$(tr -d '[:space:]' < EXPECTED-SHA256)"
-          echo "  rebuilt  $built"
-          echo "  shipped  $shipped"
-          echo "  expected $expected"
-          [ "$built" = "$shipped" ] || { echo "the pinned source no longer produces the shipped bundle"; exit 1; }
-          [ "$built" = "$expected" ] || { echo "the shipped bundle no longer matches its reviewed digest"; exit 1; }

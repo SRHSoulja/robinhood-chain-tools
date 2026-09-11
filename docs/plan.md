@@ -27,12 +27,12 @@
 >
 > 7. **Done.** Both pages published from `790c9b5`; live bytes identical to the repository (the publisher's own
 >    post-publish check, and an independent fetch).
-> 8. **Round fourteen has not run.** The evening attempt against `790c9b5` created the report headings, read
->    `PROMPT.md`, and then hit its session limit before examining the code; `AUDIT.md` has no findings or
->    verdict. The prompt points the next attempt at the guard first, then the Check page's error reader, then
->    the reader map, and names the three harness weaknesses left open on purpose. Triage when a complete
->    `AUDIT.md` exists: publish the report as written, close every blocker against its probe, and only then
->    does the mainnet question exist.
+> 8. **Round fourteen ran against exact `f5b7614`.** Its report is published unedited as
+>    `audit-2026-09-11-fourteenth-external.md`: four blockers, seven should-fix items, five limits, and a clear
+>    not-ready verdict. B-1 and B-2 are one semantic-serialization defect family; B-3 is mixed-request verdict
+>    composition; B-4 is the deliberately stale live airdrop page. Fix and prove those shapes, strengthen the
+>    evidence ledger, then run a fresh round. Do not publish the known-broken intermediate page merely to make
+>    its hash match.
 > 9. **Production RPC is now an explicit gate.** Robinhood's public mainnet endpoint is suitable for the
 >    present read-only rehearsal but its own documentation calls it rate-limited and not recommended for
 >    production. Select a dedicated provider, keep its credential in the Worker rather than `index.html`, and

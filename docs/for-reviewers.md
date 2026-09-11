@@ -11,16 +11,17 @@ builds. Check that yourself:
     cast code 0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232 --rpc-url https://rpc.testnet.chain.robinhood.com
     # compare with out/BulkSend.sol/BulkSend.json -> deployedBytecode.object
 
-The two pages under `web/` are what people actually use, and the live copies are byte-identical to the files
-here:
+The two pages under `web/` are what people actually use. Check is currently byte-identical; the live airdrop
+page deliberately still serves `790c9b5` while round fourteen's list-rewrite blockers are fixed and reviewed.
+The integrity comparison below must be green again before release:
 
     curl -s https://rhairdrop.gmgnrepeat.com/ | cmp - web/index.html
     curl -s https://rhcheck.gmgnrepeat.com/   | cmp - web/check.html
 
 ## Running everything
 
-    forge test                    # 110 contract tests, plus 29 reviewer probes of which 9 must fail
-    npm install && npm test       # 441 browser tests, all answers mocked, no network
+    forge test                    # 111 contract tests, plus 29 reviewer probes of which 9 must fail
+    npm install && npm test       # 450 browser tests, all answers mocked, no network
     ./test.sh                     # both of the above
 
 The browser tests answer every RPC, explorer and price request from the test file itself, so a failure is the
@@ -123,24 +124,24 @@ which is the case worth monitoring for.
   stretch is the one worth monitoring, so a green badge on a dormant repository means the last run that
   happened rather than the state today. A failure also opens an issue, so it is visible without access to
   anyone's inbox.
-- Thirteen adversarial review rounds, each by a fresh model with no prior context, all published unedited in
-  [`docs/`](.). Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2. Every blocking finding
-  is fixed, and every should-fix from the last three rounds is closed or declined with its reason written
-  down. The inherent-limit lists are not a backlog: those are the things a browser page cannot prove, written
-  down so nobody has to rediscover them.
+- Fourteen adversarial review rounds, each by a fresh model with no prior context, all published unedited in
+  [`docs/`](.). Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4. The first thirteen
+  rounds are closed. Round fourteen's browser/list findings are tracked in `status.md`; its inherent-limit
+  list is not a backlog, but the things a browser page cannot prove, written down so nobody rediscovers them.
 - Six times, a fix from one round has been the next round's finding. In the tenth it was every blocker. In
   the twelfth the only blocker was round eleven's B-4 surviving on the reader nobody re-checked. In the
   thirteenth the contract blocker was round twelve's own new guard, and six of its nine findings were one
   reader being taught something its twin was not. [`readers.md`](readers.md) exists because of that: every
   reader of each shared input, listed, and a commit that fixes one names the others.
-- **The contract is no longer the settled part of this repository.** It was clean and unchanged for seven
+- **The contract has now had a fresh v13 review.** It was clean and unchanged for seven
   rounds; round eleven found two real findings in it, round twelve three more, and round thirteen found that
   round twelve's guard was not the mirror it claimed to be. The source is now **v13**, and that bytecode is
   deployed and verified on testnet. It has been through every mechanical check here -- 100% branch coverage,
   invariants over random sequences, Slither, a fork suite against 20 real mainnet collections and 20 real
-  tokens -- plus the live v13 testnet runs recorded in `status.md`. It has not had a fresh independent review
-  since round thirteen's findings were fixed. **The unreviewed thing in this repository is always whatever
-  was written last**, and right now that includes those contract fixes.
+  tokens -- plus the live v13 testnet runs recorded in `status.md`. Round fourteen examined its guards first
+  and found no conforming-NFT bypass or ordinary asset-loss path; its S-2 notes that a hostile token can return
+  oversized data from guard probes and waste transaction gas. **The unreviewed thing in this repository is
+  always whatever was written last**, and right now that is the round-fourteen browser and harness fix set.
 - Three times before that, a fix from one round has been the next round's finding. That is the most useful thing this
   history shows, and it is why recently changed code is listed first in the review scope rather than last.
 - No human audit firm has looked at this.

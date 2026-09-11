@@ -15,8 +15,9 @@ commit message, and say for each whether it needed the same change.
 
 ## Input 1 — the recipient box (`#list`)
 
-Every function that reads or writes it, and whether it goes through the shared cutters (`boxColumns`,
-`addressOn`, `splitRow`, `deliveriesOn`).
+Every function that reads or writes it, and whether it goes through the shared semantic path (`boxColumns`,
+`addressOn`, `splitRow`, `serializeRow`, `deliveriesOn`). A shared parser is not enough: every writer must
+serialize the same cells back without changing their columns or meaning.
 
 | function | reads | writes | uses the shared cutters |
 | --- | :---: | :---: | --- |
@@ -25,12 +26,12 @@ Every function that reads or writes it, and whether it goes through the shared c
 | `walletsInBox` | ● | | `boxColumns`, `addressOn`, `deliveriesOn` |
 | `unreadableLinesInBox` | ● | | `boxColumns`, `addressOn` |
 | `refuseForUnreadableLines` | ● | | via `unreadableLinesInBox` |
-| `deliveriesOn` | ● | | `splitRow` — **takes `col` and never uses it** (round 13 S-2) |
+| `deliveriesOn` | ● | | `splitRow`; named `tokenId` wins over an unrelated `amount` |
 | `$('csv')` change | | ● | `splitRow` |
 | `$('pickUse')` click | ● | ● | via `walletsInBox` / `refuseForUnreadableLines` |
 | `$('assign')` click | ● | ● | `boxColumns`, `addressOn`, `splitRow` |
-| `$('shuffle')` click | ● | ● | `boxColumns`, `addressOn`, `splitRow` |
-| `$('applyWeight')` click | ● | ● | `boxColumns`, `addressOn` |
+| `$('shuffle')` click | ● | ● | `boxColumns`, `addressOn`, `splitRow`, `serializeRow`; changes only the standard's named payload cells |
+| `$('applyWeight')` click | ● | ● | `boxColumns`, `addressOn`, `splitRow`, `serializeRow`; changes only the named amount cell |
 | `$('dropContracts')` click | ● | ● | `boxColumns`, `addressOn` |
 | `confirmOverwrite` | ● | | counts raw lines, and says "lines" — correct as written |
 | `$('snap')` click | | ● | none — **writes only**, one bare address per line, which every reader handles |

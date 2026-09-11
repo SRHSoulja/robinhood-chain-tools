@@ -895,14 +895,15 @@ async function freshBrowser() {
   const page = await open(browser, { approved: true, ownedIds: [11, 12, 13] });
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, NFT, '721');
-  const headed = 'address,tokenId,amount\n' + A(0x111) + ',1,1\n' + A(0x222) + ',2,1\n';
+  const headed = 'address,tokenId,amount\n' + A(0x111) + ',1,3\n' + A(0x222) + ',2,2\n';
 
   await setList(page, headed);
   const plan = await text(page, '#plan');
   check('S-1 a headed file parses to the wallets it contains, not the lines',
     /2 recipients/.test(plan), plan.slice(0, 140));
 
-  // S-2: the picker must size itself against the same number parseList read.
+  // S-2/S-1 round 14: once tokenId is named, amount is metadata for this standard. The picker must size
+  // itself against the ids parseList read, not expand those two rows into five slots.
   await page.click('#pick'); await page.waitForTimeout(6000);
   const count = await text(page, '#pickCount');
   check('S-2 the picker counts the same wallets the parser did, not double',
@@ -934,8 +935,8 @@ async function freshBrowser() {
   // was announced as one wallet more than it has. It must also keep the heading it did not write.
   const page = await open(browser, {});
   await page.click('#connect'); await page.waitForTimeout(600);
-  await useToken(page, NFT, '721');
-  await setList(page, 'address,tokenId,amount\n' + A(0x111) + ',1,1\n' + A(0x222) + ',2,1\n');
+  await useToken(page, ED, '1155');
+  await setList(page, 'address,label,tokenId,amount\n' + A(0x111) + ',"123,456",7,1\n' + A(0x222) + ',"note;with=separators",8,1\n');
   // The weighting row is revealed by a holder snapshot. Its "the same for everyone" mode needs no snapshot
   // DATA -- the handler's flat branch never touches it -- so the row is revealed directly here rather than
   // driving an explorer read that has nothing to do with what is being tested.
@@ -948,7 +949,12 @@ async function freshBrowser() {
   check('map-3 applyWeight counts wallets, not lines, on a headed file',
     /\b2 wallets\b/.test(msg) && !/\b3 wallets\b/.test(msg), msg.slice(0, 160));
   check('map-3 and the heading it did not write is still there',
-    /^address,tokenId,amount/.test(box), JSON.stringify(box).slice(0, 140));
+    /^address,label,tokenId,amount/.test(box), JSON.stringify(box).slice(0, 180));
+  check('round-14 B-2 Apply Weight keeps quoted metadata in one column',
+    box.includes('"123,456"') && box.includes('"note;with=separators"'), JSON.stringify(box).slice(0, 240));
+  check('round-14 B-2 Apply Weight changes only amount, never token id',
+    box.includes(A(0x111) + ',"123,456",7,2') && box.includes(A(0x222) + ',"note;with=separators",8,2'),
+    JSON.stringify(box).slice(0, 260));
   // And the list it wrote must be one this page can read back. It used to write the "0xA x2" shorthand into
   // a headed file, so the heading said tokenId and the value was a quantity, and parseList then called every
   // line unreadable -- a box rewritten by this page into a form this page refuses.
@@ -956,6 +962,24 @@ async function freshBrowser() {
   check('map-3 and the page can read back the list it just wrote',
     /2 recipients/.test(await text(page, '#plan')) && !/could not be read/.test(await text(page, '#msgList')),
     (await text(page, '#plan')).slice(0, 120) + ' || ' + (await text(page, '#msgList')).slice(0, 120));
+  await page.close();
+}
+{
+  // An ERC-721 amount cannot multiply an already named unique id. The safest handling of the auditor's exact
+  // B-2 shape is to refuse the ambiguous rewrite and preserve every byte the user pasted.
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const before = 'address,label,tokenId,amount\n' + A(0x111) + ',"123,456",7,1\n';
+  await setList(page, before);
+  await page.evaluate(() => { document.getElementById('weightRow').style.display = 'flex'; });
+  await page.selectOption('#weight', 'flat');
+  await page.fill('#each', '3');
+  await page.click('#applyWeight'); await page.waitForTimeout(500);
+  const after = await page.evaluate(() => document.querySelector('#list').value);
+  check('round-14 B-2 an exact ERC-721 id plus amount is refused rather than reinterpreted',
+    /already names the exact NFT id/.test(await text(page, '#msgList')), await text(page, '#msgList'));
+  check('round-14 B-2 the refused rewrite leaves the quoted list byte-for-byte unchanged', after === before, after);
   await page.close();
 }
 
@@ -1099,7 +1123,7 @@ async function freshBrowser() {
   // readHeader has always allowed the address column to be anywhere. Shuffle looked at cell 0, so on this
   // perfectly ordinary file it announced it would drop every line "that have no id yet" -- about lines that
   // all had ids.
-  await setList(page, 'label,address,tokenId\nalice,' + A(0x111) + ',1\nbob,' + A(0x222) + ',2\n');
+  await setList(page, 'label,address,tokenId\n101,' + A(0x111) + ',7\n102,' + A(0x222) + ',8\n');
   await page.click('#shuffle'); await page.waitForTimeout(600);
   const log = await text(page, '#log');
   check('S-18 Shuffle does not claim a labelled file has no ids',
@@ -1109,6 +1133,13 @@ async function freshBrowser() {
   const box = await page.evaluate(() => document.querySelector('#list').value);
   check('S-18 both wallets survive the shuffle',
     box.toLowerCase().includes(A(0x111)) && box.toLowerCase().includes(A(0x222)), box);
+  check('round-14 B-1 Shuffle preserves the heading and keeps numeric metadata attached to its wallet',
+    box.startsWith('label,address,tokenId\n')
+      && box.includes('101,' + A(0x111) + ',') && box.includes('102,' + A(0x222) + ','), box);
+  check('round-14 B-1 Shuffle preserves exactly the two NFT ids, not four positional numbers',
+    /2 recipients/.test(await text(page, '#plan'))
+      && [7, 8].every((id) => new RegExp(',' + id + '(?:\\n|$)').test(box)),
+    (await text(page, '#plan')).slice(0, 160) + ' || ' + box);
   await page.close();
 }
 
@@ -2365,7 +2396,8 @@ async function freshBrowser() {
   await page.click('#connect'); await page.waitForTimeout(600);
   await useToken(page, ED, '1155');
   await setList(page, A(0x81) + '\n' + A(0x82) + '\n');
-  await page.click('#assign'); await page.waitForTimeout(4000);
+  await page.click('#assign');
+  await page.waitForFunction(() => document.querySelector('#log').textContent.includes('Assigned'), null, { timeout: 10000 }).catch(() => {});
   const l = await text(page, '#log');
   check('an ERC-1155 assign names the edition rather than claiming a pairing',
     /every one of edition/.test(l), l.slice(-220));

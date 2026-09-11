@@ -1,6 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 10 September 2026, against BulkSend **v13** and round thirteen.
+Last updated 11 September 2026, against BulkSend **v13** and round fourteen.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -15,7 +15,7 @@ Four things have to be true before that changes, and all are currently false:
 
 | | state |
 | --- | --- |
-| a review round with no release blockers | **not met** — round thirteen found two, both fixed, along with every one of its seven should-fix items. The round that finds none has not happened |
+| a review round with no release blockers | **not met** — round fourteen found four. Three have focused fixes in the current working tree; the live-page mismatch cannot close until a reviewed fix commit is published. A fresh round still has to find none |
 | a production mainnet RPC plan | **not met** — the page names Robinhood's free public endpoint, which [the official documentation](https://docs.robinhood.com/chain/connecting/) calls rate-limited and not recommended for production. Choose a production provider, keep credentials out of the page, and monitor/fail over reads before enabling mainnet |
 | a current real-wallet rehearsal on testnet | **not met** — the v13 live scripts are green, but their wallets are written by this repository. The one manual MetaMask run predates v10. Run the final page through an injected wallet and the phone/WalletConnect path on testnet once each |
 | explicit permission from the maintainer, given after that round | **not given** |
@@ -24,9 +24,12 @@ No one item alone is enough. The deployer holds about 0.002 mainnet ETH that som
 for three deployments, which is exactly why the rule is written down: available is not permitted. Its mainnet
 nonce is 0.
 
-Current unreleased validation, 10 September 2026: `./verify.sh` completed with 319/319 airdrop-page tests,
-122/122 Check-page tests, 21/21 CSP checks, all ordinary contract tests green, and every historical finding
-probe unchanged from its baseline. The separate read-only mainnet fork also passed all four tests: 20/20 real
+Current unreleased validation, 11 September 2026: the current-tree suites completed with 325/325 airdrop-page
+tests, 125/125 Check-page tests, 21/21 publish-policy checks, and all ordinary contract tests green. Every
+historical probe retained its exact assertion names and statuses. The ledger initially fingerprinted volatile
+diagnostics too, so timestamps made two identical probe runs differ; it now hashes only the promised status
+and assertion name, and all five browser-probe fingerprints match across both completed runs. The separate
+read-only mainnet fork also passed all four tests: 20/20 real
 ERC-721 collections were accepted by the NFT guard and refused by the ERC-20 guard, and 20/20 real ERC-20
 tokens were accepted. No transaction was signed or broadcast and no ETH was spent.
 
@@ -34,22 +37,24 @@ tokens were accepted. No transaction was signed or broadcast and no ETH was spen
 
 ```
 ./test.sh                              # everything below except the live scripts
-forge test                             # 110 contract tests, plus 29 reviewer probes of which 9 must FAIL
-node test/web/client.test.mjs          # 319 airdrop page tests
-node test/web/check.test.mjs           # 122 Check page tests
+forge test                             # 111 contract tests, plus 29 reviewer probes of which 9 must FAIL
+node test/web/client.test.mjs          # 325 airdrop page tests
+node test/web/check.test.mjs           # 125 Check page tests
 ./test/csp-gate.test.sh                #  21 checks that a weaker published CSP is refused
 forge test --match-path 'test/fork/MainnetGuards.t.sol'   # the paste guards against 20 real mainnet
                                        #   collections and 20 real tokens, on a read-only fork
 ```
 
-The 110 include `test/Invariants.t.sol`: a handler drives all three paths with random lists, 2,304 calls per
+The 111 include `test/Invariants.t.sol`: a handler drives all three paths with random lists, 2,304 calls per
 run, and after every one the contract must still satisfy *sent + skipped == rows*, *sent means it moved*, and
 *BulkSend holds nothing*. Branch coverage of `src/BulkSend.sol` is 100% (58 of 58); it was 82% before v13's
 tests were written, and the missing arms were all on the ERC-1155 and ERC-20 paths.
 
-`./verify.sh` runs all of that, plus every probe file, and compares the probe counts against
-[`test/findings-baseline.json`](../test/findings-baseline.json). It **fails on a probe file the baseline has
-never heard of**, because twice now a probe file has been added and watched by nothing.
+`./verify.sh` runs all of that, plus every probe file, and compares the exact probe-file manifest, exact
+counts, and fingerprints of every probe assertion's name and status against
+[`test/findings-baseline.json`](../test/findings-baseline.json). It also pins the complete browser-suite files.
+A deleted or renamed probe, a lower count, or one reopened finding cancelling one newly fixed finding now
+fails. Any evidence change requires an explicit reviewed baseline update.
 
 The reviewer's probe files reproduce findings, so a probe that **fails** is a finding that is fixed. They are
 kept rather than deleted, because they are the only thing that can tell a fix from a belief.
@@ -134,6 +139,26 @@ ERC-1155 survey covers 6, which is every one that was findable and measurable. S
 a distribution, only its top, and the file says so.
 
 ## Open findings
+
+Round fourteen, 10–11 September 2026, against `f5b7614`. The full report is
+[`audit-2026-09-11-fourteenth-external.md`](audit-2026-09-11-fourteenth-external.md), published byte-for-byte
+unchanged. Four release blockers, seven should-fix findings, and five inherent/operational limits.
+
+### Round fourteen release blockers
+
+| | | |
+| --- | --- | --- |
+| B-1 | Shuffle discarded headings and rewrote numeric metadata positionally, turning labels into additional ERC-721 ids | fixed in the current tree by shuffling only the standard's named payload cells through one round-trip-checked serializer; exact numeric-metadata reproduction added |
+| B-2 | Apply Weight parsed quoted CSV and wrote it back unquoted, allowing a metadata fragment to replace the token id | fixed in the current tree through the same serializer; quoted comma, semicolon and equals metadata plus unchanged-id assertions added |
+| B-3 | Check gave the readable subset of a mixed JSON paste an unqualified green whole-request verdict | fixed in the current tree: every accepted request keeps its original position and any top-level refusal taints every subset verdict; auditor's exact mixed input added |
+| B-4 | the public BulkSend page serves `790c9b5`, not reviewed `f5b7614` | open deliberately: publish only after B-1 through B-3 are committed and independently reviewed; publishing the known-broken intermediate page would close a hash mismatch by shipping its defects |
+
+Round fourteen's S-1, S-3, S-4, S-5, S-6 and S-7 are also fixed in the current tree: named ERC-721 ids
+control picker cardinality; the evidence ledger is exact rather than count-only; connector reproducibility
+runs before the deliberate bytecode gate; ERC-20 approval withdrawal is exercised directly and in the
+invariant handler; front-door counts are current; and Check discloses its single-RPC boundary. S-2, bounded
+guard-probe returndata, is not a demonstrated asset-loss path and remains a documented contract-hardening
+decision rather than being rushed into otherwise unchanged v13 production code before release.
 
 Round thirteen, 10 September 2026, against `f4f5ca6`. The full report is
 [`audit-2026-09-10-thirteenth-external.md`](audit-2026-09-10-thirteenth-external.md), published unedited.

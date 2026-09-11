@@ -1,5 +1,5 @@
 {
- "_why": "The reviewers' probes reproduce findings, so for the browser sets a LOWER number is better and a higher one means something closed has reopened. The contract set is written the other way round: its probes are forge tests that PASS while the defect exists, so there a higher number is the regression. Update these only when the change is deliberate and the reason is in the commit. web_probes holds one entry per test/web/audit-probe*.mjs and contract_probes one per test/Audit*.t.sol; a probe file the baseline has never heard of FAILS the run, because both sets had a file nobody was watching -- named one by one rather than enumerated, so adding a file quietly added nothing.",
+ "_why": "The reviewers' probes reproduce findings. Counts, exact file membership, and fingerprints of each assertion name and status must all match: higher, lower, deleted, renamed, or count-cancelled evidence fails until a reviewed baseline change explains it. suite_files pins the complete deterministic browser-suite sources, so deleting or rewriting an ordinary regression assertion is also an explicit evidence change.",
  "contract_probes": {
   "AuditProbe": 14,
   "Audit12": 5,
@@ -11,5 +11,21 @@
   "audit-probe-check2": 1,
   "audit-probe-12": 0,
   "audit-probe-13": 0
+ },
+ "contract_probe_assertions": {
+  "AuditProbe": "58faa4fe9f082e1bbd74e487087307e4f66ace155d99da8d6452c582ca4033fc",
+  "Audit12": "9dd09f4ca7a05e76219b54d6ce410c5ac34d6eeb982e0fefa33a5db02a46926e",
+  "Audit13": "da20a62615652986ca84f240b41ed2fa62d37dd2d0daaac43481a6305b9bc788"
+ },
+ "web_probe_assertions": {
+  "audit-probe": "c7f1910f4941667e88bb743a65038e4cbe93de9719ac24fa6183a63427b337a5",
+  "audit-probe-check": "18a0aab7cd27b4df5b01c5b5d8c2c4279f082d6f8591f0adcdf939b24ee7b33d",
+  "audit-probe-check2": "dac13131a5880f215737b0c883ee235eca81cbbea174193cc8bb1f9b042c53f5",
+  "audit-probe-12": "acbbc2352c12463333d233e78920ed5b7022b37baffe45d834be20d35a564732",
+  "audit-probe-13": "7ff803e37c9db1cbb502f83b1ce95007288956b683b152a99b16333d903a18a3"
+ },
+ "suite_files": {
+  "client": "a83e14d5312df128d92587acad0e205fbc0f35c5bf50eef2156a7df95128522c",
+  "check": "5b8b1db8ea1f8a675425b7e133368c0d65daba11809c5bd54378fd377b39a460"
  }
 }

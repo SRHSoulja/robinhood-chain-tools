@@ -1159,6 +1159,8 @@
     const top = Array.isArray(j) ? j : [j];
     const requests = [];
     const refused = [];
+    const refuse = (index, why) => refused.push((top.length > 1 ? 'Request ' + (index + 1) + ' of ' + top.length + ': ' : '') + why);
+    const accept = (index, request) => { request.sourceIndex = index; requests.push(request); };
     // A bare array whose members are all call-shaped, with no method and no sender of their own, is what a
     // wallet_sendCalls `calls` array looks like when someone copies just that part. Read as one list, and
     // said out loud, because the alternative reading (several separate transactions) would describe an
@@ -1169,39 +1171,40 @@
       const note = ['Read as one list of calls, the way a wallet_sendCalls request carries them. If these were meant as separate transactions, paste them as separate requests: nothing here says which order a wallet would use, or whether it would run them together.'];
       const r = readEnvelope({ calls: j }, note, { loose: true });
       r.envelope = null;
-      return { kind: 'batch', requests: [r], refused: [] };
+      return { kind: 'batch', requests: [r], refused: [], topCount: 1 };
     }
-    for (const entry of top) {
-      if (!entry || typeof entry !== 'object') { refused.push('Entry ' + (top.indexOf(entry) + 1) + ' of that JSON is ' + typeName(entry) + ', not a request. Nothing has been read for it, and what follows is therefore not the whole of what was pasted.'); continue; }
+    for (let entryIndex = 0; entryIndex < top.length; entryIndex++) {
+      const entry = top[entryIndex];
+      if (!entry || typeof entry !== 'object') { refuse(entryIndex, 'Entry ' + (entryIndex + 1) + ' of that JSON is ' + typeName(entry) + ', not a request. Nothing has been read for it, and what follows is therefore not the whole of what was pasted.'); continue; }
       const note = [];
       const method = typeof entry.method === 'string' ? entry.method : null;
       if (method) {
         const params = Array.isArray(entry.params) ? entry.params : [];
         const p0 = params[0];
         if (method === 'wallet_sendCalls') {
-          if (!p0 || !Array.isArray(p0.calls)) { refused.push('A wallet_sendCalls request with no calls array.'); continue; }
-          requests.push(readEnvelope(p0, note));
+          if (!p0 || !Array.isArray(p0.calls)) { refuse(entryIndex, 'A wallet_sendCalls request with no calls array.'); continue; }
+          accept(entryIndex, readEnvelope(p0, note));
         } else if (method === 'eth_sendTransaction' || method === 'eth_signTransaction') {
-          if (!p0 || typeof p0 !== 'object') { refused.push('An ' + method + ' request with no transaction object.'); continue; }
-          requests.push(readTransaction(p0, note));
+          if (!p0 || typeof p0 !== 'object') { refuse(entryIndex, 'An ' + method + ' request with no transaction object.'); continue; }
+          accept(entryIndex, readTransaction(p0, note));
         } else {
           // Refused by name rather than guessed at. A method this page does not understand is a method whose
           // parameters it cannot claim to have read.
-          refused.push('`' + method.slice(0, 40) + '` is a method this page does not read. Nothing from it is shown below.');
+          refuse(entryIndex, '`' + method.slice(0, 40) + '` is a method this page does not read. Nothing from it is shown below.');
         }
         continue;
       }
       // No method named: accept the two shapes someone actually pastes, and nothing else.
-      if (Array.isArray(entry.calls)) { requests.push(readEnvelope(entry, note)); continue; }
-      if (entry.to || entry.data || entry.input) { requests.push(readTransaction(entry, note)); continue; }
-      refused.push('An entry in that JSON is neither a request, a transaction, nor a call.');
+      if (Array.isArray(entry.calls)) { accept(entryIndex, readEnvelope(entry, note)); continue; }
+      if (entry.to || entry.data || entry.input) { accept(entryIndex, readTransaction(entry, note)); continue; }
+      refuse(entryIndex, 'An entry in that JSON is neither a request, a transaction, nor a call.');
     }
     if (!requests.length) return { kind: 'bad', why: refused.join('  ') || 'That JSON has no calls in it.' };
     if (requests.length === 1 && requests[0].calls.length === 1 && requests[0].calls[0].to
         && !requests[0].envelope && !requests[0].notes.length && !refused.length
         && !(requests[0].schemaProblems || []).length && !requests[0].invalidMembers)
       return Object.assign({ kind: 'call' }, requests[0].calls[0]);
-    return { kind: 'batch', requests, refused };
+    return { kind: 'batch', requests, refused, topCount: top.length };
   }
 
   // ---------- working out what was pasted ----------
@@ -1244,17 +1247,24 @@
       if (parsedInput.kind === 'address') return await showAddress(parsedInput.address, seq);
       if (parsedInput.kind === 'batch') {
         const reqs = parsedInput.requests;
-        const many = reqs.length > 1;
+        const refused = parsedInput.refused || [];
+        const topCount = parsedInput.topCount || reqs.length;
+        const pasteUnread = refused.length > 0;
+        const many = topCount > 1;
         const cards = [];
-        for (const r of (parsedInput.refused || [])) cards.push(note('bad', 'Part of that request was not read', r));
-        if (many) cards.push(note('warn', 'This is ' + reqs.length + ' separate requests',
-          'They are not one batch. Each carries its own network, sender and atomicity rules, and each is read below on its own terms.'));
+        for (const r of refused) cards.push(note('bad', 'Part of that paste was not read', r));
+        if (many) cards.push(note('warn', pasteUnread
+          ? 'This paste contains ' + topCount + ' separate entries'
+          : 'This is ' + topCount + ' separate requests',
+          pasteUnread
+            ? reqs.length + ' ' + (reqs.length === 1 ? 'was' : 'were') + ' read as a request below. The unread ' + (topCount - reqs.length) + ' received no verdict, and no result below is a verdict on the pasted set.'
+            : 'They are not one batch. Each carries its own network, sender and atomicity rules, and each is read below on its own terms.'));
         for (let ri = 0; ri < reqs.length; ri++) {
           const env = reqs[ri].envelope;
           // B-03: one canonical list, built before anything is simulated, so the sender that is simulated is
           // the sender that is described. A request that names its own sender is authoritative; the box fills
           // in only where a call names none.
-          const label = many ? 'Request ' + (ri + 1) + ' of ' + reqs.length + ': ' : '';
+          const label = many ? 'Request ' + ((reqs[ri].sourceIndex ?? ri) + 1) + ' of ' + topCount + ': ' : '';
           // From `declaredFrom`, which every reader sets, rather than from the envelope, which only one shape
           // has. Derived from the envelope alone, the "names a different sender than the box" warning covered
           // wallet_sendCalls and not eth_sendTransaction -- so a transaction whose `from` differed from the
@@ -1286,7 +1296,7 @@
           // the green all-calls verdict as an unread capability is. Without this, a request whose second call
           // carried `input` instead of `data` was described as a plain transfer of ETH and still earned an
           // unqualified "run in order, every call succeeds".
-          reqs[ri].unread = caps.length > 0 || schemaProblems.length > 0
+          reqs[ri].unread = pasteUnread || caps.length > 0 || schemaProblems.length > 0
             || (reqs[ri].notes || []).length > 0 || !!reqs[ri].invalidMembers;
           if (reqs[ri].invalidMembers) cards.push(note('bad', label + reqs[ri].invalidMembers + ' of its ' + reqs[ri].calls.length + ' entries could not be read as calls',
             'They are kept in place below rather than dropped, because a list with a member missing is not the list that was pasted. No verdict is given for the sequence as a whole.'));

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-wCXnHXZOtGTl1x05rmoFwgajzkHynuAQP+6pywjoxvU='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-y5nCDKNWEhU+lxWucrDL2qB1tTSqSpnd6hB/WszVFHg='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -883,6 +883,25 @@
     while (cells.length > 1 && cells[cells.length - 1] === '') cells.pop();   // a trailing separator is not a column
     return cells;
   }
+  // The inverse of splitRow for every cell this page can produce. Writers used to parse quoted CSV correctly
+  // and then put it back together with join(','). A metadata cell such as "123,456" consequently became two
+  // columns, and the next parse could read 456 as a token id. Every recipient-box writer goes through this
+  // serializer: commas and every alternate separator splitRow accepts are quoted, and quotes are doubled.
+  function serializeRow(cells) {
+    const source = cells.map((value) => String(value == null ? '' : value));
+    while (source.length > 1 && source[source.length - 1] === '') source.pop();
+    const encoded = source.map((cell) => {
+      return /[",\t;=\r\n]/.test(cell) || /^\s|\s$/.test(cell)
+        ? '"' + cell.replace(/"/g, '""') + '"'
+        : cell;
+    }).join(',');
+    // Refuse our own output before it can replace the box if the shared parser would give it another meaning.
+    // This is a runtime invariant as well as a test: a future separator or quoting change cannot silently
+    // corrupt a list merely because somebody forgot to update one writer.
+    if (JSON.stringify(splitRow(encoded)) !== JSON.stringify(source))
+      throw new Error('the recipient-list serializer did not preserve its cells');
+    return encoded;
+  }
   // Where the address is on a line, once, for everything that reads the box. `readHeader` has always allowed
   // the address column to be anywhere; assign, weighting and the picker each looked only at the first cell, so
   // a file headed `label,address` was read as two wallets by one and as none at all by the others -- the same
@@ -1482,6 +1501,10 @@
     // four wallets, from the same box, at the same moment.
     if (col) {
       const cells = splitRow(t);
+      if (col.id !== undefined && String(cells[col.id] ?? '').trim()) {
+        const ids = String(cells[col.id]).trim().split(/[\s|]+/).filter(Boolean);
+        return ids.length > 1 && ids.every((x) => wholeText(x) !== null) ? ids.length : 1;
+      }
       if (col.qty !== undefined) return Math.max(1, Math.min(1000, wholeNumber(String(cells[col.qty] ?? '')) || 1));
       return 1;                                    // one named address column, one named id column, one NFT
     }
@@ -1857,20 +1880,42 @@
     const s = std();
     const rawLines = $('list').value.split(/\r?\n/);
     const firstReal = rawLines.findIndex(x => x.trim());
-    const lines = rawLines.map(l => l.trim()).filter((l, i) => l && !(i === firstReal && looksLikeHeading(l)));
-    // Through addressOn and the shared cutter, like every other reader of this box. Reading cell 0 meant that
-    // on a file headed `label,address,tokenId` -- which readHeader has always allowed -- Shuffle announced it
-    // would drop N lines "that have no id yet" about lines that all had ids.
     const wcol = boxColumns();
-    const all = lines.map(l => ({ line: l, addr: addressOn(l, wcol), cells: splitRow(l).filter(Boolean) }));
-    const parsed = all.filter(p => p.addr && p.cells.length > 1);
+    const hasHeader = firstReal >= 0 && !!wcol && looksLikeHeading(rawLines[firstReal]);
+    const headerLine = hasHeader ? rawLines[firstReal].trim() : null;
+    const lines = rawLines.map((l, i) => ({ line: l.trim(), index: i }))
+      .filter((r) => r.line && !(hasHeader && r.index === firstReal));
+    // A named file says exactly which cells carry the transferable payload. Shuffle only those cells. Numeric
+    // labels, notes and every other metadata column stay attached to their wallet; the header stays a header.
+    // A bare row has no metadata vocabulary, so its first cell is the wallet and its remaining non-empty cells
+    // are the payload, which is the same positional format parseList documents.
+    const payloadCols = wcol
+      ? (s === '1155' ? [wcol.id, wcol.qty] : s === '20' ? [wcol.qty] : [wcol.id])
+      : null;
+    if (wcol && payloadCols.some((i) => i === undefined)) {
+      log('That headed file does not name every ' + (s === '20' ? 'amount' : s === '1155' ? 'token id and amount' : 'token id')
+        + ' column Shuffle needs. Nothing has been changed.', 'bad');
+      return;
+    }
+    const all = lines.map(({ line }) => {
+      const cells = splitRow(line);
+      const addr = addressOn(line, wcol);
+      if (wcol) return { addr, cells, payload: payloadCols.map((i) => cells[i]) };
+      const positional = cells.filter(Boolean);
+      return { addr, cells: positional, payload: positional.slice(1) };
+    });
+    const parsed = all.filter((p) => p.addr && p.payload.length && p.payload.every((v) => String(v ?? '').trim()));
     if (parsed.length < 2) { log('Put at least two lines with an id or amount in the box first.', 'bad'); return; }
     if (parsed.length !== all.length) { log('Shuffle would drop ' + (all.length - parsed.length) + ' line' + (all.length - parsed.length === 1 ? '' : 's') + ' that have no id yet. Assign ids first, or finish the list.', 'bad'); return; }
     if (s === '20' && !confirm('This will move the amounts between wallets at random. Amounts stay the same, but who gets what changes. Continue?')) return;
-    const wallets = parsed.map(p => p.addr);
-    // Everything on the line except the address itself, wherever the address sits.
-    const rest = shuffled(parsed.map(p => p.cells.filter((c) => !(ethers.isAddress(c) && ethers.getAddress(c) === p.addr))));
-    $('list').value = wallets.map((w, i) => [w, ...rest[i]].join(',')).join('\n');
+    const payloads = shuffled(parsed.map((p) => p.payload.slice()));
+    const out = parsed.map((p, row) => {
+      if (!wcol) return serializeRow([p.addr, ...payloads[row]]);
+      const cells = p.cells.slice();
+      payloadCols.forEach((col, i) => { cells[col] = payloads[row][i]; });
+      return serializeRow(cells);
+    });
+    $('list').value = (headerLine ? [headerLine, ...out] : out).join('\n');
     log('Shuffled: the same wallets and the same ' + (s === '20' ? 'amounts' : 'ids') + ', paired at random.', 'ok');
     parseList();
   });
@@ -1878,6 +1923,7 @@
   // Writes the per-wallet quantity into the list, in the "0xabc… x3" form the rest of the page already reads.
   $('applyWeight').addEventListener('click', () => {
     if (sending) return;
+    const standard = std();
     const mode = $('weight').value;
     const cap = Math.max(1, Math.min(1000, parseInt($('cap').value) || 10));
     const each = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
@@ -1898,6 +1944,13 @@
     }
     let capped = 0, unknown = 0, total = 0;
     const acol = boxColumns();
+    if (standard === '721' && acol && acol.id !== undefined
+        && lines.some((line) => String(splitRow(line)[acol.id] ?? '').trim())) {
+      say('msgList', 'That file already names the exact NFT id on each line. An amount cannot multiply one '
+        + 'unique NFT into several, so weighting it would describe more deliveries than the ids actually name. '
+        + 'Nothing has been changed. Use a wallet-and-amount list before assigning ids, or add each exact id as its own line.', 'bad');
+      return;
+    }
     // A file that names its columns has already said where a quantity goes, and the "0xA x3" shorthand is not
     // it. Writing that shorthand into a headed file produced a box the page could not read back: the heading
     // said column 1 was tokenId and the new value was a quantity, so parseList reported every line as
@@ -1913,7 +1966,7 @@
       const cells = splitRow(line);
       while (cells.length <= acol.qty) cells.push('');
       cells[acol.qty] = String(n);
-      return cells.join(',');
+      return serializeRow(cells);
     };
     const out = lines.map(l => {
       const addr = addressOn(l, acol);

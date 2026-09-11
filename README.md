@@ -29,7 +29,7 @@ to be finished.
 
 **What is tested and what is still open:** [docs/status.md](docs/status.md) is the current state of the
 project in one place: which suites run and what each one actually proves, what has never been tested and is
-marked so, every finding from the last review with open or closed beside it, and the two conditions that have
+marked so, every finding from the last review with open or closed beside it, and the four conditions that have
 to be true before this touches mainnet. Every number in it is reproducible by the command printed next to it.
 
 **What already exists:** [docs/prior-art.md](docs/prior-art.md) compares the closest public contracts and
@@ -182,8 +182,8 @@ moved".
 ## Build, test, deploy
 
     forge build
-    forge test                 # 110 contract tests, plus 29 reviewer probes of which 9 must fail
-    npm install && npm test    # 441 browser tests, every answer mocked, no network
+    forge test                 # 111 contract tests, plus 29 reviewer probes of which 9 must fail
+    npm install && npm test    # 450 browser tests, every answer mocked, no network
     ./test.sh                  # all of it
 
 The browser tests drive the real pages in headless Chromium and answer every RPC, explorer and price request
@@ -246,8 +246,9 @@ purpose: a probe reproduces a defect, so a probe that fails is a defect that is 
 
 ## Reviews
 
-Six internal review passes and twelve adversarial review rounds, each by a fresh model given the code and no
-other context and asked to break it. Every blocking finding is fixed, and all twelve are published unedited in
+Six internal review passes and fourteen adversarial review rounds, each by a fresh model given the code and no
+other context and asked to break it. The first thirteen rounds' blocking findings are fixed; round fourteen's
+findings and their closure state are published unedited in
 [`docs/`](docs/) including the parts that are unflattering: a page that answered "this is a plain transfer of
 ETH", in green, for an unlimited approval whose `0x` prefix had been lost; a bug dismissed in a code comment
 as deliberate that was a double-payment path; a page printing safety conclusions from function names; a build
