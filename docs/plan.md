@@ -1,5 +1,42 @@
 # The plan from here to a first release
 
+> ## Start here
+>
+> **State on 10 September 2026, commit `05336f7`.** Working tree clean, everything pushed, CI green.
+>
+> - **BulkSend v13 is built and tested but NOT DEPLOYED.** Testnet still runs v12 at
+>   `0xc2e4a9C4c9215600d1B348d02b63C6148d0Ef481` (17,938 chars on chain; the build here is 18,876). That gap
+>   is deliberate: the contract is deployed **once**, after the reader-parity map settled the change set.
+> - **Rounds twelve and thirteen are fully closed.** Every probe file in the repository is at its baseline,
+>   and round thirteen's six browser probes are at **0 of 6**.
+> - **Phases 0 to 5 of this plan are done.** Phase 6 is the only one left and it needs the chain.
+> - **Mainnet is at nonce 0 and nothing may touch it.** Testnet gas and nonces move for reasons unrelated to
+>   this project -- the deployer is shared with the maintainer's game NFT experiments. See `status.md`.
+>
+> **The next actions, in order:**
+>
+> 1. `forge test --match-path 'test/fork/MainnetGuards.t.sol'` -- the guards against 20 real mainnet
+>    collections and 20 real tokens, read-only, no gas. Should be 4 passed.
+> 2. Deploy v13 to **testnet 46630**, verify on the explorer, confirm the runtime is byte-identical.
+> 3. Re-run the on-chain B-1 reproduction against v13: mint two ids, leave a third unminted, paste the
+>    collection into the ERC-20 form with those ids as amounts. Against v12 it produced two ERC-721 `Transfer`
+>    events and an `Airdrop20(sent 2, skipped 1)` in one transaction
+>    (`0xc6b4cf63b9e63eea42950973f0c8269ccfbe0f9eb6cb5d889359a1063dad9295`). Against v13 it must revert
+>    `IsAnNft`, and that is the check that closes the blocker on chain rather than in a test.
+> 4. Update `deployments.testnet.json`, `web/index.html`, `test/web/client.test.mjs`,
+>    `test/web/audit-probe-12.mjs` and `docs/CHANGELOG.md` **together** -- `preflight.sh` fails if they
+>    disagree, and it now also fails if a published document names a superseded address.
+> 5. `web/sync.sh`, `./verify.sh`, then all four live scripts, and **read every transaction back from the
+>    explorer** rather than from this repository's own receipt parsing.
+> 6. `./deploy/publish.sh airdrop` and `check`.
+> 7. Round fourteen, against v13. It has been reviewed by nobody but me.
+>
+> **What a "clean" round means, so it is not mistaken for something easier.** The gate asks for a round with
+> **no release blockers**, not a round with no findings. Blockers by round so far: 15, 11, 5, 9, 9, 4, 6, 3,
+> 4, 3, 5, 1, 2. It has not trended to zero, and twice a fix from one round became the next round's finding in
+> the contract specifically. v13 changed a guard, so v13 is the least trustworthy thing in the repository and
+> the next round should be pointed at it first.
+
 `status.md` says what is true today. This says what happens next, in what order, and how each step is known
 to be done. It is updated as steps close, and a step is only ticked when the check beside it passes.
 
