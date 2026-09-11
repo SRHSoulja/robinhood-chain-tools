@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import {BulkSend} from "../src/BulkSend.sol";
-import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20, Callback20, Erc20GasHog, PaysThenLies20, LongReason20, TwoWord20, PolitelyDoesNothing, SilentlyDoesNothing, PretendsToBeAnNft, BareRevert721, BareRevert721NoIntrospection} from "./RealTokens.sol";
+import {OZ721, OZ721Enum, OZ721Pausable, A721, OZ1155, OZ20, NoReturn20, False20, Fee20, Blacklist20, Accepts, Deaf, WrongMagic, Rejects, Reenter, GasHog, Bomb, Weird20, Callback20, Erc20GasHog, PaysThenLies20, LongReason20, TwoWord20, PolitelyDoesNothing, SilentlyDoesNothing, PretendsToBeAnNft, BareRevert721, BareRevert721NoIntrospection, NoIntrospection721, Chatty721, Chatty1155} from "./RealTokens.sol";
 import {IERC721Errors, IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 /// Every airdrop method, against real token implementations, in every mode, with every awkward recipient.
@@ -994,6 +994,136 @@ contract BulkSendRealTest is Test {
         assertLt(t.balanceOf(to[0]), 100e18);   // counted as one delivery, paid 98
         assertEq(t.balanceOf(to[0]), 98e18);
     }
+
+    // ------------------------------------------------------------------ the id-independent probe (v13)
+    // The two id probes can only ask about the ids the sender typed. ERC-165 does not depend on ids, and
+    // neither does isApprovedForAll, which every ERC-721 and ERC-1155 must have and no ERC-20 has.
+
+    function testNoIntrospection721_throughTheErc20Path_isCaughtByTheOperatorQuestion() public {
+        NoIntrospection721 t = new NoIntrospection721();
+        t.mint(me, 22);                                  // only the MIDDLE id is live; both probed ids are dead
+        address[] memory to = _to(3, 905);
+        uint256[] memory amt = new uint256[](3);
+        amt[0] = 21; amt[1] = 22; amt[2] = 23;
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.IsAnNft.selector, address(t)));
+        bulk.airdrop20(address(t), to, amt, true);
+        vm.stopPrank();
+        assertEq(t.ownerOf(22), me, "id 22 must not have moved");
+    }
+
+    function testBareRevert721_throughTheErc20Path_isCaughtByTheLastIdWhenTheFirstIsDead() public {
+        BareRevert721NoIntrospection t = new BareRevert721NoIntrospection();   // no ERC-165, no operators
+        t.mint(me, 12);                                  // the first probed id is dead, the last is live
+        address[] memory to = _to(2, 906);
+        uint256[] memory amt = new uint256[](2);
+        amt[0] = 11; amt[1] = 12;
+        vm.prank(me);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.IsAnNft.selector, address(t)));
+        bulk.airdrop20(address(t), to, amt, true);
+    }
+
+    /// The residual, pinned. A contract with ownerOf and transferFrom but neither ERC-165 nor
+    /// isApprovedForAll is not an ERC-721 by the standard's own definition -- both are required -- and when
+    /// both probed ids are dead there is nothing left to ask that a token would not also answer. This is
+    /// what the guard cannot see, written down so it is a known limit and not a surprise.
+    function testBareRevert721_withNeitherIntrospectionNorOperators_isTheResidual() public {
+        BareRevert721NoIntrospection t = new BareRevert721NoIntrospection();
+        t.mint(me, 32);
+        address[] memory to = _to(3, 907);
+        uint256[] memory amt = new uint256[](3);
+        amt[0] = 31; amt[1] = 32; amt[2] = 33;
+        vm.prank(me);
+        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, amt, true);
+        assertEq(sent, 1); assertEq(skipped, 2);
+        assertEq(t.ownerOf(32), to[1], "the middle id moved: this is the limit, not a pass");
+    }
+
+    function testRealErc20_isNotRefusedByTheOperatorQuestion() public {
+        OZ20 t = new OZ20(); t.mint(me, 3e18);
+        address[] memory to = _to(3, 908);
+        vm.startPrank(me); t.approve(address(bulk), 3e18);
+        (uint256 sent, uint256 skipped) = bulk.airdrop20(address(t), to, _fill(3, 1e18), false);
+        vm.stopPrank();
+        assertEq(sent, 3); assertEq(skipped, 0); assertEq(t.balanceOf(to[2]), 1e18);
+    }
+
+    function testErc1155_throughTheErc20Path_isRefused() public {
+        OZ1155 t = new OZ1155(); t.mint(me, 1, 10);
+        address[] memory to = _to(2, 909);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.IsAnNft.selector, address(t)));
+        bulk.airdrop20(address(t), to, _fill(2, 1), true);
+        vm.stopPrank();
+    }
+
+    // ------------------------------------------------------------------ the arms coverage said nobody tested
+    // Nine branches on the 1155 and 20 paths, and one on 721, that no test had reached: every refusal the
+    // ERC-721 path had a test for and the other two did not. Listed in docs/readers.md; written here.
+
+    function testChatty721_lenient_anAnswerIsAmbiguousNotDelivered() public {
+        Chatty721 t = new Chatty721(); t.mint(me, 1);
+        address[] memory to = _to(1, 910);
+        vm.prank(me);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[0], 0));
+        bulk.airdrop721(address(t), to, _range(1, 1), false, true);
+    }
+
+    function testOZ1155_rejectsMismatchedLengths_andEmpty() public {
+        OZ1155 t = new OZ1155(); t.mint(me, 1, 10);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        vm.expectRevert(BulkSend.LengthMismatch.selector);
+        bulk.airdrop1155(address(t), _to(2, 911), _fill(1, 1), _fill(2, 1), false);
+        vm.expectRevert(BulkSend.LengthMismatch.selector);
+        bulk.airdrop1155(address(t), _to(2, 911), _fill(2, 1), _fill(1, 1), true);
+        vm.expectRevert(BulkSend.EmptyBatch.selector);
+        bulk.airdrop1155(address(t), new address[](0), new uint256[](0), new uint256[](0), false);
+        vm.stopPrank();
+    }
+
+    function testOZ1155_lenient_zeroAddressIsSkippedNotBurned() public {
+        OZ1155 t = new OZ1155(); t.mint(me, 1, 10);
+        address[] memory to = _to(3, 912); to[1] = address(0);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        (uint256 sent, uint256 skipped) = bulk.airdrop1155(address(t), to, _fill(3, 1), _fill(3, 2), true);
+        vm.stopPrank();
+        assertEq(sent, 2); assertEq(skipped, 1);
+        assertEq(t.balanceOf(me, 1), 6, "two editions left, not three: nothing was burned");
+        assertEq(t.balanceOf(to[0], 1), 2); assertEq(t.balanceOf(to[2], 1), 2);
+    }
+
+    function testOZ1155_strict_zeroAddressRevertsTheBatch() public {
+        OZ1155 t = new OZ1155(); t.mint(me, 1, 10);
+        address[] memory to = _to(3, 913); to[2] = address(0);
+        vm.startPrank(me); t.setApprovalForAll(address(bulk), true);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.ZeroRecipient.selector, 2));
+        bulk.airdrop1155(address(t), to, _fill(3, 1), _fill(3, 2), false);
+        vm.stopPrank();
+        assertEq(t.balanceOf(me, 1), 10, "strict: nothing moved");
+    }
+
+    function testChatty1155_anAnswerIsAmbiguousInBothModes() public {
+        Chatty1155 t = new Chatty1155(); t.mint(me, 1, 10);
+        address[] memory to = _to(2, 914);
+        vm.startPrank(me);
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[0], 0));
+        bulk.airdrop1155(address(t), to, _fill(2, 1), _fill(2, 1), true);    // lenient
+        vm.expectRevert(abi.encodeWithSelector(BulkSend.AmbiguousResult.selector, to[0], 0));
+        bulk.airdrop1155(address(t), to, _fill(2, 1), _fill(2, 1), false);   // strict
+        vm.stopPrank();
+        assertEq(t.balanceOf(1, me), 10, "an ambiguous answer undoes the batch");
+    }
+
+    function testOZ20_rejectsMismatchedLengths_andEmpty() public {
+        OZ20 t = new OZ20(); t.mint(me, 10e18);
+        vm.startPrank(me); t.approve(address(bulk), 10e18);
+        vm.expectRevert(BulkSend.LengthMismatch.selector);
+        bulk.airdrop20(address(t), _to(2, 915), _fill(1, 1e18), false);
+        vm.expectRevert(BulkSend.EmptyBatch.selector);
+        bulk.airdrop20(address(t), new address[](0), new uint256[](0), true);
+        vm.stopPrank();
+    }
+
 }
 
 /// A recipient whose receive hook legitimately costs more than the lenient stipend.
@@ -1003,4 +1133,5 @@ contract HeavyAccepts {
         for (uint256 i; i < 20; i++) junk.push(i + 1);   // ~20 cold SSTOREs, well over 400k
         return 0x150b7a02;
     }
+
 }

@@ -446,12 +446,22 @@ contract BulkSend {
     ///      happened to type.
     ///
     ///      The cost is not symmetrical with _mustBeNft and that is worth stating. There the extra probes run
-    ///      only when the first one fails, so an ordinary airdrop never pays them. Here all three run on every
-    ///      ERC-20 batch: about three staticcalls, ~7,800 gas, against a batch that costs tens of millions.
+    ///      only when the first one fails, so an ordinary airdrop never pays them. Here all four run on every
+    ///      ERC-20 batch: four staticcalls, about 10,000 gas, against a batch that costs tens of millions.
     function _mustNotBeNft(address token, uint256 probeA, uint256 probeB) internal view {
         (bool ok165, bytes memory r165) =
             token.staticcall(abi.encodeWithSelector(0x01ffc9a7, bytes4(0x80ac58cd)));   // supportsInterface(ERC721)
         if (ok165 && r165.length == 32 && abi.decode(r165, (uint256)) == 1) revert IsAnNft(token);
+        // The id probes below can only ask about the ids the sender typed, and a collection that answers
+        // neither ERC-165 nor those two ids -- because both happen to be burned, with the live ones in the
+        // middle of the list -- would still get through. So ask a question that does not depend on ids at all:
+        // isApprovedForAll(address,address) is required of every ERC-721 and every ERC-1155 and exists on no
+        // ERC-20. A 32-byte bool from it means the thing pasted into the token form is an NFT contract of one
+        // kind or the other, and neither belongs here. (A hybrid that is both, ERC-404 style, is refused too:
+        // in such a token an amount that happens to be a live id moves an NFT, which is this exact hazard.)
+        (bool okOp, bytes memory rOp) =
+            token.staticcall(abi.encodeWithSelector(0xe985e9c5, msg.sender, address(this)));   // isApprovedForAll
+        if (okOp && rOp.length == 32 && abi.decode(rOp, (uint256)) <= 1) revert IsAnNft(token);
         if (_answersOwnerOf(token, probeA)) revert IsAnNft(token);
         if (probeB != probeA && _answersOwnerOf(token, probeB)) revert IsAnNft(token);
     }

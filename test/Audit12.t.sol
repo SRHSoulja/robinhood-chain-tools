@@ -208,6 +208,7 @@ contract Audit12 is Test {
         uint256 used = g - gasleft();
         vm.stopPrank();
         emit log_named_uint(safeMode ? "OZ721 strict SAFE   400 recipients, gas" : "OZ721 strict plain  400 recipients, gas", used);
+        assertLt(used, 30_000_000, "a 400-row batch must fit the 30,000,000 budget the page derives its cap from");
     }
 
     function _gas400_a721() internal {
@@ -223,6 +224,7 @@ contract Audit12 is Test {
         uint256 used = g - gasleft();
         vm.stopPrank();
         emit log_named_uint("ERC721A lenient     400 recipients, gas", used);
+        assertLt(used, 30_000_000, "a 400-row batch must fit the 30,000,000 budget the page derives its cap from");
     }
 
     function _gas400_oz20() internal {
@@ -238,5 +240,6 @@ contract Audit12 is Test {
         uint256 used = g - gasleft();
         vm.stopPrank();
         emit log_named_uint("OZ20 lenient        400 recipients, gas", used);
+        assertLt(used, 30_000_000, "a 400-row batch must fit the 30,000,000 budget the page derives its cap from");
     }
 }

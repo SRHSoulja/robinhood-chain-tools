@@ -17,3 +17,9 @@ via_ir = false
 
 [fuzz]
 runs = 512
+
+[invariant]
+# Random sequences over all three paths (test/Invariants.t.sol). A handler call that reverts is a finding.
+runs = 96
+depth = 24
+fail_on_revert = true

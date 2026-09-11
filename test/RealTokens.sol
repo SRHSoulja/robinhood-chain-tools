@@ -256,6 +256,44 @@ contract BareRevert721 {
     function isApprovedForAll(address, address) external pure returns (bool) { return true; }
 }
 
+/// A hand-rolled ERC-721 with everything the standard requires except ERC-165: ownerOf, isApprovedForAll,
+/// transferFrom. Nothing in the wild that calls itself an ERC-721 lacks isApprovedForAll, because operators
+/// cannot work without it. This is the shape the id-independent probe exists for: with ERC-165 absent and both
+/// probed ids dead, only the operator question separates it from a token.
+contract NoIntrospection721 {
+    mapping(uint256 => address) internal _owner;
+    mapping(address => mapping(address => bool)) public isApprovedForAll;
+    function mint(address to, uint256 id) external { _owner[id] = to; }
+    function ownerOf(uint256 id) external view returns (address) { require(_owner[id] != address(0)); return _owner[id]; }
+    function setApprovalForAll(address op, bool ok) external { isApprovedForAll[msg.sender][op] = ok; }
+    function transferFrom(address f, address t, uint256 id) external {
+        require(_owner[id] == f && (msg.sender == f || isApprovedForAll[f][msg.sender]));
+        _owner[id] = t;
+    }
+}
+
+/// An ERC-721 whose transferFrom answers with a word. A conforming one returns nothing, so an answer means
+/// this is not the function that was called, and the batch must not count it as delivered.
+contract Chatty721 {
+    mapping(uint256 => address) internal _owner;
+    function mint(address to, uint256 id) external { _owner[id] = to; }
+    function ownerOf(uint256 id) external view returns (address) { require(_owner[id] != address(0)); return _owner[id]; }
+    function supportsInterface(bytes4 i) external pure returns (bool) { return i == 0x80ac58cd || i == 0x01ffc9a7; }
+    function transferFrom(address f, address t, uint256 id) external returns (bool) { require(_owner[id] == f); _owner[id] = t; return true; }
+    function isApprovedForAll(address, address) external pure returns (bool) { return true; }
+}
+
+/// The same for ERC-1155: safeTransferFrom returns a word where the standard returns nothing.
+contract Chatty1155 {
+    mapping(uint256 => mapping(address => uint256)) public balanceOf;
+    function mint(address to, uint256 id, uint256 n) external { balanceOf[id][to] += n; }
+    function setApprovalForAll(address, bool) external {}
+    function isApprovedForAll(address, address) external pure returns (bool) { return true; }
+    function safeTransferFrom(address f, address t, uint256 id, uint256 n, bytes calldata) external returns (bool) {
+        require(balanceOf[id][f] >= n); balanceOf[id][f] -= n; balanceOf[id][t] += n; return true;
+    }
+}
+
 /// The same, and it does not answer supportsInterface either -- the last way out of the guard closed. A real
 /// collection this shape cannot be told apart from a contract with no ownerOf at all, and the guard refuses
 /// it. That is the residual cost of the check, pinned here so it is a known limit and not a surprise.
