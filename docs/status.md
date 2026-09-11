@@ -1,6 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 11 September 2026, against BulkSend **v13** and round fifteen.
+Last updated 11 September 2026, against BulkSend **v13** and round sixteen.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -25,7 +25,7 @@ for three deployments, which is exactly why the rule is written down: available 
 nonce is 0.
 
 Current unreleased validation, 11 September 2026: the complete current-tree gate passed all five ordinary
-contract test files, 342/342 airdrop-page tests, 129/129 Check-page tests, and 21/21 publish-policy checks.
+contract test files, 343/343 airdrop-page tests, 129/129 Check-page tests, and 21/21 publish-policy checks.
 Every historical probe is now bound both to its complete source hash and to its exact assertion names and
 statuses; an ordinary Solidity failure can no longer hide by borrowing a probe-style function name. The
 reproducible WalletConnect rebuild matched its shipped and expected SHA-256. The separate read-only mainnet
@@ -38,8 +38,8 @@ tokens were accepted. No transaction was signed or broadcast and no ETH was spen
 ```
 ./test.sh                              # everything below except the live scripts
 forge test                             # 111 contract tests, plus 29 reviewer probes of which 9 must FAIL
-node test/web/client.test.mjs          # 325 airdrop page tests
-node test/web/check.test.mjs           # 125 Check page tests
+node test/web/client.test.mjs          # 343 airdrop page tests
+node test/web/check.test.mjs           # 129 Check page tests
 ./test/csp-gate.test.sh                #  21 checks that a weaker published CSP is refused
 forge test --match-path 'test/fork/MainnetGuards.t.sol'   # the paste guards against 20 real mainnet
                                        #   collections and 20 real tokens, on a read-only fork
@@ -140,6 +140,24 @@ a distribution, only its top, and the file says so.
 
 ## Open findings
 
+Round sixteen, 11 September 2026, against `ebc910b`. The full report is
+[`audit-2026-09-11-sixteenth-external.md`](audit-2026-09-11-sixteenth-external.md), published as written.
+One release blocker, two should-fix findings, and it re-checked every round-fifteen blocker and found each
+closed.
+
+### Round sixteen release blocker
+
+| | | |
+| --- | --- | --- |
+| R16-B01 | an older asynchronous Assign completion overwrote newer recipient input and re-armed Send | **closed** against the reviewer's own delayed-RPC reproduction, which is in `client.test.mjs` and failed before the fix: Assign captures the box, token, standard, account, network and pairing setting before its first await and refuses to write if any of them changed; a newer Assign supersedes an older one |
+
+Twins of that reader, enumerated: the holdings snapshot also waits and then writes the box, and was left
+alone because it asks first, with the current line count in the question, so a newer edit is in front of the
+user before anything is overwritten; the picker, Shuffle, Apply Weight and Drop-contracts write without
+waiting. R16-S01 (a regression check with a trailing word boundary that adjacent spans never satisfy) and
+R16-S02 (this file's command table) are closed. The live-page mismatch it lists as an operational blocker is
+cleared by publishing the commit that carries this file; the integrity workflow re-checks it four times a day.
+
 Round fifteen, 11 September 2026, against `9426c2c`. The full report is
 [`audit-2026-09-11-fifteenth-external.md`](audit-2026-09-11-fifteenth-external.md), published byte-for-byte
 unchanged. Five release blockers, two should-fix findings, and five inherent/operational limits.
@@ -152,7 +170,7 @@ unchanged. Five release blockers, two should-fix findings, and five inherent/ope
 | B-02 | Assign ignored named quantity/amount columns and silently underallocated ERC-721s | fixed in the current tree through one shared quantity reader for named columns and bare `xN`; generated output is parsed by the canonical parser and compared to the requested wallet/quantity meaning before it is accepted; named/quoted/fractional regressions added alongside existing bare-CSV coverage |
 | B-03 | Check replaced a single transaction's declared sender with the UI sender | fixed in the current tree: compact and multi-request renderers share one sender resolver, a valid declared sender wins, mismatches are displayed, and an unreadable explicit sender is never simulated through a UI substitution |
 | B-04 | empty, short, null, malformed or extra ordered-simulation results were announced as complete success | fixed in the current tree: exactly one result with exactly one recognized-status member per requested call is required; every malformed equivalence class falls into the existing isolated-check warning and explicit send confirmation |
-| B-05 | neither public HTML page matches the reviewed artifact | **open**: read-only fetch on 11 September confirmed both HTML hashes differ, while `wc.js` and the deployed v13 testnet runtime still match. Publish only the exact commit that first passes the full gate, CI, and a fresh zero-blocker review, then fetch and compare it externally |
+| B-05 | neither public HTML page matches the reviewed artifact | closed by publishing the round-sixteen commit, live bytes compared to the repository afterwards (the reviewed-then-published rule held: nothing was published between rounds fourteen and sixteen while blockers were open); until then a read-only fetch on 11 September confirmed both HTML hashes differed, while `wc.js` and the deployed v13 testnet runtime still match. Publish only the exact commit that first passes the full gate, CI, and a fresh zero-blocker review, then fetch and compare it externally |
 
 Round fifteen S-02 is fixed in the current tree: the evidence gate pins complete probe-source hashes and
 explicit probe-file inventory, and ordinary contract suites must exit cleanly by file rather than by test-name
@@ -177,7 +195,7 @@ unchanged. Four release blockers, seven should-fix findings, and five inherent/o
 | B-1 | Shuffle discarded headings and rewrote numeric metadata positionally, turning labels into additional ERC-721 ids | fixed in the current tree by shuffling only the standard's named payload cells through one round-trip-checked serializer; exact numeric-metadata reproduction added |
 | B-2 | Apply Weight parsed quoted CSV and wrote it back unquoted, allowing a metadata fragment to replace the token id | fixed in the current tree through the same serializer; quoted comma, semicolon and equals metadata plus unchanged-id assertions added |
 | B-3 | Check gave the readable subset of a mixed JSON paste an unqualified green whole-request verdict | fixed in the current tree: every accepted request keeps its original position and any top-level refusal taints every subset verdict; auditor's exact mixed input added |
-| B-4 | the public BulkSend page serves `790c9b5`, not reviewed `f5b7614` | open deliberately: publish only after B-1 through B-3 are committed and independently reviewed; publishing the known-broken intermediate page would close a hash mismatch by shipping its defects |
+| B-4 | the public BulkSend page served `790c9b5`, not reviewed `f5b7614` | closed by publishing the round-sixteen commit, after B-1 through B-3 were committed and independently re-checked by rounds fifteen and sixteen; publishing the known-broken intermediate page would close a hash mismatch by shipping its defects |
 
 Round fourteen's S-1, S-3, S-4, S-5, S-6 and S-7 are also fixed in the current tree: named ERC-721 ids
 control picker cardinality; the evidence ledger is exact rather than count-only; connector reproducibility

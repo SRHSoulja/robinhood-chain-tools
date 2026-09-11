@@ -2,13 +2,10 @@
 
 > ## Start here
 >
-> **State on 10 September 2026, commit `a81f69c`, re-evaluated before Phase 6.** Working tree clean, everything
-> pushed. **CI is red and has been for eight commits**, since `66a370e` put v13 into `src/`: the bytecode step
-> compares the chain's v12 against this source's v13 build, fails by design, and every step after it is
-> skipped -- so CI has not run the browser suites or the probes since then, and an earlier note here that said
-> "CI green" was wrong. A local `./verify.sh` is the only full run. Deploying v13 turns it green; the step
-> order is also to be changed so a deliberate deploy gap cannot hide a test result again (round twelve's S-1
-> was exactly "CI red for 8 commits").
+> **State on 11 September 2026, after round sixteen.** Working tree at the commit that carries this file; CI's
+> `tests` workflow green at `ebc910b` (the suites, the probes, the connector rebuild and the bytecode step, in
+> that order). The `integrity` workflow was red only because the fixed pages had not been published; the
+> round-sixteen commit publishes them.
 >
 > - **BulkSend v13 is DEPLOYED on testnet** at `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (tx `0x5cb0037f…`), byte-identical
 >   at 9,752 bytes, fully verified. The on-chain B-1 reproduction against it reverts `IsAnNft`
@@ -27,12 +24,13 @@
 >
 > 7. **Done.** Both pages published from `790c9b5`; live bytes identical to the repository (the publisher's own
 >    post-publish check, and an independent fetch).
-> 8. **Round fourteen ran against exact `f5b7614`.** Its report is published unedited as
->    `audit-2026-09-11-fourteenth-external.md`: four blockers, seven should-fix items, five limits, and a clear
->    not-ready verdict. B-1 and B-2 are one semantic-serialization defect family; B-3 is mixed-request verdict
->    composition; B-4 is the deliberately stale live airdrop page. Fix and prove those shapes, strengthen the
->    evidence ledger, then run a fresh round. Do not publish the known-broken intermediate page merely to make
->    its hash match.
+> 8. **Rounds fourteen, fifteen and sixteen have run**, against `f5b7614`, `9426c2c` and `ebc910b`, and their
+>    reports are published as written. Blockers: 4, 5, 1. Every one is closed against the reviewer's own
+>    reproduction, the last of them (an older Assign completion overwriting newer input) in the commit that
+>    carries this file, which is also the first publish since `790c9b5`. Two should-fix items stay open on
+>    purpose and are written down in `status.md`: the guard probes' unbounded returndata copy, which needs a
+>    v14 and is not an asset-loss path, and nothing else. The next round is pointed at the Assign fix and its
+>    twins first.
 > 9. **Production RPC is now an explicit gate.** Robinhood's public mainnet endpoint is suitable for the
 >    present read-only rehearsal but its own documentation calls it rate-limited and not recommended for
 >    production. Select a dedicated provider, keep its credential in the Worker rather than `index.html`, and

@@ -695,7 +695,9 @@ async function freshBrowser() {
   check('round-15 B-03 an unreadable explicit sender is surfaced for a single transaction',
     /names a sender that is not an address/.test(t), t.slice(0, 700));
   check('round-15 B-03 an unreadable explicit sender receives no unqualified favorable verdict',
-    !/\bwould succeed\b/.test(t) && !/run in order, every call succeeds(?! — as read here)/.test(t), t.slice(0, 900));
+    // No trailing \b: adjacent spans flatten to 'would succeedabout …', which a word boundary never matches, so
+    // the negative check passed even with the pill present (round sixteen S-01).
+    !/would succeed/.test(t) && !/run in order, every call succeeds(?! — as read here)/.test(t), t.slice(0, 900));
   await page.close();
 }
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-OB2FagDw2LbL1MwF0McMlik/ZjW6WKaqlLD/H9XnSHY='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-Gm/WrYSKvVV4qzbmrO9lV86lMDr0bEJUYtH+UXMQk8U='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -2063,6 +2063,13 @@
   }
 
   // ---- assign the ids you hold to a list of bare addresses ----
+  // Assign reads the box, then waits on the chain or the explorer, then writes the box. Everything it read can
+  // change during that wait: the user can keep typing (the box stays editable, on purpose), switch token,
+  // standard, account or chain. Round sixteen showed the consequence: an older completion replaced a newer
+  // list and re-armed Send for wallets the user had already removed. So every input is captured before the
+  // first await, and the completion refuses to write unless every one of them is still exactly what it read.
+  // A newer Assign supersedes an older one outright.
+  let assignGeneration = 0;
   $('assign').addEventListener('click', async () => {
     if (sending) return;
     const token = $('token').value.trim();
@@ -2089,13 +2096,29 @@
     const wallets = wants.map(w => w.to);
     const totalWanted = wants.reduce((a, w) => a + w.n, 0);
     const sourceBeforeAssign = $('list').value;
+    const stdAtStart = std(); const meAtStart = me; const chainAtStart = chainId(); const randomAtStart = $('rand').checked;
+    const myGeneration = ++assignGeneration;
     $('assign').disabled = true;
     try {
       const ids = await myTokenIds(token, totalWanted);
+      // The world may have moved while that was read. Compare every input, not only the box: the box is what
+      // round sixteen's reproduction changed, and the rest are the same defect with a different input.
+      if (myGeneration !== assignGeneration) return;   // a newer Assign owns the box now; it will report
+      const changed = $('list').value !== sourceBeforeAssign ? 'the recipient list'
+        : $('token').value.trim() !== token ? 'the token'
+        : std() !== stdAtStart ? 'the standard'
+        : me !== meAtStart ? 'the connected account'
+        : chainId() !== chainAtStart ? 'the network'
+        : $('rand').checked !== randomAtStart ? 'the random-pairing setting' : null;
+      if (changed) {
+        say('msgList', 'Assign stopped: ' + changed + ' changed while your holdings were being read. Nothing has been changed. Press Assign again when the list is as you want it.', 'bad');
+        log('Assign stopped because ' + changed + ' changed while it was reading your holdings. The box is exactly as you left it.', 'bad');
+        $('assign').disabled = false; return;
+      }
       if (!ids.length) { say('msgList', 'Your wallet does not appear to hold anything in this collection, or the explorer would not say. Nothing has been changed.', 'bad'); $('assign').disabled = false; return; }
-      const random = $('rand').checked;
+      const random = randomAtStart;
       let chosenEdition = null;
-      if (std() === '1155') {
+      if (stdAtStart === '1155') {
         // an edition is divisible, so "how many each" is just the amount on the line
         const id = (random ? shuffled(ids) : ids)[0];
         chosenEdition = id;
@@ -2130,7 +2153,7 @@
       for (const w of wants) expected.set(w.to.toLowerCase(), (expected.get(w.to.toLowerCase()) || 0n) + BigInt(w.n));
       parseList();
       const actual = new Map();
-      for (const r of rows) actual.set(r.to.toLowerCase(), (actual.get(r.to.toLowerCase()) || 0n) + (std() === '1155' ? r.amount : 1n));
+      for (const r of rows) actual.set(r.to.toLowerCase(), (actual.get(r.to.toLowerCase()) || 0n) + (stdAtStart === '1155' ? r.amount : 1n));
       const sameMeaning = rows.length === n && expected.size === actual.size
         && [...expected].every(([a, q]) => actual.get(a) === q) && parsedListIsCurrent();
       if (!sameMeaning) {

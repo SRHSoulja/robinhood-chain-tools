@@ -279,6 +279,13 @@ async function open(_stale, opts = {}) {
     if (url.includes('api.coinbase.com')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { amount: '2500' } }) });
     if (url.includes('rpc.') && req.method() === 'POST') {
       let body; try { body = JSON.parse(req.postData() || '{}'); } catch { body = {}; }
+      // Hold exactly one direct RPC request open so a regression can change ordinary UI state while an
+      // asynchronous reader is in flight. The delay belongs here rather than in the wallet mock: Assign
+      // reads holdings through JsonRpcProvider, not through the connected wallet.
+      if (opts.delayNextRpcMs) {
+        const ms = opts.delayNextRpcMs; opts.delayNextRpcMs = 0;
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      }
       const one = (r) => { try { const result = answer(r.method, r.params || []); return { jsonrpc: '2.0', id: r.id, result }; }
                            catch (e) { return { jsonrpc: '2.0', id: r.id, error: { code: e.code || 3, message: String(e.message || 'execution reverted'), data: e.revertData } }; } };
       const out = Array.isArray(body) ? body.map(one) : one(body);
@@ -1054,6 +1061,28 @@ async function freshBrowser() {
     /not a whole number/.test(await text(page, '#msgList')), await text(page, '#msgList'));
   check('round-15 B-02 a refused named quantity leaves the source bytes unchanged',
     (await val(page, '#list')) === before, await val(page, '#list'));
+  await page.close();
+}
+
+// ---- round 16 B-01: an older asynchronous Assign may not replace newer input -------------------------
+{
+  const opts = { approved: true, ownedIds: [71, 72] };
+  const page = await open(browser, opts);
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const oldList = A(0x801) + '\n';
+  const newList = A(0x802) + '\n';
+  await page.fill('#list', oldList);
+  opts.delayNextRpcMs = 1200;
+  await page.click('#assign');
+  await page.fill('#list', newList); // normal user input while the holdings RPC is pending
+  await page.waitForTimeout(2200);
+  const finalList = await val(page, '#list');
+  const sendDisabled = await page.$eval('#send', (b) => b.disabled);
+  const summary = await text(page, '#parseOut');
+  check('round-16 B-01 an older Assign completion leaves newer recipient input untouched and disarmed',
+    finalList === newList && sendDisabled && !summary.trim(),
+    JSON.stringify({ finalList, sendDisabled, summary }));
   await page.close();
 }
 

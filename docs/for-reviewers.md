@@ -125,8 +125,8 @@ which is the case worth monitoring for.
   stretch is the one worth monitoring, so a green badge on a dormant repository means the last run that
   happened rather than the state today. A failure also opens an issue, so it is visible without access to
   anyone's inbox.
-- Fifteen adversarial review rounds, each by a fresh model with no prior context, all published unedited in
-  [`docs/`](.). Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5. The first thirteen
+- Sixteen adversarial review rounds, each by a fresh model with no prior context, all published unedited in
+  [`docs/`](.). Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1. The first thirteen
   rounds are closed. Round fourteen's source findings are fixed, but its live-page mismatch carried into
   round fifteen and remains open. Round fifteen's focused fixes and deployment state are tracked in
   `status.md`; its inherent-limit list is not a backlog, but the things a browser page cannot prove, written
