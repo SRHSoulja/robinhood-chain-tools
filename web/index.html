@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-8yDU96giaT5JBBG4S4+UkTCH30rjWdnzplMZJr4hQV4='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-dFzZDoTFvrD+tJZoZIo/ti7MGFTkRcFWD5xjH5ciUDQ='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -207,6 +207,11 @@
   let eth = null;   // the wallet the user chose, discovered through EIP-6963 rather than assumed
   let provider, signer, me, rows = [], parsedListSource = null, stopFlag = false, decimals = null, tokenLoadedFor = null, skippedRows = [], sending = false;
   let sendRunKey = null;   // set only while a send holds its run lock; see runKey() and ledgerKey()
+  // Pending records this tab is in the middle of sending. A record is written before the wallet is asked
+  // (round thirteen B-2), so for a moment it has no hash. Reconciliation, which runs when a wallet connects,
+  // must not read that moment as a batch that never came back: on a phone the wallet app re-establishes the
+  // session exactly then, and gate 10's run 4 printed the orphan message about a batch that landed a second later.
+  const inFlightPids = new Set();
   let forcePicker = false; // a deliberate disconnect means the next connect should ask which account
   // Anything that signs has to refuse a second press while the first is unfinished. `send` was given that in
   // an early audit; approve and revoke were not, and the chain shows what that costs: three setApprovalForAll
@@ -626,7 +631,7 @@
       eth.on('accountsChanged', walletListeners.accountsChanged);
     }
     await switchChain(); await detectWalletBatch(); refreshRevoke(); plan();
-    reconcilePending(false).catch(() => {});
+    if (!sending) reconcilePending(false).catch(() => {});   // a reconnect mid-send is not the moment to judge that send
     } catch (e) { me = null; provider = null; signer = null; say('msgTop', walletError(e), 'bad'); plan(); }
   }
   // EIP-5792: ask the wallet whether it can run several calls as one atomic transaction. Wallets do this by
@@ -2678,6 +2683,7 @@
     let resolved = 0;
     for (const e of list) {
       const c = CHAINS[e.chain]; if (!c) continue;
+      if (inFlightPids.has(e.pid)) continue;   // this tab is sending it right now; the send loop owns its outcome
       // A wallet batch may have been written down before the wallet gave us a transaction hash. The wallet
       // still knows the batch by the id it handed back, so ask it before giving up on the rows.
       if (!e.hash && e.callsId && eth && chainId() === e.chain) {
@@ -3289,6 +3295,7 @@
           log('  this browser will not save what has been sent, so nothing has been sent. Sending without that record is how a recipient gets paid twice.', 'bad');
           break;
         }
+        inFlightPids.add(pid);
         // Round seventeen S-3. `bulk[fn](...)` returned only after ethers had looked the transaction up
         // THROUGH THE WALLET's RPC to build its response object, retrying forever on an error or a null: a
         // rate-limited wallet endpoint left the form locked with the hash the wallet had already given us
@@ -3365,7 +3372,7 @@
       log('Finished. ' + sent + ' delivered' + (skipped ? ', ' + skipped + ' skipped' : '') + '.', 'ok');
       if (skipped) log('Download the skipped list to retry those wallets.', 'warn');
     } catch (e) { log('Stopped on error: ' + explainCallError(e), 'bad'); }
-    } finally { heldRunKey = null; sendRunKey = null; if (releaseLock) releaseLock(); }
+    } finally { heldRunKey = null; sendRunKey = null; inFlightPids.clear(); if (releaseLock) releaseLock(); }
   }
 
   // ---- the wallet-batch path: the wallet runs the transfers as itself, in one transaction per batch ----
@@ -3391,6 +3398,7 @@
           log('  this browser will not save what has been sent, so nothing has been sent. Sending without that record is how a recipient gets paid twice.', 'bad');
           break;
         }
+        inFlightPids.add(pid);
         let res;
         try {
           res = await eth.request({ method: 'wallet_sendCalls', params: [{ version: '2.0.0', chainId: hexChain(), from: me, atomicRequired: true, calls: chunk.map(directCall) }] });

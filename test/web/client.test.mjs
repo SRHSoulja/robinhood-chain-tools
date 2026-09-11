@@ -1073,6 +1073,33 @@ async function freshBrowser() {
   await page.close();
 }
 
+// ---- gate 10, run 4: a phone re-establishing its session mid-send must not be told the batch never came back --
+// From the maintainer's own screenshot: the record is written before the wallet is asked, the browser was
+// backgrounded, the wallet session came back, and reconciliation printed "was sent to your wallet and never
+// came back with a transaction" about a batch that landed a second later.
+{
+  const paid = A(0xb05);
+  const page = await open(browser, { url: WC_DIR, approved: true, ownerOf: paid, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 },
+    slowMethod: { method: 'eth_sendTransaction', ms: 5000 } });
+  await page.click('#connectWc'); await page.waitForTimeout(900);
+  await useToken(page, NFT, '721');
+  await setList(page, paid + ',5\n');
+  await page.click('#send');
+  await page.waitForTimeout(1500);                       // the wallet is holding eth_sendTransaction
+  // The phone comes back and its session is re-established: the connect path runs again while the send is in
+  // flight. Once connected the button is hidden, so this is a programmatic click, as the provider's own
+  // reconnect would be; the check below proves the path ran rather than the click being swallowed.
+  await page.evaluate(() => { const b = document.querySelector('#connectWc'); if (b) b.click(); }); await page.waitForTimeout(1500);
+  const mid = await text(page, '#log');
+  const box = await page.evaluate(() => ((document.querySelector('#walletBox') || {}).textContent || '') + ' ' + ((document.querySelector('#msgTop') || {}).textContent || ''));
+  check('gate-10 run-4 the phone-wallet connect path ran again mid-send', /phone wallet/i.test(box), box.slice(0, 160));
+  check('gate-10 run-4 reconciliation during an in-flight send does not call the batch lost', !/never came back with a transaction/.test(mid), mid.slice(-300));
+  await page.waitForTimeout(9000);
+  const end = await text(page, '#log');
+  check('gate-10 run-4 and the send still completes', /done: 1 arrived|Finished\. 1 delivered/.test(end), end.slice(-300));
+  await page.close();
+}
+
 // ---- round 17 S-1: "How many each" is the seventh input Assign captures before it waits ---------------
 {
   const opts = { approved: true, ownedIds: [71, 72, 73, 74] };

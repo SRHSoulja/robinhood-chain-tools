@@ -25,7 +25,7 @@ for three deployments, which is exactly why the rule is written down: available 
 nonce is 0.
 
 Current unreleased validation, 11 September 2026: the complete current-tree gate passed all five ordinary
-contract test files, 348/348 airdrop-page tests, 129/129 Check-page tests, and 21/21 publish-policy checks.
+contract test files, 352/352 airdrop-page tests, 129/129 Check-page tests, and 21/21 publish-policy checks.
 Every historical probe is now bound both to its complete source hash and to its exact assertion names and
 statuses; an ordinary Solidity failure can no longer hide by borrowing a probe-style function name. The
 reproducible WalletConnect rebuild matched its shipped and expected SHA-256. The separate read-only mainnet
@@ -38,7 +38,7 @@ tokens were accepted. No transaction was signed or broadcast and no ETH was spen
 ```
 ./test.sh                              # everything below except the live scripts
 forge test                             # 111 contract tests, plus 29 reviewer probes of which 9 must FAIL
-node test/web/client.test.mjs          # 348 airdrop page tests
+node test/web/client.test.mjs          # 352 airdrop page tests
 node test/web/check.test.mjs           # 129 Check page tests
 ./test/csp-gate.test.sh                #  21 checks that a weaker published CSP is refused
 forge test --match-path 'test/fork/MainnetGuards.t.sol'   # the paste guards against 20 real mainnet
