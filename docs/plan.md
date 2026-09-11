@@ -46,6 +46,8 @@
 >     their wallets are test implementations, and the manual MetaMask run predates v10. Complete one injected-
 >     wallet and one phone/WalletConnect airdrop with freshly minted testnet assets, then read both back before
 >     changing the mainnet placeholder.
+>     The runbook is [`real-wallet-run.md`](real-wallet-run.md); `deploy/mint-fixtures.sh <address>` mints the
+>     fixtures. Needs the maintainer's wallet address and an hour of their time; testnet gas only.
 >  11. **An explorer that answers this origin on mainnet** (round seventeen S-8). Today the mainnet explorer
 >     answers the worker's passthrough with a Cloudflare managed challenge, so on mainnet Assign's fallback,
 >     holder snapshots and Check's source verification and revert reasons would all be dark. An API key, an
