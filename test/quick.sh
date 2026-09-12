@@ -9,7 +9,9 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export PATH="$HOME/.foundry/bin:$PATH"
-[ -d node_modules ] || npm install --no-audit --no-fund >/dev/null 2>&1
+# Round nineteen F-9: a stale or half-installed node_modules read as 'the readers suite has failures' with nothing
+# printed. Check the dependencies resolve, and install from the lockfile if they do not.
+npm ls --depth=0 >/dev/null 2>&1 || { echo 'dependencies missing or stale; installing from the lockfile'; npm ci --no-audit --no-fund >/dev/null; }
 
 pass=0
 fail=0

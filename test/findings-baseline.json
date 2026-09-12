@@ -12,7 +12,8 @@
   "audit-probe-12": 0,
   "audit-probe-13": 0,
   "audit-probe-17": 2,
-  "audit-probe-18": 0
+  "audit-probe-18": 0,
+  "audit-probe-19": 0
  },
  "contract_probe_sources": {
   "AuditProbe": "0417777234c0aad9ab68ff2c0d9a432b38273f21d92ee4554fe3ffdb2e7f4008",
@@ -26,7 +27,8 @@
   "audit-probe-12": "4504e1fb1acb6b099577504b99bd54f6051dd353e9f7297c892df514b579c164",
   "audit-probe-13": "6e1103f443cce95365115e55d5fa21c4edeaf2f966fb6a9b42eb5c564b0126b8",
   "audit-probe-17": "169a6bd9cd5be2afa026d8b72f9ca6c1d4478b281b7bab586925208c0b31df22",
-  "audit-probe-18": "51842812215103de7df4e766aad447e8edeb68e53b23e8a4dbb5566dfb779869"
+  "audit-probe-18": "51842812215103de7df4e766aad447e8edeb68e53b23e8a4dbb5566dfb779869",
+  "audit-probe-19": "22d14429fee0ed276f2e4b3ecdb954e04a9b92ec9219f8dcb95ba98e0f3a1317"
  },
  "contract_probe_assertions": {
   "AuditProbe": "58faa4fe9f082e1bbd74e487087307e4f66ace155d99da8d6452c582ca4033fc",
@@ -40,14 +42,22 @@
   "audit-probe-12": "acbbc2352c12463333d233e78920ed5b7022b37baffe45d834be20d35a564732",
   "audit-probe-13": "7ff803e37c9db1cbb502f83b1ce95007288956b683b152a99b16333d903a18a3",
   "audit-probe-17": "a67c628d24cf6dd194af08bc3331d1268a7344d1c681a34469706d5d1a866f68",
-  "audit-probe-18": "d74e0ba57261c7f39a640dd829cd99e3e4fc5ad009cae87f7e36b4c52be83bf4"
+  "audit-probe-18": "d74e0ba57261c7f39a640dd829cd99e3e4fc5ad009cae87f7e36b4c52be83bf4",
+  "audit-probe-19": "cdf462529504e22f73d621963a653bd00a82d9e0d4879a500c83530b653a0fdb"
  },
  "suite_files": {
-  "client": "eebb99331225db33f40a75134278bec230ea5e6c7f4e8a67b85cb715bd73d021",
-  "check": "d4a24a2a8ed0a940466a9d674cb89417e7131a9c3ee1423011017c9893c449a6",
-  "worker": "9cb4c862c20ffd73b8ad58529c0952f061c1fd914160ea300d762b555c8f8f2a",
+  "client": "a14de728220e09f71e6ff02c27ee5ea3300744d0dc1bafb5b0cd5305ff4ea9ab",
+  "check": "a8aec67a5a5c805939f5c682c9fccef38895ce72308ff1fc10cfd847dbc8f62e",
+  "worker": "1e663ea92ad651cb008eb714a7230206a50414e3a8ded1c241cc480ea808f120",
   "csp_gate": "812e911013a4a36566b993660edd8cca87c5a464821db385a5f070fc91813604",
   "readers": "a2eb5d7e516d6b732cecf453640b3ed16917fb9e1fb1e3992ba77f3db4e94e20",
-  "lib": "ec899046f11230545e09bc6ffd092f474a98fbfc38c01680b831d65eb9216ceb"
+  "lib": "ec899046f11230545e09bc6ffd092f474a98fbfc38c01680b831d65eb9216ceb",
+  "contract_bulksend": "2b2759eb3af0f24dd33ef87795d9e21bfae96bbd367930fb71538784518782b7",
+  "contract_real": "9f8926fe1dcb8aa0e1f055eda7c06532956c7e2e9572a420fc1f5c18d844d5f3",
+  "contract_reentrancy": "eef78eb49eb27e7174dcb5a9330a596a4821ef3fb47d74e904157db87d0737c6",
+  "contract_idamount": "044efde03a785a268d27b73e8387ba3ae6b6e65101305a300a316f11a25f5d5a",
+  "contract_invariants": "123894eded5a70a9124787ae6996c0725d82d38e15a7ac6d9ff1496c8a9329ad",
+  "contract_mocks": "6ec36947e226d2596266ca2ddede2377f5627eba2a71a8cea39e50f62385172d",
+  "contract_realtokens": "39c32935dd6eeec7a7e5658e163205e660531c66d160c0810b48655214466abc"
  }
 }

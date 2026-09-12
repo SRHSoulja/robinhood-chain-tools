@@ -1081,6 +1081,20 @@ await t("assign: round-15 B-02 Assign refuses an invalid named quantity rather t
   await page.close();
 });
 
+// ---- round 19 F-10: a headed list with a label column in front is still "already paired" when its id column is full ----
+await t('assign: round 19 F-10, a headed list is judged paired by its id column, not by position', async () => {
+  const page = await open(browser, { approved: true, ownedIds: [41, 42] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, 'label,address,tokenId\nalice,' + A(0x311) + ',41\nbob,' + A(0x312) + ',42\n');
+  const before = await val(page, '#list');
+  let asked = false; page.removeAllListeners('dialog'); page.on('dialog', (d) => { asked = true; d.dismiss(); });
+  await page.click('#assign'); await page.waitForTimeout(2500);
+  check('round-19 F-10 Assign asks before re-pairing a headed, fully paired list', asked, 'no dialog');
+  check('round-19 F-10 and a No leaves it untouched', (await val(page, '#list')) === before, JSON.stringify(await val(page, '#list')));
+  await page.close();
+});
+
 // ---- round 18 S-1: several ids on one line count the same to Assign as to the parser and the picker ----
 await t("assign: round 18 S-1: several ids on one line count the same to Assign as to the parser and the picker", async () => {
   const page = await open(browser, { approved: true, ownedIds: [31, 32, 33, 34, 35] });
@@ -1148,35 +1162,58 @@ await t("wallet: gate-9 with the first endpoint up, nothing else is asked and no
   await page.close();
 });
 
-// ---- gate 10, run 4: a phone re-establishing its session mid-send must not be told the batch never came back --
-// From the maintainer's own screenshot: the record is written before the wallet is asked, the browser was
-// backgrounded, the wallet session came back, and reconciliation printed "was sent to your wallet and never
-// came back with a transaction" about a batch that landed a second later.
-await t("send: gate 10, run 4: a phone re-establishing its session mid-send must not be told the batch never came back", async () => {
+// ---- gate 10, run 4: what the maintainer's phone actually showed ---------------------------------------
+// The screenshot had "was sent to your wallet and never came back with a transaction" printed, and a batch
+// landing right after it. Round eighteen read that as reconciliation judging the in-flight batch and added an
+// in-flight guard; round nineteen (F-5) showed the guard could be deleted without a test noticing. Making the
+// test depend on it showed why: nothing reconciles mid-send. The connect controls are locked while a batch is
+// out, and a dropped phone session keeps `me` and only stops the loop, so `connect()` and its reconciliation
+// cannot run again until the send is over. The guard was dead and is gone. The message was a true report, by
+// the reconciliation that runs before every send, of an EARLIER attempt the wallet never answered (the browser
+// was backgrounded too soon). These two cases pin what is real: the drop, and the report of the older record.
+await t("send: gate 10, run 4: a phone session that drops mid-send does not stop the batch already handed to the wallet", async () => {
   const paid = A(0xb05);
   const page = await open(browser, { url: WC_DIR, approved: true, ownerOf: paid, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 },
-    slowMethod: { method: 'eth_sendTransaction', ms: 5000 } });
+    slowMethod: { method: 'eth_sendTransaction', ms: 4000 } });
   await page.click('#connectWc'); await page.waitForTimeout(900);
   await useToken(page, NFT, '721');
   await setList(page, paid + ',5\n');
   await page.click('#send');
-  await page.waitForTimeout(1500);                       // the wallet is holding eth_sendTransaction
-  // The phone comes back and its session is re-established: the connect path runs again while the send is in
-  // flight. Once connected the button is hidden, so this is a programmatic click, as the provider's own
-  // reconnect would be; the check below proves the path ran rather than the click being swallowed.
-  await page.evaluate(() => { const b = document.querySelector('#connectWc'); if (b) b.click(); }); await page.waitForTimeout(1500);
-  const mid = await text(page, '#log');
-  const box = await page.evaluate(() => ((document.querySelector('#walletBox') || {}).textContent || '') + ' ' + ((document.querySelector('#msgTop') || {}).textContent || ''));
-  check('gate-10 run-4 the phone-wallet connect path ran again mid-send', /phone wallet/i.test(box), box.slice(0, 160));
-  check('gate-10 run-4 reconciliation during an in-flight send does not call the batch lost', !/never came back with a transaction/.test(mid), mid.slice(-300));
-  await page.waitForTimeout(9000);
+  for (let i = 0; i < 80; i++) {   // until the wallet holds the request: a hash-less pending record exists
+    const n = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('bulksend:pending:')).map((k) => JSON.parse(localStorage.getItem(k))).filter((p) => p.hash === null).length);
+    if (n === 1) break; await page.waitForTimeout(150);
+  }
+  await page.evaluate(() => window.__wcDisconnect());   // the app was backgrounded; the session dropped
+  const during = await page.evaluate(() => ({ connectWc: !!document.querySelector('#connectWc'), connect: !!document.querySelector('#connect'), top: ((document.querySelector('#msgTop') || {}).textContent || '').slice(0, 80) }));
+  check('gate-10 run-4 while the batch is out, the drop offers no connect control (so nothing can reconcile mid-send)', !during.connectWc && !during.connect && /disconnected/.test(during.top), JSON.stringify(during));
+  for (let i = 0; i < 200; i++) { if (/done: 1 arrived|Finished\. 1 delivered|Stopped/.test(await text(page, '#log'))) break; await page.waitForTimeout(200); }
   const end = await text(page, '#log');
-  check('gate-10 run-4 and the send still completes', /done: 1 arrived|Finished\. 1 delivered/.test(end), end.slice(-300));
-  // Round eighteen S-4: the positive. After the send, the ledger holds the row once and nothing is pending or
-  // held: a reconciliation that had judged the in-flight batch would have left a held record behind.
+  check('gate-10 run-4 the batch already handed to the wallet still completes after the drop', /done: 1 arrived|Finished\. 1 delivered/.test(end), end.slice(-300));
+  check('gate-10 run-4 and nothing about it is called lost', !/never came back with a transaction/.test(end), end.slice(-300));
   const after = await page.evaluate(() => ({ pending: Object.keys(localStorage).filter((k) => k.startsWith('bulksend:pending:')).length,
     delivered: Object.keys(localStorage).filter((k) => /^bulksend:46630:/.test(k)).map((k) => JSON.parse(localStorage.getItem(k) || '[]').length) }));
-  check('gate-10 run-4 nothing was held by the reconnect: no pending record remains and the delivery is recorded once', after.pending === 0 && after.delivered.some((n) => n === 1), JSON.stringify(after));
+  check('gate-10 run-4 no pending record remains and the delivery is recorded once', after.pending === 0 && after.delivered.some((n) => n === 1), JSON.stringify(after));
+  await page.close();
+});
+
+await t("send: gate 10, run 4: an earlier attempt the wallet never answered is reported before the next send, which still goes out", async () => {
+  const paid = A(0xb06);
+  const page = await open(browser, { url: WC_DIR, approved: true, ownerOf: paid, summary: { bulk: BULK_FOR_MOCK, std: '721', token: NFT, sent: 1 } });
+  await page.click('#connectWc'); await page.waitForTimeout(900);
+  await useToken(page, NFT, '721');
+  // the earlier attempt: written before the wallet was asked, never answered, that tab gone
+  await page.evaluate((nft) => {
+    localStorage.setItem('bulksend:pending:old1', JSON.stringify({ pid: 'old1', run: 'bulksend:46630:x:x:721', chain: 46630, bulk: null, hash: null, at: Date.now() - 600000,
+      rows: [{ to: '0x00000000000000000000000000000000000000ee', id: '9' }], via: 'bulk', token: nft, std: '721', call: null }));
+  }, NFT);
+  await setList(page, paid + ',6\n');
+  await page.click('#send');
+  for (let i = 0; i < 200; i++) { if (/done: 1 arrived|Finished\. 1 delivered|Stopped/.test(await text(page, '#log'))) break; await page.waitForTimeout(200); }
+  const end = await text(page, '#log');
+  check('gate-10 run-4 the earlier attempt is reported as never answered, before the new batch goes out', /never came back with a transaction/.test(end) && end.indexOf('never came back') < end.indexOf('sent, waiting'), end.slice(0, 400));
+  check('gate-10 run-4 and the new batch still goes out and lands', /done: 1 arrived|Finished\. 1 delivered/.test(end), end.slice(-300));
+  const held = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('bulksend:pending:')).map((k) => JSON.parse(localStorage.getItem(k)).pid));
+  check('gate-10 run-4 the earlier record stays held rather than being forgotten or paid again', held.length === 1 && held[0] === 'old1', JSON.stringify(held));
   await page.close();
 });
 

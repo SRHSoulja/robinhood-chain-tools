@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-J8/w9Ggpagy5VGC8e5Lu3i0o+2yUhgLgbmN9Lf1pyT8='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-VOZnDEHhsDCZu1HI0/OhCaoDd7iQoYXaSI11zPdPL94='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <title>Robinhood Chain Check · read it before you sign</title>
 <meta name="description" content="Paste a transaction, a contract, or the calldata your wallet is about to sign, and read what it actually does on Robinhood Chain: what moves, what the contract can do to you, and why something failed.">
 <style>
@@ -335,7 +335,10 @@
       if (missing) return { ok: true, data: null };
       await wait(400 * (attempt + 1));
     }
-    return { ok: reached, data: null };
+    // Round nineteen F-1: reaching the explorer is not the same as being answered by it. This returned
+    // `ok: reached`, so an upstream-error envelope came back as a definite "nothing there" and the page said
+    // "no source published" about contracts nobody could check. Only a real answer or a real 404 is ok.
+    return { ok: false, data: null };
   }
 
   // Everything worth knowing about one address, from the chain first and the explorer second. The chain

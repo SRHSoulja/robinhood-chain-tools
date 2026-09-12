@@ -2,15 +2,13 @@
 
 > ## Start here
 >
-> **State on 12 September 2026, the commit that carries this file.** Round eighteen, on Opus against `79d6446`, found one
-> blocker in the day-old mainnet explorer translation: every unverified contract read as verified, live. It and
-> its root cause, plus all ten should-fix items, are closed against the reviewer's own probe, which reads seven
-> of seven fixed. Every gate before the mainnet question is done. **What remains:** round nineteen on Opus against the commit that carries this file, the final review of the
-> code that would go to mainnet; then the deploy of v13 (about 0.0003 ETH) only on the maintainer's explicit
-> word. The fast test harness from [`harness.md`](harness.md) landed at `6f5233b`: the page's readers in node in
-> a fifth of a second, a five-second quick gate, any browser area alone in half a minute, and the full verify
-> unchanged as the commit gate. Every fix from here on costs what it should. Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1,
-> 2, 4, 5, 1, 0, 1.
+> **State on 12 September 2026, the commit that carries this file.** Round nineteen, on Opus against `39eaaf2`
+> (the harness and round eighteen's closure), found one blocker in round eighteen's fix: the Check page read an
+> unanswered explorer lookup as "no source published". It and all eleven should-fix items are closed against
+> the reviewer's own probe, three of three fixed, at the new harness's price: a filtered case in four seconds,
+> an area in under a minute, one full verify at the commit. Every gate before the mainnet question is done.
+> **What remains:** round twenty on Opus against this commit, then the deploy of v13 (about 0.0003 ETH) only on
+> the maintainer's explicit word. Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0, 1, 1.
 >
 > - **BulkSend v13 is DEPLOYED on testnet** at `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (tx `0x5cb0037f…`), byte-identical
 >   at 9,752 bytes, fully verified. The on-chain B-1 reproduction against it reverts `IsAnNft`
@@ -63,8 +61,12 @@
 >     v13: ERC-721 `0x36d11da8…`, ERC-1155 `0x860ccb24…`, ERC-20 `0x8114062…` from a browser wallet, and
 >     ERC-721 `0x448db323…` from a phone over WalletConnect with the tab backgrounded. Every hash read back from
 >     the explorer and the chain agrees with the page. Two minor findings, both fixed the same day: the ERC-20
->     confirmation line showed base units; reconciliation, triggered by the phone re-establishing its session
->     mid-send, called a batch lost that landed a second later. Gate 12 is proven by the same phone run: the
+>     confirmation line showed base units; and a "never came back" line about a batch that landed a second
+>     later, which round eighteen read as reconciliation judging the in-flight batch and guarded against. Round
+>     nineteen's F-5 showed that guard unreachable (nothing reconciles mid-send: the connect controls are locked,
+>     a dropped phone session keeps the account); it is removed, and the line is now understood as the pre-send
+>     reconciliation truthfully reporting an EARLIER attempt the backgrounded wallet never answered, which is
+>     what the maintainer said happened. Gate 12 is proven by the same phone run: the
 >     send path took its hash from the wallet and its receipt from the page's RPC.
 >  11. **An explorer that answers this origin on mainnet** (round seventeen S-8). Today the mainnet explorer
 >     answers the worker's passthrough with a Cloudflare managed challenge, so on mainnet Assign's fallback,
@@ -88,6 +90,11 @@
 >      (100 a page, paging), its verification record with a 90-entry ABI, a holder's inventory of 1,535 NFTs
 >      netted from transfer history, a transaction's record; no key marker in any response. The integrity
 >      workflow now reads that holders page four times a day and refuses the envelope.
+>  13. **On the day the mainnet address is substituted** (round nineteen F-11): the integrity workflow's
+>     bytecode step compares the testnet contract only. That day, before the publish, it gains the mainnet
+>     address from a `deployments.mainnet.json` and compares both, and the page's `{{BULKSEND_MAINNET}}`
+>     placeholder is replaced by `preflight.sh` reading that file, never by hand. Until then the placeholder is
+>     what keeps mainnet off, and the check that would notice a wrong mainnet address does not exist.
 >  12. **The send path must not depend on the wallet's RPC** (round seventeen S-8, second item). S-3's fix
 >     takes the hash from `eth_sendTransaction` and waits on this page's RPC; gate 9's production endpoint
 >     then covers every read the page makes. Proven by the S-3 regression and by one real-wallet send under

@@ -238,7 +238,7 @@ async function run() {
     const bv = await rv.json();
     check('verified contract: every field per the spec table',
       deepEqual(bv, {
-        is_verified: true, is_partially_verified: false, name: 'Foo', abi: VERIFIED_ABI,
+        is_verified: true, is_partially_verified: null, name: 'Foo', abi: VERIFIED_ABI,
         compiler_version: 'v0.8.19+commit.7dd6d404', optimization_enabled: true, evm_version: 'paris',
         proxy_type: null, implementations: [], verified_at: null,
       }), JSON.stringify(bv));
@@ -247,7 +247,7 @@ async function run() {
     const bu = await ru.json();
     check('unverified contract: is_verified false, abi [], name/compiler null',
       deepEqual(bu, {
-        is_verified: false, is_partially_verified: false, name: null, abi: [],
+        is_verified: false, is_partially_verified: null, name: null, abi: [],
         compiler_version: null, optimization_enabled: false, evm_version: null,
         proxy_type: null, implementations: [], verified_at: null,
       }), JSON.stringify(bu));

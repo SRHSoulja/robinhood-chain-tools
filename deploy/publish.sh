@@ -73,7 +73,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 # The page carries one inline script. Naming it by hash is what lets the policy drop 'unsafe-inline', so a
 # script injected into the response cannot run even if it reaches the browser. The hash is recomputed here and
-# the file is corrected if it has drifted, because a stale hash would silently break the page.
+# a drifted hash refuses to publish; nothing is repaired here, because a publisher that edits the file it
+# ships would ship bytes no commit contains (round nineteen F-12; deploy/csp-gate.py says the same).
 CSP_HASH="$(python3 - "$SRC" <<'PY'
 import base64, hashlib, re, sys
 html = open(sys.argv[1], encoding="utf-8").read()

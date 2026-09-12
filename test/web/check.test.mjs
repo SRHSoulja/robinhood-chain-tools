@@ -96,6 +96,10 @@ async function open(_stale, opts = {}) {
   await page.route('**://*/**', async (route) => {
     const req = route.request(), url = req.url();
     if (url.startsWith('file://') || url.includes('cdnjs.cloudflare.com')) return route.continue();
+    if (opts.proxyEnvelope && (url.includes('/api/v2/smart-contracts/') || url.includes('/x/'))) {
+      // Round nineteen F-1: the Worker reached the explorer and it would not answer. HTTP 200, JSON, the envelope.
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(opts.proxyEnvelope) });
+    }
     if (url.includes('/api/v2/smart-contracts/') || url.includes('/x/')) {
       if (opts.slowFor && url.toLowerCase().includes(opts.slowFor.toLowerCase().slice(2))) await new Promise((r) => setTimeout(r, opts.slowMs || 3000));
       if (opts.explorerSick) return route.fulfill({ status: 500, contentType: 'text/html', body: 'upstream is unwell' });
@@ -230,6 +234,15 @@ await t("check-page: a call that would fail", async () => {
   check('a call that would fail says so before it is signed', t.includes('would fail'), t.slice(0, 200));
   check('and gives the contract’s own reason in words', t.includes('that token id does not exist'), t.slice(0, 400));
   check('and carries the argument the contract complained about', t.includes('12345'), t.slice(0, 400));
+  await page.close();
+});
+
+// ---- round 19 F-1: an explorer that would not answer is "could not check", never "no source published" ----
+await t('check-page: round 19 F-1, an unanswered explorer lookup is could-not-check, never no-source-published', async () => {
+  const page = await open(browser, { proxyEnvelope: { error: 'upstream', status: 502 } });
+  const t = await ask(page, NFT, ME, 12000);   // three attempts with back-off before the page gives up on the explorer
+  check('round-19 F-1 an upstream-error envelope reads as could-not-check', t.trim().length > 0 && /could not check for a published source/.test(t), t.slice(0, 500));
+  check('round-19 F-1 and never as a contract with no published source', t.trim().length > 0 && !/no source published|has published no source/i.test(t), t.slice(0, 500));
   await page.close();
 });
 

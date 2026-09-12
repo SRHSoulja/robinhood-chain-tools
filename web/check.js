@@ -245,7 +245,10 @@
       if (missing) return { ok: true, data: null };
       await wait(400 * (attempt + 1));
     }
-    return { ok: reached, data: null };
+    // Round nineteen F-1: reaching the explorer is not the same as being answered by it. This returned
+    // `ok: reached`, so an upstream-error envelope came back as a definite "nothing there" and the page said
+    // "no source published" about contracts nobody could check. Only a real answer or a real 404 is ok.
+    return { ok: false, data: null };
   }
 
   // Everything worth knowing about one address, from the chain first and the explorer second. The chain

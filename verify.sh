@@ -257,7 +257,8 @@ if [ "$fail" -eq 0 ]; then
 # reduced to one check would still print "passed". The same rule as the browser suites: the reviewed source
 # must be the source whose pass is being cited.
 for pair in "worker:test/worker.test.mjs" "csp_gate:test/csp-gate.test.sh" \
-            "readers:test/readers.test.mjs" "lib:test/web/lib.mjs"; do
+            "contract_bulksend:test/BulkSend.t.sol" "contract_real:test/BulkSendReal.t.sol" "contract_reentrancy:test/Reentrancy.t.sol" \
+            "contract_idamount:test/IdAmountProbe.t.sol" "contract_invariants:test/Invariants.t.sol" "contract_mocks:test/Mocks.sol" "contract_realtokens:test/RealTokens.sol" "readers:test/readers.test.mjs" "lib:test/web/lib.mjs"; do   # round nineteen F-7: the contract suites too
   key="${pair%%:*}"; file="${pair#*:}"
   now="$(sha256sum "$file" | cut -d' ' -f1)"
   was="$(python3 -c "import json;print(json.load(open('$BASELINE')).get('suite_files',{}).get('$key','none'))")"

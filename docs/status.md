@@ -1,6 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 11 September 2026, against BulkSend **v13** and round eighteen.
+Last updated 12 September 2026, against BulkSend **v13** and round nineteen.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -15,7 +15,7 @@ Four things have to be true before that changes, and all are currently false:
 
 | | state |
 | --- | --- |
-| a review round with no release blockers | **not met** — round fifteen found five. B-01 through B-04 have focused regressions and fixes in the current working tree; the live-page mismatch cannot close until the exact remediation commit receives a clean independent review and is published. A fresh exact-commit round still has to find none |
+| a review round with no release blockers | **not met** — round seventeen found none; round eighteen then found one in code written that day, and round nineteen one more in the fix; each is closed against its reproduction. The round that finds none on a tree that then does not change has not happened |
 | a production mainnet RPC plan | **not met** — the page names Robinhood's free public endpoint, which [the official documentation](https://docs.robinhood.com/chain/connecting/) calls rate-limited and not recommended for production. Choose a production provider, keep credentials out of the page, and monitor/fail over reads before enabling mainnet |
 | a current real-wallet rehearsal on testnet | **not met** — the v13 live scripts are green, but their wallets are written by this repository. The one manual MetaMask run predates v10. Run the final page through an injected wallet and the phone/WalletConnect path on testnet once each |
 | explicit permission from the maintainer, given after that round | **not given** |
@@ -144,6 +144,32 @@ a distribution, only its top, and the file says so.
 
 ## Open findings
 
+Round nineteen, 12 September 2026, against `39eaaf2`, on Opus. The full report is
+[`audit-2026-09-12-nineteenth-external.md`](audit-2026-09-12-nineteenth-external.md), published as written.
+**One release blocker**, in the fix for the previous one: the Check page's explorer reader returned "reached"
+as "answered", so the upstream-error envelope the Worker sends when the explorer will not answer was rendered
+as "no source published". Its probe is `test/web/audit-probe-19.mjs`.
+
+### Round nineteen findings
+
+| | | |
+| --- | --- | --- |
+| F-1 | an unanswered explorer lookup read as "no source published" on the live Check page | **closed**: an unanswered lookup is `ok: false` and reads "could not check for a published source"; a positive case with the envelope as the mock's answer |
+| F-2 | the airdrop page's holder walk ended early on the envelope and called the first hundred holders the list | closed: `explorer()` throws on the envelope; a page that is neither full nor an explicit end is a walk cut short, and is said to be |
+| F-3 | the Worker's `truncated` flag was thrown away and the wallet blamed | closed: the inventory carries it out and Assign says the count is not known |
+| F-4 | a failed gas estimate was reported as "handed to your wallet" | closed: estimated before the wallet is asked; on failure the record is dropped and the message says nothing was sent |
+| F-5 | round eighteen's S-4(b) closure did not depend on the guard it named | closed, by removing the guard: making the test depend on it showed nothing reconciles mid-send (the connect controls are locked while a batch is out, a dropped phone session keeps `me` and only stops the loop), so the in-flight skip was dead code claiming a protection. The run-4 message was the pre-send reconciliation reporting an EARLIER record the wallet never answered. Two cases now pin that: a mid-send drop offers no connect control and the batch still lands, recorded once; an older hash-less record is reported before the next send, which still goes out, and the record stays held |
+| F-6 | the live monitor never asked the airdrop Worker about `/x/` | closed: both Workers, every step |
+| F-7 | the evidence gate pinned no contract suite | closed: seven contract files pinned |
+| F-8 | `is_partially_verified` published as false rather than not known | closed: null |
+| F-9 | a stale dependency install read as "the readers suite has failures" | closed: the quick loop checks the dependencies resolve |
+| F-10 | Assign's already-paired check read positionally while every other reader reads by column | closed: by column when there is a heading; a headed-list case |
+| F-11 | nothing would ever check the mainnet contract's bytecode after the address swap | recorded as gate 13 in `plan.md` |
+| F-12 | four documentation claims not true of the tree | closed |
+
+All three of the reviewer's probe assertions read fixed. Round eighteen's probe reads seven of seven fixed and
+round seventeen's two, both open items listed above under round seventeen.
+
 Round eighteen, 11 September 2026, against `79d6446`, on Opus. The full report is
 [`audit-2026-09-11-eighteenth-external.md`](audit-2026-09-11-eighteenth-external.md), published as written.
 **One release blocker**, live at the time: the Worker's new mainnet explorer translation read every unverified
@@ -161,7 +187,7 @@ into "could not check". Its probe is `test/web/audit-probe-18.mjs`.
 | S-1 | `0xabc,1,2,3` was three deliveries to the parser and the picker and one to Assign | closed: the shared quantity reader knows the multi-id form |
 | S-2 | the holder snapshot waited without Assign's guard; a network change mid-read blended two chains | closed: chain, address and account captured; the walk asks the captured chain; nothing written if any moved |
 | S-3 | the evidence gate did not fingerprint the Worker and publish-gate suites | closed |
-| S-4 | three regression tests proved less than their names | closed: the round-17 S-3 and gate-10 run-4 tests assert the positive, read mid-send |
+| S-4 | three regression tests proved less than their names | (a) closed: the round-17 S-3 test reads the hash mid-send. (b) closed by round nineteen's F-5, differently from how round eighteen said: the guard it named was unreachable and is removed; the gate-10 run-4 tests now pin the drop and the older-record report instead. (c) not changed: the R17-4 probe's four-way conjunction is the reviewer's and stays as written, which is the honest reading of an external probe |
 | S-5 | a failure reason found by re-running was headed as the reason at the time | closed: headed as today's answer |
 | S-6 | Assign re-paired an already-paired list without asking (round seventeen's S-2) | closed: it asks first; a No leaves the list untouched |
 | S-7 | the Worker edge-cached a failed upstream answer for a minute | closed: module subrequests are not edge-cached |

@@ -157,7 +157,7 @@ def render(src, target, wc_bundle, wc_sha, csp_hash):
         if (isVerified) { try { abi = JSON.parse(r.ABI); } catch (e) { abi = []; } }
         return upstreamOk({
           is_verified: isVerified,
-          is_partially_verified: false,
+          is_partially_verified: null,   // round nineteen F-8: the module API does not say; null, not a claim
           name: r.ContractName || null,
           abi,
           compiler_version: r.CompilerVersion || null,

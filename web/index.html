@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-SVyU9wp955CPcgg/fbdREEmqT6n6wUxnyUdRlh1Kz0c='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-X2WFwzzmIywvi+dIUMENH9d9vCl6AaNUXDwLuGwu+HM='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -212,11 +212,6 @@
   let eth = null;   // the wallet the user chose, discovered through EIP-6963 rather than assumed
   let provider, signer, me, rows = [], parsedListSource = null, stopFlag = false, decimals = null, tokenLoadedFor = null, skippedRows = [], sending = false;
   let sendRunKey = null;   // set only while a send holds its run lock; see runKey() and ledgerKey()
-  // Pending records this tab is in the middle of sending. A record is written before the wallet is asked
-  // (round thirteen B-2), so for a moment it has no hash. Reconciliation, which runs when a wallet connects,
-  // must not read that moment as a batch that never came back: on a phone the wallet app re-establishes the
-  // session exactly then, and gate 10's run 4 printed the orphan message about a batch that landed a second later.
-  const inFlightPids = new Set();
   let forcePicker = false; // a deliberate disconnect means the next connect should ask which account
   // Anything that signs has to refuse a second press while the first is unfinished. `send` was given that in
   // an early audit; approve and revoke were not, and the chain shows what that costs: three setApprovalForAll
@@ -448,7 +443,15 @@
   const EXPLORER_API = (chain = chainId()) => (chain === 4663 && location.origin.endsWith('gmgnrepeat.com')
     ? '/x/4663'
     : chain === 4663 ? 'https://robinhoodchain.blockscout.com/api/v2' : 'https://explorer.testnet.chain.robinhood.com/api/v2');
-  async function explorer(path, chain = chainId()) { const r = await fetch(EXPLORER_API(chain) + path, { headers: { accept: 'application/json' } }); if (!r.ok) throw new Error('explorer ' + r.status); return r.json(); }
+  async function explorer(path, chain = chainId()) {
+    const r = await fetch(EXPLORER_API(chain) + path, { headers: { accept: 'application/json' } });
+    if (!r.ok) throw new Error('explorer ' + r.status);
+    const j = await r.json();
+    // Round nineteen F-2: the Worker answers an unanswerable lookup with HTTP 200 and this envelope. Reading it
+    // as a page with no items ended a holder walk early and called the first hundred holders the whole list.
+    if (j && j.error === 'upstream') throw new Error('explorer unavailable (' + j.status + ')');
+    return j;
+  }
   (async () => { try { const r = await fetch('https://api.coinbase.com/v2/prices/ETH-USD/spot'); ethUsd = Number((await r.json()).data.amount) || null; plan(); } catch (e) {} })();
 
   // What kind of token is this? ERC-165 answers it, so the user does not have to know.
@@ -667,7 +670,7 @@
       eth.on('accountsChanged', walletListeners.accountsChanged);
     }
     await switchChain(); await pickRpc(chainId()); await detectWalletBatch(); refreshRevoke(); plan();
-    if (!sending) reconcilePending(false).catch(() => {});   // a reconnect mid-send is not the moment to judge that send
+    reconcilePending(false).catch(() => {});   // never mid-send: while a batch is out the connect controls are locked and a dropped phone session keeps `me`
     } catch (e) { me = null; provider = null; signer = null; say('msgTop', walletError(e), 'bad'); plan(); }
   }
   // EIP-5792: ask the wallet whether it can run several calls as one atomic transaction. Wallets do this by
@@ -1903,7 +1906,10 @@
           holders.push(ethers.getAddress(h));
           if (held > 0) heldBy.set(ethers.getAddress(h), held);
         }
-        const p = d.next_page_params; if (!p) break;
+        // Positive, not inferred: a page is the last one only when the explorer says so. Anything else that is
+        // not a full page is a walk cut short, and is said to be.
+        const p = d.next_page_params;
+        if (!p) { if (!Array.isArray(d.items)) truncated = true; break; }
         next = Object.entries(p).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
         if (holders.length >= 20000) { truncated = true; break; }
         if (page === 199) truncated = true;
@@ -2149,7 +2155,11 @@
     // has been paired. Assign would re-pair it at random and say so only afterwards. Ask first.
     {
       const alreadyPaired = $('list').value.split(/\r?\n/).filter((l) => addressOn(l, col)).every((l) => {
-        const rest = splitRow(l.trim()).filter(Boolean).slice(1).filter((x) => !/^x\d+$/i.test(x));
+        const cells = splitRow(l.trim());
+        // Round nineteen F-10: by column name when there is a heading, as every other reader does; positionally
+        // only for a bare list. A headed list with a label column in front is otherwise never "paired".
+        if (col && col.id !== undefined) { const v = String(cells[col.id] ?? '').trim(); return v !== '' && v.split(/[\s|]+/).filter(Boolean).every((x) => wholeText(x) !== null); }
+        const rest = cells.filter(Boolean).slice(1).filter((x) => !/^x\d+$/i.test(x));
         return rest.length > 0 && rest.every((x) => wholeText(x) !== null);
       });
       if (alreadyPaired && !confirm('Every line already names its token ids. Assign would throw those pairings away and pair the wallets with your holdings again. Continue?')) {
@@ -2195,6 +2205,11 @@
         const pool = random ? shuffled(ids) : ids.slice();
         // Fewer ids than the list asks for means someone in that list is being dropped, and with random
         // pairing nobody can predict who. The box is left exactly as it was until that is agreed to.
+        if (ids.truncated) {
+          say('msgList', 'This page could not read all of what this wallet holds: the explorer\u2019s answer was cut short, so it cannot say whether you have enough. Nothing has been changed.', 'bad');
+          log('Assign stopped: the explorer\u2019s inventory for this wallet was cut short, so the count is not known. Your list is untouched.', 'bad');
+          $('assign').disabled = false; return;
+        }
         if (ids.length < totalWanted) {
           const short = totalWanted - ids.length;
           const missing = [];
@@ -2254,10 +2269,12 @@
         const ta = ((it.token || {}).address_hash) || ((it.token || {}).address) || '';
         if (ta.toLowerCase() === token.toLowerCase() && it.id != null) out.push(BigInt(it.id));
       }
+      if (d.truncated) out.truncated = true;   // round nineteen F-3: the Worker said its answer was cut short; carry that out
       const p = d.next_page_params; if (!p) break;
       next = Object.entries(p).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
     }
-    return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const sorted = out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)); if (out.truncated) sorted.truncated = true;
+    return sorted;
   }
 
   // A row held back because the chain would not confirm it needs a way out that is not "clear everything".
@@ -2741,7 +2758,6 @@
     let resolved = 0;
     for (const e of list) {
       const c = CHAINS[e.chain]; if (!c) continue;
-      if (inFlightPids.has(e.pid)) continue;   // this tab is sending it right now; the send loop owns its outcome
       // A wallet batch may have been written down before the wallet gave us a transaction hash. The wallet
       // still knows the batch by the id it handed back, so ask it before giving up on the rows.
       if (!e.hash && e.callsId && eth && chainId() === e.chain) {
@@ -3357,7 +3373,6 @@
           log('  this browser will not save what has been sent, so nothing has been sent. Sending without that record is how a recipient gets paid twice.', 'bad');
           break;
         }
-        inFlightPids.add(pid);
         // Round seventeen S-3. `bulk[fn](...)` returned only after ethers had looked the transaction up
         // THROUGH THE WALLET's RPC to build its response object, retrying forever on an error or a null: a
         // rate-limited wallet endpoint left the form locked with the hash the wallet had already given us
@@ -3365,11 +3380,20 @@
         // wait for the receipt on this page's own RPC, which is the endpoint this page is configured for.
         let tx;
         try {
-          const req = await bulk[fn].populateTransaction(...args, onThisChain());
-          // Round eighteen S-10: without a gasLimit, sendUncheckedTransaction estimates through the wallet's node.
-          // Estimate on the page's RPC, with a tenth of headroom, and refuse before broadcast if it cannot.
-          req.from = me;
-          req.gasLimit = (await pageRpc.estimateGas(req)) * 110n / 100n;
+          let req;
+          try {
+            req = await bulk[fn].populateTransaction(...args, onThisChain());
+            // Round eighteen S-10: without a gasLimit, sendUncheckedTransaction estimates through the wallet's node.
+            // Estimate on the page's RPC, with a tenth of headroom, and refuse before broadcast if it cannot.
+            req.from = me;
+            req.gasLimit = (await pageRpc.estimateGas(req)) * 110n / 100n;
+          } catch (err) {
+            // Round nineteen F-4: this failed before the wallet was asked anything, so it is not "handed to your
+            // wallet and no answer". Nothing was signed, nothing was sent, nothing is held back.
+            dropPending(pid);
+            log('  this page could not work out a gas limit for that batch against its own RPC, so it was not sent to your wallet at all. Those recipients are not held back. ' + explainCallError(err), 'bad');
+            throw err;
+          }
           const hash = await signer.sendUncheckedTransaction(req);
           tx = { hash, to: bulkAddr, data: planned, value: 0n };
         } catch (err) {
@@ -3438,7 +3462,7 @@
       log('Finished. ' + sent + ' delivered' + (skipped ? ', ' + skipped + ' skipped' : '') + '.', 'ok');
       if (skipped) log('Download the skipped list to retry those wallets.', 'warn');
     } catch (e) { log('Stopped on error: ' + explainCallError(e), 'bad'); }
-    } finally { heldRunKey = null; sendRunKey = null; inFlightPids.clear(); if (releaseLock) releaseLock(); }
+    } finally { heldRunKey = null; sendRunKey = null; if (releaseLock) releaseLock(); }
   }
 
   // ---- the wallet-batch path: the wallet runs the transfers as itself, in one transaction per batch ----
@@ -3464,7 +3488,6 @@
           log('  this browser will not save what has been sent, so nothing has been sent. Sending without that record is how a recipient gets paid twice.', 'bad');
           break;
         }
-        inFlightPids.add(pid);
         let res;
         try {
           res = await eth.request({ method: 'wallet_sendCalls', params: [{ version: '2.0.0', chainId: hexChain(), from: me, atomicRequired: true, calls: chunk.map(directCall) }] });
