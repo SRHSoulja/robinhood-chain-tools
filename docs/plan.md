@@ -98,9 +98,12 @@
 >      workflow now reads that holders page four times a day and refuses the envelope.
 >  13. **On the day the mainnet address is substituted** (round nineteen F-11): the integrity workflow's
 >     bytecode step compares the testnet contract only. That day, before the publish, it gains the mainnet
->     address from a `deployments.mainnet.json` and compares both, and the page's `{{BULKSEND_MAINNET}}`
->     placeholder is replaced by `preflight.sh` reading that file, never by hand. Until then the placeholder is
->     what keeps mainnet off, and the check that would notice a wrong mainnet address does not exist.
+>     address from a `deployments.mainnet.json` and compares both. The page's `{{BULKSEND_MAINNET}}` placeholder
+>     and its `LIVE_CHAINS` line are replaced by a reviewed edit in the signed enabling commit, not by any
+>     script (an earlier version of this item said `preflight.sh` would do it; nothing does, and nothing needs
+>     to: the substitution is two lines, read in review). What checks them is gate 14 below, in both workflows:
+>     the page must name the address recorded in `deployments.mainnet.json`, and the runtime at that address
+>     must be the one this source builds. Until then the placeholder is what keeps mainnet off.
 >  14. **Every automated check on the deployed contract watches testnet only** (round twenty, the reviewer's
 >     "missing control"): both workflows read `deployments.testnet.json` and ask the testnet RPC, so on the
 >     day the placeholder is swapped the strongest control this project has would still be watching a

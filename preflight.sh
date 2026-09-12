@@ -60,10 +60,18 @@ if man not in tests.lower():
 # the list of files to update was written as five when nine named the address. Every probe that names a
 # BulkSend must name the live one, or it is measuring a contract that is no longer there.
 import glob
+# The same deployer at the same nonce lands at the same address on every chain, so the live MAINNET BulkSend can
+# share its address with a superseded testnet one. An address recorded as the active `BulkSend` in
+# deployments.mainnet.json is live, not a tombstone, and is not refused for the coincidence. Nothing else changes:
+# on testnet the live one is still `man`, and every superseded testnet address is still refused.
+try:
+    live_mainnet = {v.lower() for k, v in json.load(open('deployments.mainnet.json')).items() if k == 'BulkSend'}
+except FileNotFoundError:
+    live_mainnet = set()
 for f in sorted(glob.glob('test/web/audit-probe*.mjs')):
     body = io.open(f, encoding='utf-8').read().lower()
     for hit in sorted(set(re.findall(r'0x[0-9a-f]{40}', body))):
-        if hit != man and hit in {v.lower() for k, v in json.load(open('deployments.testnet.json')).items() if k.startswith('BulkSend')}:
+        if hit != man and hit not in live_mainnet and hit in {v.lower() for k, v in json.load(open('deployments.testnet.json')).items() if k.startswith('BulkSend')}:
             print('  FAIL   %s names %s, a superseded BulkSend. The live one is %s.' % (f, hit, man)); ok = False
 if ok: print('  ok     page, manifest, tests and probes name the same BulkSend')
 
@@ -71,7 +79,7 @@ if ok: print('  ok     page, manifest, tests and probes name the same BulkSend')
 # reports are excluded on purpose: each was written against a particular deployment, and rewriting them would
 # be falsifying the record. Everything else that names a BulkSend must name the one that is live.
 tombstones = {v.lower() for k, v in json.load(open('deployments.testnet.json')).items()
-              if k.startswith('BulkSend_')}
+              if k.startswith('BulkSend_')} - live_mainnet
 for f in ('README.md', 'docs/for-reviewers.md', 'docs/status.md', 'SECURITY.md'):
     try: body = io.open(f, encoding='utf-8').read()
     except FileNotFoundError: continue
