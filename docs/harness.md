@@ -86,3 +86,16 @@ The suite-file fingerprints change once, in the commit that lands this, with thi
 - `./test/quick.sh` completes in under two minutes with no arguments.
 - `./verify.sh` is green with the same 362 and 129, on the updated fingerprints, and refuses a filtered run.
 - One thrown error in a browser case fails that case alone; proven by a deliberately throwing scratch case.
+
+## The probe fixture (12 September 2026)
+
+The page's fresh-visit default is mainnet, and it remembers the last chosen network in `localStorage`
+(`bulksend:net`). Every reviewer probe under `test/web/audit-probe*.mjs` was written when the first option was
+testnet, with mocks that answer chain 46630 and nothing else. Those files are evidence, pinned verbatim by
+sha256, so they are not edited to follow the page. Instead `test/web/probe-fixture.mjs` is loaded by the runner
+(`verify.sh` and `quick.sh`, through `NODE_OPTIONS=--import`) and seeds that one remembered choice into every
+browser context a probe opens, the way a returning tester's browser would carry it. It changes nothing else, and
+the proof that it changes nothing else is that every probe's assertion fingerprint stayed byte-identical to the
+baseline across the default-network change. The client suite does the same for itself inside `open()`; a case
+that wants a genuinely fresh visit passes `network: null`.
+

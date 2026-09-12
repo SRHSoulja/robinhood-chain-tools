@@ -102,7 +102,7 @@ if [ "${#probes[@]}" -gt 0 ]; then
     if [ -f "$f" ]; then
       found=1
       tmp="$(mktemp)"
-      node "$f" >"$tmp" 2>&1
+      NODE_OPTIONS="--import $PWD/test/web/probe-fixture.mjs" node "$f" >"$tmp" 2>&1   # verbatim probes, testnet-first environment (see the fixture)
       say "  $f: $(grep -oE '^[0-9]+ demonstrated.*' "$tmp" | tail -1)"
     fi
     sf="test/Audit$n.t.sol"

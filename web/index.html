@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-ZP7F69HG2ZMoQh/kaSYIzhNV27phIzSyupO58nYSj0w='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-CR423abfEQkwIjbTbgudOqcvV8DwlTg9BosjQ9xjEeQ='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AF%3C/text%3E%3C/svg%3E">
@@ -69,15 +69,15 @@
   <div id="walletBox"><button id="connect">Connect wallet</button><button class="secondary" id="connectWc" style="margin-left:6px">Phone wallet · WalletConnect</button></div>
 </header>
 <main>
-  <div class="card" style="border-color:var(--warn)">
-    <h2 style="color:var(--warn)">Testnet only, for now</h2>
-    <p style="margin:0 0 8px;font-size:13.5px">This works on Robinhood Chain <b>testnet</b> only, so you can try the whole thing with test tokens. Mainnet is switched off until the contract is deployed and tested there. Built from a request in the Robinhood Chain community.</p>
+  <div class="card">
+    <h2>Live on Robinhood Chain mainnet and testnet</h2>
+    <p style="margin:0 0 8px;font-size:13.5px">This works on Robinhood Chain <b>mainnet</b> and on <b>testnet</b>, with the same contract deployed on both, byte for byte. Trying the whole thing with test tokens first is a good habit; nothing changes between the two but the network you pick below. Built from a request in the Robinhood Chain community.</p>
     <p style="margin:0;font-size:13.5px">Two ways out, picked for you. If your wallet can send several transfers in one transaction, it sends them <b>as itself</b>: no approval to grant, nothing left to revoke, and it works on collections that only allow transfers their creator approved. Otherwise it uses <b>BulkSend</b>, a contract that holds nothing, takes no fee, and can only move what you approve in the transaction you sign; its source is verified on the explorer.</p>
   </div>
   <div class="card">
     <h2>1 · Network and token</h2>
     <div class="row">
-      <div><label for="net">Network</label><select id="net" aria-label="Network"><option value="46630">Robinhood Chain testnet (46630)</option><option value="4663" disabled>Robinhood Chain mainnet (not live yet)</option></select></div>
+      <div><label for="net">Network</label><select id="net" aria-label="Network"><option value="4663">Robinhood Chain mainnet (4663)</option><option value="46630">Robinhood Chain testnet (46630)</option></select></div>
       <div><label for="std">Token standard</label><select id="std" aria-label="Token standard"><option value="721">ERC-721 (one id per wallet)</option><option value="1155">ERC-1155 (id + amount per wallet)</option><option value="20">ERC-20 (amount per wallet)</option></select></div>
     </div>
     <label for="token">Token contract address</label><input type="text" id="token" aria-label="Token contract address" placeholder="0x…" spellcheck="false">
@@ -175,33 +175,15 @@
   <!-- These are the maintainer's own donation addresses, not a contract this page controls. A test in
        test/web/client.test.mjs pins each one exactly (#tipEvm, #tipSol, #tipBtc); any change here must be
        deliberate and reviewed, the same as a change to a contract address would be. -->
-  <section id="support" class="card">
-    <h2>Support this work</h2>
-    <p style="margin:0 0 10px;font-size:13.5px">BulkSend is free, open source, and takes no fee. If it saved you time or gas, a tip keeps it maintained.</p>
-    <div style="display:flex;flex-direction:column;gap:12px">
-      <div>
-        <div style="font-size:13px;color:var(--mut);margin:0 0 4px">Ethereum, Robinhood Chain, Base, Arbitrum, HyperEVM and other EVM chains</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <code id="tipEvm" class="mono" style="user-select:all;word-break:break-all">0xCb37f365900C7F5d455525ce77b486e81e92e8B7</code>
-          <button type="button" class="secondary tipCopy" data-for="tipEvm">Copy</button>
-        </div>
-      </div>
-      <div>
-        <div style="font-size:13px;color:var(--mut);margin:0 0 4px">Solana</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <code id="tipSol" class="mono" style="user-select:all;word-break:break-all">6sb3gUXmTzhsRQVe8RDudm6yEPBknrqNYCVv25PncxbY</code>
-          <button type="button" class="secondary tipCopy" data-for="tipSol">Copy</button>
-        </div>
-      </div>
-      <div>
-        <div style="font-size:13px;color:var(--mut);margin:0 0 4px">Bitcoin</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <code id="tipBtc" class="mono" style="user-select:all;word-break:break-all">bc1q4qndvm4zul3uy70rlw334q5a9clmszfemg3345</code>
-          <button type="button" class="secondary tipCopy" data-for="tipBtc">Copy</button>
-        </div>
-      </div>
+  <details id="support" class="card" style="padding:8px 14px;font-size:12.5px">
+    <summary style="cursor:pointer;color:var(--mut)">Support this work · tips welcome on EVM chains, Solana and Bitcoin</summary>
+    <div style="margin-top:6px">
+      <p style="margin:0;color:var(--mut)">BulkSend is free, open source, and takes no fee. If it saved you time or gas, a tip keeps it maintained.</p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px"><span style="color:var(--mut);min-width:5.5em" title="Ethereum, Robinhood Chain, Base, Arbitrum, HyperEVM and other EVM chains: one address">EVM chains</span><code id="tipEvm" class="mono" style="user-select:all;word-break:break-all">0xCb37f365900C7F5d455525ce77b486e81e92e8B7</code><button type="button" class="secondary tipCopy" data-for="tipEvm" style="padding:2px 9px;font-size:12px">Copy</button></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px"><span style="color:var(--mut);min-width:5.5em" title="Solana">Solana</span><code id="tipSol" class="mono" style="user-select:all;word-break:break-all">6sb3gUXmTzhsRQVe8RDudm6yEPBknrqNYCVv25PncxbY</code><button type="button" class="secondary tipCopy" data-for="tipSol" style="padding:2px 9px;font-size:12px">Copy</button></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px"><span style="color:var(--mut);min-width:5.5em" title="Bitcoin, native segwit">Bitcoin</span><code id="tipBtc" class="mono" style="user-select:all;word-break:break-all">bc1q4qndvm4zul3uy70rlw334q5a9clmszfemg3345</code><button type="button" class="secondary tipCopy" data-for="tipBtc" style="padding:2px 9px;font-size:12px">Copy</button></div>
     </div>
-  </section>
+  </details>
 </main>
 <footer>
   Reviewed by several independent automated audits, not by a human audit firm.
@@ -364,6 +346,14 @@
     return bulkReady() ? 'bulk' : 'none';
   }
   const chainId = () => Number($('net').value); const cfg = () => CHAINS[chainId()];
+  // The network is remembered between visits. A fresh visit starts on mainnet, the first option; a return visit
+  // starts where the last one ended, which is what someone rehearsing on testnet expects. Only a live chain the
+  // selector actually offers is ever restored; anything else is ignored and mainnet stands.
+  const NET_KEY = 'bulksend:net';
+  (function restoreNetwork() {
+    let v = null; try { v = localStorage.getItem(NET_KEY); } catch (e) {}
+    if (v && LIVE_CHAINS.has(Number(v)) && [...$('net').options].some((o) => o.value === v)) $('net').value = v;
+  })();
   const std = () => $('std').value;
   const lenient = () => $('mode').value === 'lenient';
   const safeMode = () => $('safe').checked;
@@ -889,6 +879,7 @@
     rows = []; parsedListSource = null; decimals = null; tokenLoadedFor = null; setStat($('parseOut'), []); plan(); if ($('token').value.trim()) tokenInfo();
   });
   $('net').addEventListener('change', async () => {
+    try { localStorage.setItem(NET_KEY, $('net').value); } catch (e) {}
     forgetSnapshot('the network changed');
     // The same address is a different contract on a different chain, and decimals differ. Keeping a parsed
     // list across that boundary would send amounts computed for one token using another one's units.
@@ -896,7 +887,7 @@
     rows = []; parsedListSource = null; decimals = null; tokenLoadedFor = null; tokenLoadedChain = null; gatedBy = null; tokenPaused = false;
     badLines = 0; badLinesOk = false; skippedRows = []; gasPriceFor = null;
     setStat($('parseOut'), []); setStat($('tokenInfo'), []); say('msgList', ''); $('problems').style.display = 'none'; $('ackRow').style.display = 'none';
-    refreshGasPrice(); plan();
+    refreshGasPrice(); plan(); contractLink();
     if (provider) { await switchChain(); await detectWalletBatch(); plan(); }
     if ($('token').value.trim()) tokenInfo();
   });
@@ -3844,15 +3835,18 @@
   window.__gasQuote = () => ({ measured: perRecipient, margin: PROBE_MARGIN, quotedPer: gasPerRecipient(), cap: maxBatch(), txBase: TX_BASE });
   window.ethers = window.ethers || ethers;
 
-  // a link to the verified source, so "trust me" is checkable
-  (function contractLink() {
+  // a link to the verified source, so "trust me" is checkable. Re-rendered on every network change: the same
+  // page names a different contract on a different chain, and a footer that kept the load-time address after a
+  // switch would name the wrong one.
+  function contractLink() {
     const el = $('contractLine'); if (!el) return; el.textContent = '';
     if (!bulkReady()) { el.textContent = 'BulkSend is not deployed on this network. '; return; }
     el.appendChild(document.createTextNode('Contract '));
     const a = document.createElement('a'); a.href = cfg().explorer + '/address/' + cfg().bulk; a.target = '_blank'; a.rel = 'noopener';
     a.textContent = cfg().bulk; a.className = 'mono'; el.appendChild(a);
     el.appendChild(document.createTextNode(', source verified on the explorer. '));
-  })();
+  }
+  contractLink();
   // Support section: one shared handler for all three "Copy" buttons. Each reads the address from its own
   // sibling <code> rather than from a copy pasted in here, so the button can never show something other than
   // what the page actually displays.

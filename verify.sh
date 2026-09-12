@@ -169,7 +169,9 @@ for f in test/web/audit-probe*.mjs; do
   [ -e "$f" ] || continue
   n="$(basename "$f" .mjs)"
   tmp="$RH_TMP/rh-${n}.txt"
-  node "$f" >"$tmp" 2>&1
+  # The probes are verbatim evidence written against a testnet-first page; test/web/probe-fixture.mjs seeds the
+  # remembered network before each of their pages loads and changes nothing else (its comment says why).
+  NODE_OPTIONS="--import $PWD/test/web/probe-fixture.mjs" node "$f" >"$tmp" 2>&1
   c="$(grep -oE '^[0-9]+ demonstrated' "$tmp" | grep -oE '^[0-9]+' | tail -1)"
   # Hash status plus assertion name, not the diagnostic after `<-`: diagnostics legitimately contain wall-clock
   # times and other run data. Two runs with identical evidence must have identical fingerprints.

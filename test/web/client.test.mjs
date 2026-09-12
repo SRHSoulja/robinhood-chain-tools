@@ -362,6 +362,10 @@ async function open(_stale, opts = {}) {
     };
   });
 
+  // The page defaults to mainnet since 12 September 2026 and remembers the last choice. Every case here was
+  // written against testnet answers, so the harness seeds that choice before load, the way a returning tester's
+  // browser would carry it. A case that wants a genuinely fresh visit passes network: null.
+  if (opts.network !== null) await page.addInitScript((n) => { try { localStorage.setItem('bulksend:net', n); } catch (e) {} }, opts.network || '46630');
   await page.goto(opts.url || PAGE, { waitUntil: 'load' });
   await page.waitForTimeout(500);
   page.__errs = errs;
@@ -470,6 +474,46 @@ await t("share: favicon and Open Graph metadata", async () => {
 const TIP_EVM = '0xCb37f365900C7F5d455525ce77b486e81e92e8B7';
 const TIP_SOL = '6sb3gUXmTzhsRQVe8RDudm6yEPBknrqNYCVv25PncxbY';
 const TIP_BTC = 'bc1q4qndvm4zul3uy70rlw334q5a9clmszfemg3345';
+await t("network: a fresh load defaults to mainnet, and switching to testnet and back refreshes the contract in use", async () => {
+  const page = await open(browser, { network: null });   // a genuinely fresh visit: nothing remembered
+  const MAIN = '0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf', TEST = '0xf2ed6359f5dee0334d68cd21d306d9d3e7a49232';
+  const read = async () => page.evaluate(() => ({ net: document.querySelector('#net').value, line: (document.querySelector('#contractLine') || {}).textContent || '' }));
+  let s = await read();
+  check('fresh load: the network is mainnet (4663)', s.net === '4663', JSON.stringify(s));
+  check('fresh load: the contract line names the mainnet BulkSend', s.line.toLowerCase().includes(MAIN), s.line);
+  await page.selectOption('#net', '46630'); await page.waitForTimeout(400); s = await read();
+  check('after switching to testnet: the network is 46630', s.net === '46630', JSON.stringify(s));
+  check('after switching to testnet: the contract line names the testnet BulkSend, not the mainnet one', s.line.toLowerCase().includes(TEST) && !s.line.toLowerCase().includes(MAIN), s.line);
+  await page.selectOption('#net', '4663'); await page.waitForTimeout(400); s = await read();
+  check('after switching back: the network is 4663 again', s.net === '4663', JSON.stringify(s));
+  check('after switching back: the contract line names the mainnet BulkSend again', s.line.toLowerCase().includes(MAIN) && !s.line.toLowerCase().includes(TEST), s.line);
+  await page.selectOption('#net', '46630'); await page.waitForTimeout(200);
+  await page.reload({ waitUntil: 'load' }); await page.waitForTimeout(400); s = await read();
+  check('the last choice is remembered across a reload (testnet stays testnet)', s.net === '46630' && s.line.toLowerCase().includes(TEST), JSON.stringify(s));
+  await page.close();
+  const bogus = await open(browser, { network: '999' });   // a remembered value that is not a live chain
+  const b = await bogus.evaluate(() => document.querySelector('#net').value);
+  check('a remembered value that is not a live chain is ignored and mainnet stands', b === '4663', b);
+  await bogus.close();
+});
+
+await t("network: mainnet is selectable and the page says it is live there", async () => {
+  const page = await open(browser, {});
+  const state = await page.evaluate(() => ({
+    mainnetDisabled: document.querySelector('#net option[value="4663"]').disabled,
+    mainnetLabel: document.querySelector('#net option[value="4663"]').textContent,
+    testnetOnly: /Testnet only, for now|Mainnet is switched off|not live yet/.test(document.body.textContent),
+    intro: (document.querySelector('main .card h2') || {}).textContent || '',
+  }));
+  check('the mainnet option is enabled and named plainly', state.mainnetDisabled === false && /mainnet \(4663\)/.test(state.mainnetLabel), JSON.stringify(state));
+  check('nothing on the page still says testnet-only or switched off', state.testnetOnly === false, JSON.stringify(state));
+  check('the first card says the tool is live on mainnet', /mainnet/i.test(state.intro), state.intro);
+  await page.selectOption('#net', '4663');
+  const picked = await page.evaluate(() => document.querySelector('#net').value);
+  check('mainnet can actually be selected', picked === '4663', picked);
+  await page.close();
+});
+
 await t("support: the three donation addresses are exactly the maintainer's", async () => {
   const page = await open(browser, {});
   // Best effort: Chromium under Playwright can be granted clipboard permissions, but a file:// page is not
@@ -490,6 +534,9 @@ await t("support: the three donation addresses are exactly the maintainer's", as
   check('each of the three addresses has its own Copy button',
     ['tipEvm', 'tipSol', 'tipBtc'].every((id) => buttons.includes(id)) && buttons.length === 3, JSON.stringify(buttons));
 
+  const collapsed = await page.evaluate(() => { const d = document.getElementById('support'); return d && d.tagName === 'DETAILS' && !d.open; });
+  check('the support section is a collapsed details element by default, one line until opened', collapsed === true, String(collapsed));
+  await page.click('#support summary');
   await page.click('.tipCopy[data-for="tipEvm"]');
   await page.waitForTimeout(300);
   const afterClick = await page.evaluate(() => document.querySelector('.tipCopy[data-for="tipEvm"]').textContent);

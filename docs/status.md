@@ -14,7 +14,8 @@ maintainer's explicit authorization. Its runtime read back from the mainnet RPC 
 source builds and to testnet's v13 (keccak `0xc1a27e659b…`); `deployments.mainnet.json` is the record, and gate 14
 re-derives that comparison in both workflows. Source verification: Sourcify exact match; the mainnet explorer's own
 verification API answers non-browser clients with a challenge, so it is verified there through Sourcify's import or
-the browser form.
+the browser form. The page's fresh-visit default is mainnet, testnet stays one click away, and the last choice is remembered;
+the footer's contract line re-renders on every switch (a regression pins fresh, switched, and remembered states).
 
 Four things had to be true before mainnet, and on 12 September 2026 all four were. Gate 14 is the control that
 now watches it:
