@@ -9,6 +9,9 @@
     "test": "node test/web/client.test.mjs && node test/web/check.test.mjs",
     "test:airdrop": "node test/web/client.test.mjs",
     "test:check": "node test/web/check.test.mjs",
+    "quick": "./test/quick.sh",
+    "readers": "node test/readers.test.mjs",
+    "verify": "./verify.sh",
     "postinstall": "playwright install chromium --only-shell || true"
   },
   "devDependencies": {

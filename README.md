@@ -221,6 +221,18 @@ Gas token is ETH. Testnet faucet: https://faucet.testnet.chain.robinhood.com/ (b
 automation). `eth_simulateV1` is available on both networks and returns the logs a call would emit, which is
 what makes Check's previews real; `debug_traceCall` and `eth_createAccessList` are not exposed.
 
+## Which check, when
+
+    ./test/quick.sh            # while developing: readers in a fraction of a second, the fast browser cases in seconds
+    ./test/quick.sh assign     # or one area (parse, assign, picker, snapshot, send, ledger, wallet, wc, gas, check-page, csp, probe-pins)
+    ONLY='round 21' node test/web/client.test.mjs    # or one case, by name
+    ./verify.sh                # before any commit, and before any claim that a finding is closed: everything, against the baseline
+
+`npm run quick`, `npm run readers` and `npm run verify` are the same three, for anyone who reaches for npm
+first. GitHub CI runs the full gate independently on every push: `preflight.sh`, then `verify.sh`, then the
+deployed bytecode and the served pages. A green local run is a reason to push; the CI run is the record.
+The harness itself is described in [docs/harness.md](docs/harness.md).
+
 ## Checking it yourself
 
     git config core.hooksPath .githooks    # once per clone, and worth doing before anything else
