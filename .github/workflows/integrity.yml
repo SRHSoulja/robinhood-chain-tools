@@ -162,7 +162,7 @@ jobs:
           hardened https://rhairdrop.gmgnrepeat.com/wc.js 200 || fail=1
           exit $fail
 
-      - name: the page still points at the reviewed contract, and mainnet is still off
+      - name: the page still points at the reviewed contracts, and its mainnet state matches the deployment record
         run: |
           set -euo pipefail
           # Written to a file rather than piped: `grep -q` exits as soon as it matches, which closes the pipe
@@ -170,8 +170,34 @@ jobs:
           curl -sSL --max-time 30 https://rhairdrop.gmgnrepeat.com/ > /tmp/live.html
           want="$(python3 -c "import json;print(json.load(open('deployments.testnet.json'))['BulkSend'])")"
           grep -qF "$want" /tmp/live.html || { echo "the live page does not name $want"; exit 1; }
-          grep -qF "LIVE_CHAINS = new Set([46630])" /tmp/live.html || { echo "mainnet may no longer be disabled"; exit 1; }
-          echo "  ok    contract $want, mainnet disabled"
+          # The page's mainnet state must match this repository's deployment record, in both directions. Before
+          # 12 September 2026 this step asserted "mainnet is still off" unconditionally and fired, as designed,
+          # the day mainnet was enabled. It now asserts the state the record says: no record, then the placeholder
+          # and testnet-only LIVE_CHAINS; a record, then no placeholder, both chains live, and the 4663 block
+          # naming exactly the recorded address. Whether the runtime AT that address is the reviewed build is
+          # the next step's question (gate 14), unchanged.
+          if [ ! -f deployments.mainnet.json ]; then
+            grep -qF '{{BULKSEND_MAINNET}}' /tmp/live.html || { echo "no mainnet deployment is recorded, but the live page no longer carries the {{BULKSEND_MAINNET}} placeholder"; exit 1; }
+            grep -qF "LIVE_CHAINS = new Set([46630])" /tmp/live.html || { echo "no mainnet deployment is recorded, but LIVE_CHAINS no longer reads as testnet-only"; exit 1; }
+            echo "  ok    contract $want, mainnet disabled (no deployment record)"
+          else
+            if grep -qF '{{BULKSEND_MAINNET}}' /tmp/live.html; then echo "a mainnet deployment is recorded, but the live page still carries the {{BULKSEND_MAINNET}} placeholder"; exit 1; fi
+            grep -qF "LIVE_CHAINS = new Set([46630, 4663])" /tmp/live.html || { echo "a mainnet deployment is recorded, but LIVE_CHAINS is not exactly [46630, 4663]"; exit 1; }
+            main="$(python3 -c "import json;print(json.load(open('deployments.mainnet.json'))['BulkSend'].lower())")"
+            python3 - "$main" <<'PY'
+          import re, sys
+          main = sys.argv[1]
+          s = open('/tmp/live.html', encoding='utf-8').read()
+          i = s.find('4663:')
+          seg = s[i:s.find('},', i)] if i >= 0 else ''
+          m = re.search(r"bulk: '(0x[0-9a-fA-F]{40})'", seg)
+          if not m or m.group(1).lower() != main:
+              print('the live page\'s 4663 block does not name the recorded mainnet address ' + main + ' (' + ('found ' + m.group(1) if m else 'no bulk address found') + ')')
+              sys.exit(1)
+          print('  ok    contract ' + main + ' on 4663 named by the live page, as recorded')
+          PY
+            echo "  ok    contract $want on 46630, mainnet enabled and recorded"
+          fi
 
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09   # v1
         # Pinned to the same toolchain the test workflow uses. Left to its default this action installs
