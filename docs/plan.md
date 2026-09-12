@@ -14,7 +14,7 @@
 > real-wallet runs stand as recorded below.
 > **What remains:** round twenty-one on Opus against this commit, then the deploy of v13 (about 0.0003 ETH)
 > only on the maintainer's explicit word, then gate 13 and gate 14's mainnet branch on the same day.
-> Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0, 1, 1, 0.
+> Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0, 1, 1, 0, 0.
 >
 > - **BulkSend v13 is DEPLOYED on testnet** at `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (tx `0x5cb0037f…`), byte-identical
 >   at 9,752 bytes, fully verified. The on-chain B-1 reproduction against it reverts `IsAnNft`
@@ -185,7 +185,7 @@ walking into the round that is supposed to find none):
 7. **Round thirteen's report is not published in `docs/`.** Every other round is, and the reviewer prompt tells
    the next reviewer the reports are published unedited.
 8. **`status.md` describes round twelve** and calls v12 current with no mention of thirteen; "three further
-   scripts" introduces a list of four. `README.md` says 82 contract and 166 browser tests (118, 316 and 116).
+   scripts" introduces a list of four. `README.md` says 82 contract tests and 166 for the browser total, against a breakdown beside it of 118, 316 and 116.
    `for-reviewers.md`'s "Previous review" ends at twelve.
 9. **`checkTotals` has no ERC-721 branch** (round thirteen, item 8): the ERC-20 and ERC-1155 paths pre-check
    the aggregate and say so; the NFT path leaves it to the per-batch `staticCall`. In a tool whose point is

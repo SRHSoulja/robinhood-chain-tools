@@ -1,6 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 12 September 2026, against BulkSend **v13** and round twenty.
+Last updated 12 September 2026, against BulkSend **v13** and round twenty-one.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -16,9 +16,9 @@ rather than a precondition, and it is now in place:
 
 | | state |
 | --- | --- |
-| a review round with no release blockers | **not met** — round seventeen found none; round eighteen then found one in code written that day, round nineteen one more in the fix, and round twenty none. The first of the two mainnet conditions has now been met twice; the round that finds none on a tree that then does not change has not happened |
-| a production mainnet RPC plan | **not met** — the page names Robinhood's free public endpoint, which [the official documentation](https://docs.robinhood.com/chain/connecting/) calls rate-limited and not recommended for production. Choose a production provider, keep credentials out of the page, and monitor/fail over reads before enabling mainnet |
-| a current real-wallet rehearsal on testnet | **not met** — the v13 live scripts are green, but their wallets are written by this repository. The one manual MetaMask run predates v10. Run the final page through an injected wallet and the phone/WalletConnect path on testnet once each |
+| a review round with no release blockers | **not met** — round seventeen found none; round eighteen then found one in code written that day, round nineteen one more in the fix, round twenty none, and round twenty-one none. The first of the two mainnet conditions has now been met three times; the round that finds none on a tree that then does not change has not happened, because this commit changes the tree round twenty-one reviewed |
+| a production mainnet RPC plan | **met**, 11 September 2026 — each chain lists three endpoints in order (Robinhood's own, then PublicNode, then Pocket on mainnet), all answering the right chain id and `eth_simulateV1` when checked; the page probes them in order at connect and on a network change and reads through the first that answers, saying so when it is not the first. The integrity workflow probes every listed endpoint four times a day and fails if the first, or every fallback, for a chain stops answering. No credential: all three are public, and the Worker keeps no RPC. See `plan.md`'s gate 9 |
+| a current real-wallet rehearsal on testnet | **met**, 11 September 2026 — four runs from the maintainer's own wallet against the published page and v13: ERC-721, ERC-1155 and ERC-20 from a browser wallet, and ERC-721 from a phone over WalletConnect with the tab backgrounded. Every hash read back from the explorer and the chain agrees with the page ([`real-wallet-run.md`](real-wallet-run.md); see also the proof table below and `plan.md`'s gate 10) |
 | explicit permission from the maintainer, given after that round | **not given** |
 | gate 14: both workflows check the mainnet deployment as well | **met** (round twenty) — before mainnet is enabled, both `.github/workflows/tests.yml` and `integrity.yml` check the mainnet deployment as well, and `integrity.yml` asserts the page names the mainnet address it was reviewed against. Today, with the `{{BULKSEND_MAINNET}}` placeholder still in and `LIVE_CHAINS` testnet-only, the new step in each workflow says so and passes; it activates itself the day that changes, rather than needing a hand-edit in the same breath as enabling mainnet |
 
@@ -27,7 +27,11 @@ for three deployments, which is exactly why the rule is written down: available 
 nonce is 0.
 
 Current unreleased validation, 11 September 2026: the complete current-tree gate passed all five ordinary
-contract test files, 362/362 airdrop-page tests, 129/129 Check-page tests, and 21/21 publish-policy checks.
+contract test files, the whole airdrop-page suite, the whole Check-page suite, and every publish-policy check,
+with zero failures anywhere. The suites print their own counts when they run; `./verify.sh`'s output is the
+record of what passed, not a number retyped here (round 21 F-10 -- this document is the one `PROMPT.md` tells
+a reviewer to disbelieve first, so a count that goes stale by hand is the cheapest possible signal that it
+is not maintained).
 Every historical probe is now bound both to its complete source hash and to its exact assertion names and
 statuses; an ordinary Solidity failure can no longer hide by borrowing a probe-style function name. The
 reproducible WalletConnect rebuild matched its shipped and expected SHA-256. The separate read-only mainnet
@@ -41,8 +45,8 @@ tokens were accepted. No transaction was signed or broadcast and no ETH was spen
 ./test/quick.sh [area ...]             # the inner loop: node layers in five seconds, plus the browser cases of an area
 ./test.sh                              # everything below except the live scripts
 forge test                             # 111 contract tests, plus 29 reviewer probes of which 9 must FAIL
-node test/web/client.test.mjs          # 362 airdrop page tests
-node test/web/check.test.mjs           # 129 Check page tests
+node test/web/client.test.mjs          # the airdrop-page suite; prints its own count when it runs
+node test/web/check.test.mjs           # the Check-page suite; prints its own count when it runs
 ./test/csp-gate.test.sh                #  21 checks that a weaker published CSP is refused
 node test/worker.test.mjs              #  31 checks on the Worker's mainnet explorer translation, offline
 node test/readers.test.mjs             #  74 checks on the page's own recipient-box readers, extracted from its bytes, in node
@@ -146,6 +150,30 @@ a distribution, only its top, and the file says so.
 
 ## Open findings
 
+Round twenty-one, 12 September 2026, against `42eab38`, on Opus. The full report is
+[`audit-2026-09-12-twenty-first-external.md`](audit-2026-09-12-twenty-first-external.md), published as
+written. **No release blocker.** Ten should-fix items; six of them the repository's own known pattern -- a
+fix from an earlier round whose consumer, ordering, or sibling shape was not checked -- and four of those are
+in fixes made by the commit under review. Its probe is `test/web/audit-probe-21.mjs`.
+
+### Round twenty-one findings
+
+| | | |
+| --- | --- | --- |
+| F-1 | round twenty's F-2 fix (a 200 body with no real `is_verified` boolean is not an answer) was applied to the contract's own explorer read and not to the code behind a proxy | closed: both reads now go through one function, `verificationOf`, so the question can no longer be answered twice -- `check.test.mjs` round-21 F-1 |
+| F-2 | a partially verified implementation behind a proxy was announced as fully published, because `out.partial` came from the forwarder's own record and `out.proxy.verified` was a bare boolean with no partial state | closed: `verificationOf` (the same function F-1 uses) returns the implementation's own partial state, and the pill and the "what this section is" note both read it through one shared wording function, `partialSuffix` -- `check.test.mjs` round-21 F-2 |
+| F-3 | round twenty's F-7 fix changed `unlimitedApproval`'s second parameter to the whole address record and updated one of its two call sites (`callWarnings`); the other (`renderInner`, for a call carried inside another) still passed the old shape, silently disabling both the supply comparison and the ERC-721/1155 exception | closed: the second call site now passes the same argument as the first; both call sites checked by grep, only these two exist -- `check.test.mjs` round-21 F-3a (the missed warning) and F-3b (the false alarm) |
+| F-4 | round twenty's F-6 fix ("Apply weight" refuses to eat a line's already-named id) was gated on `standard === '721'`; ERC-1155 writes the identical bare form for an edition (`0xabc,id,amount`) and was not covered, so one click replaced both the edition id and the per-wallet amount with a flat count | closed: the bare-form guard now also covers ERC-1155; a HEADED ERC-1155 file naming both an id column and an amount column is a different, already-safe shape (`setQty` touches only the amount cell) and stays unguarded on purpose -- checked against the two existing tests that exercise exactly that headed shape (`map-3`, `round-14 B-2`), which still pass; ERC-20 stays excluded, matching Assign's own early refusal for that standard -- `client.test.mjs` round-21 F-4 and its control |
+| F-5 | a gas-limit failure before the wallet was ever asked printed round nineteen's correct sentence and then, from the outer `catch` its inner `catch` rethrows into, the sentence it replaced, about the same batch | closed: the inner catch marks its error before rethrowing (`err.__beforeWallet = true`) and the outer catch returns immediately on that mark; checked `sendViaWallet`, the sibling send path, which has no equivalent two-catch shape and needed no change -- `client.test.mjs` round-21 F-5 |
+| F-6 | `requestedNftQuantity` (what Assign asks for) and `deliveriesOn` (what the parser and picker size for) read a named id cell holding several ids differently, so `address,tokenIds` with `"1 2 3"` parsed as five recipients and Assign asked for one per wallet | closed: the "several ids in one cell" rule is now one function, `idCellDeliveryCount`, called from both readers, so they cannot disagree about this cell again; also checked the second shape the report named (`address,tokenId,amount` with a single id) -- both readers now agree it is one delivery, not the amount -- `readers.test.mjs` and `client.test.mjs` round-21 F-6 |
+| F-7 | `verify.sh`'s summary could print "Everything passes" on a run that had already failed, because the loop pinning eleven suite-file fingerprints set `fail=1` inside the `if [ "$fail" -eq 0 ]` branch that then printed its success sentence unconditionally | closed: `$fail` is re-tested once, after that loop, before either summary sentence prints -- `test/verify-summary.test.sh`, a new small shell test that extracts and exercises the real block rather than a copy of it |
+| F-8 | round seventeen's S-5: a zero-address line survived every guard, was paired with a real id, and was only refused afterward by Assign's round-trip check, which never named it; restoring the list then re-parsed it as address-only and told the user to press the very button that had just refused | closed: `recipientProblem` is now checked on each line, by number, before Assign ever reads the chain, so the loop's second half (the round-trip check's generic restore-and-reparse) is never reached for this case -- `client.test.mjs` round-21 F-8 |
+| F-9 | `status.md`'s mainnet gate table said "not met" for the production-RPC and real-wallet-rehearsal gates that `plan.md` and `status.md`'s own proof table (line 118) already recorded as done | closed: the gate table now states the same two gates as met, in the same terms as `plan.md`'s gate 9 and gate 10 and this file's own proof table, resolving the self-contradiction |
+| F-10 | three documents (`status.md`, `for-reviewers.md`, `README.md`) stated numeric browser-test counts the commands beside them do not produce, plus one historical count in `plan.md`'s own archived round-thirteen notes | closed: the four prose counts now say where the number comes from (the suites print their own; `./verify.sh`'s output is the record) instead of a hardcoded figure; `preflight.sh` gained a check refusing any future prose line in `docs/*.md` or `README.md` matching a browser-test count, excluding the dated audit reports on the same grounds check 3 and check 4 already exclude them (they are a past reviewer's own measurement of a past commit, not a present claim) |
+
+Eight of the ten findings have a probe assertion; all eight now read fixed. F-7 and F-9/F-10 are process and
+documentation fixes with their own tests instead (a new shell test, and `preflight.sh`).
+
 Round twenty, 12 September 2026, against `11d52c6`, on Opus. The full report is
 [`audit-2026-09-12-twentieth-external.md`](audit-2026-09-12-twentieth-external.md), published as written.
 **No release blocker.** Nine should-fix items, none on the contract and none on a path where value moves;
@@ -238,7 +266,7 @@ the round's number like the others).
 | S-4 | three early returns left the holder-snapshot button dead | closed: `finally` |
 | S-9 | four documents described the state two commits ago | closed |
 | S-8 | the mainnet gate list was short by two items the code depends on | recorded as gates in `plan.md`: an explorer that answers this origin on mainnet (today the mainnet explorer answers the worker with a Cloudflare challenge, so Assign's fallback, holder snapshots and Check's source verification would be dark there), proven by an integrity step; and the wallet-RPC dependence, which S-3 removes from the send path |
-| S-2, S-5, S-6, S-7, S-10, S-11 | Assign re-pairs an already-paired list without asking; a zero-address line stops Assign without being named; `x0` read as one delivery by the picker and refused by Assign; the snapshot records the network after its wait; Check's "why it failed" can be today's reason presented as then's; a second tab's reconciliation waits silently on the first | **open**; none is a fund path, and the reviewer says so |
+| S-2, S-5, S-6, S-7, S-10, S-11 | Assign re-pairs an already-paired list without asking; a zero-address line stops Assign without being named; `x0` read as one delivery by the picker and refused by Assign; the snapshot records the network after its wait; Check's "why it failed" can be today's reason presented as then's; a second tab's reconciliation waits silently on the first | **open** except S-5, which round twenty-one's F-8 closed (the zero-address line is named by number before anything is read from the chain; the round-17 probe's R17-5 now reads fixed and its baseline count is 1, with R17-6 the one left open by decision); none is a fund path, and the reviewer says so |
 
 Round sixteen, 11 September 2026, against `ebc910b`. The full report is
 [`audit-2026-09-11-sixteenth-external.md`](audit-2026-09-11-sixteenth-external.md), published as written.

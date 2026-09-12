@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-hBqUURE6OttgdjSpD0wHO21FTUjUGTdz3dDSL2+NCxA='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-vaDOV/+NZibMNAL5N2ZTRybLrDX7vdXgtv/SXhj2E2o='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -969,16 +969,33 @@
     const raw = col ? cells[col.to] : cells.filter(Boolean)[0];
     return (raw && ethers.isAddress(raw)) ? ethers.getAddress(raw) : null;
   }
+  // Several whole ids in one cell -- a `tokenIds` column holding "1 2 3" -- are that many ids. One rule,
+  // shared by requestedNftQuantity (what Assign asks for) and deliveriesOn (what the parser and the picker
+  // size for): round 21 F-6 found the two disagreeing about exactly this cell because only deliveriesOn had
+  // it. There is now one function, called from both.
+  function idCellDeliveryCount(raw) {
+    const ids = String(raw == null ? '' : raw).trim().split(/[\s|]+/).filter(Boolean);
+    return ids.length > 1 && ids.every((x) => wholeText(x) !== null) ? ids.length : 1;
+  }
   // One quantity reader for every feature that interprets an ERC-721 allocation request. A named amount or
   // quantity column is authoritative; the xN shorthand is only the positional form used by a bare list.
   // Returning the original text lets every caller reject the same malformed value rather than substituting a
   // global default and silently shortening an airdrop.
   function requestedNftQuantity(line, col, fallback) {
     const cells = splitRow(String(line || '').trim());
+    // Round 21 F-6: a named id column takes priority over a named quantity column on the same file, the same
+    // way deliveriesOn already reads it -- a `tokenId,amount` file names ids, not a request count, on a line
+    // that has one. Checked first, and only when the cell actually holds something: a file whose id column is
+    // blank on this line falls through to the quantity column exactly as before.
+    if (col && col.id !== undefined) {
+      const raw = String(cells[col.id] ?? '').trim();
+      if (raw) return { n: idCellDeliveryCount(raw), raw, named: true };
+    }
     if (col && col.qty !== undefined) {
       const raw = String(cells[col.qty] == null ? '' : cells[col.qty]).trim();
       return { n: wholeNumber(raw), raw, named: true };
     }
+    if (col) return { n: fallback, raw: String(fallback), named: false };   // a named column map with neither
     const parts = cells.filter(Boolean);
     const mult = parts.slice(1).find((x) => /^x\d+$/i.test(x));
     if (mult) return { n: wholeNumber(mult.slice(1)), raw: mult, named: false };
@@ -1613,9 +1630,10 @@
     // four wallets, from the same box, at the same moment.
     if (col) {
       const cells = splitRow(t);
+      // Round 21 F-6: this used to be its own copy of "how many ids does this cell name", separate from
+      // requestedNftQuantity's. idCellDeliveryCount is the one rule both now read.
       if (col.id !== undefined && String(cells[col.id] ?? '').trim()) {
-        const ids = String(cells[col.id]).trim().split(/[\s|]+/).filter(Boolean);
-        return ids.length > 1 && ids.every((x) => wholeText(x) !== null) ? ids.length : 1;
+        return idCellDeliveryCount(cells[col.id]);
       }
       if (col.qty !== undefined) {
         const q = requestedNftQuantity(t, col, 1).n;
@@ -2081,9 +2099,27 @@
     // on the one shape it needed to catch most, and Apply Weight silently rewrote each line down to its bare
     // address, dropping the id. `lineNamesId` reads a bare line's id positionally, the same way Assign's own
     // already-paired check now does, so the two guards can no longer disagree about the same file.
-    if (standard === '721' && lines.some((line) => lineNamesId(line, acol))) {
-      say('msgList', 'That file already names the exact NFT id on each line. An amount cannot multiply one '
-        + 'unique NFT into several, so weighting it would describe more deliveries than the ids actually name. '
+    //
+    // Round 21 F-4: the fix above was written and tested against ERC-721 only, in both the shape it guards --
+    // BARE (`0xabc,71`, no column to preserve) and HEADED-with-an-id (`address,tokenId`, where an id and a
+    // "how many" are the same contradiction whether or not an amount column also happens to be named,
+    // because one NFT cannot be multiplied). Assign writes the same BARE form for ERC-1155 -- `0xabc,5,3`,
+    // address/edition/amount -- and for an edition the id says WHICH one, so the bare form needs the same
+    // protection. A HEADED ERC-1155 file naming both an id column and an amount column is not the same
+    // contradiction: setQty (below) writes only the amount cell and leaves the id column exactly as it was,
+    // which is the ordinary, supported way to reweight an edition. So ERC-1155 is guarded only in the bare
+    // shape; ERC-20 is never guarded here at all, the same as Assign's own early return above -- it has no
+    // token ids, so a whole-number amount is never "an id" no matter how it is written.
+    const idsWouldBeEaten = standard === '721' ? lines.some((line) => lineNamesId(line, acol))
+      : standard === '1155' ? (!acol && lines.some((line) => lineNamesId(line, acol)))
+      : false;
+    if (idsWouldBeEaten) {
+      const already = standard === '1155'
+        ? 'That file already names the exact edition id, and the amount, on each line. A flat count would '
+          + 'replace both with a single number, which is not what either of them means. '
+        : 'That file already names the exact NFT id on each line. An amount cannot multiply one '
+          + 'unique NFT into several, so weighting it would describe more deliveries than the ids actually name. ';
+      say('msgList', already
         + 'Nothing has been changed. Use a wallet-and-amount list before assigning ids, or add each exact id as its own line.', 'bad');
       return;
     }
@@ -2171,9 +2207,20 @@
     const perWallet = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
     const wants = [];
     const col = boxColumns();
-    for (const line of $('list').value.split(/\r?\n/)) {
+    const boxLines = $('list').value.split(/\r?\n/);
+    for (let li = 0; li < boxLines.length; li++) {
+      const line = boxLines[li];
       const addr = addressOn(line, col);
       if (!addr) continue;
+      // Round 21 F-8 (round seventeen S-5): a zero-address line is a readable address to addressOn, so it
+      // used to survive every guard up to here and be paired with one of the sender's ids, then refused only
+      // afterward by the round-trip check below -- which never names the line, and whose own recovery
+      // restores the box and re-parses it, which for a list of otherwise-bare addresses puts the "press Assign"
+      // advice straight back in front of the user, pointed at the button that just refused. Checking the same
+      // thing the round-trip check would have found anyway, here, by line number and before anything is read
+      // from the chain, closes the loop.
+      const badRecipient = recipientProblem(addr);
+      if (badRecipient) { say('msgList', 'line ' + (li + 1) + ': ' + badRecipient + '. Fix that line and try again. Nothing has been changed.', 'bad'); return; }
       const asked = requestedNftQuantity(line, col, perWallet);
       const q = asked.n;
       if (q === null || q > 1000) { say('msgList', 'One line asks for "' + asked.raw.slice(0, 20) + '", which is not a whole number of NFTs from 1 to 1000. Fix it and try again.', 'bad'); return; }
@@ -3435,11 +3482,19 @@
             // wallet and no answer". Nothing was signed, nothing was sent, nothing is held back.
             dropPending(pid);
             log('  this page could not work out a gas limit for that batch against its own RPC, so it was not sent to your wallet at all. Those recipients are not held back. ' + explainCallError(err), 'bad');
+            // Round 21 F-5: rethrown into the outer catch below, which cannot otherwise tell this error apart
+            // from a genuine "handed to the wallet and no answer" and printed its own, contradicting sentence
+            // about the same batch. Marked so the outer catch recognises it as its own and says nothing more.
+            err.__beforeWallet = true;
             throw err;
           }
           const hash = await signer.sendUncheckedTransaction(req);
           tx = { hash, to: bulkAddr, data: planned, value: 0n };
         } catch (err) {
+          // Round 21 F-5: the inner catch above already logged the true, complete sentence for anything that
+          // failed before the wallet was ever asked, and dropped the pending record. Nothing here applies to
+          // that case; it was written for what happens after populateTransaction succeeds.
+          if (err && err.__beforeWallet) { throw err; }
           // A refusal is a definite answer: the wallet moved nothing, so the record is removed and the rows
           // go back. Anything else -- including no answer at all -- keeps the record, because "I could not
           // tell" and "it did not happen" are different, and only one of them is safe to act on.

@@ -21,7 +21,7 @@ not published while blockers were open; the integrity workflow checks this four 
 ## Running everything
 
     forge test                    # 111 contract tests, plus 29 reviewer probes of which 9 must fail
-    npm install && npm test       # 477 browser tests, all answers mocked, no network
+    npm install && npm test       # every browser test, all answers mocked, no network -- it prints its own count
     ./test.sh                     # both of the above
     ./test/quick.sh assign        # the inner loop: node layers plus one browser area, under a minute
     ./verify.sh                   # the commit gate; a filtered browser run is refused here
@@ -126,9 +126,9 @@ which is the case worth monitoring for.
   stretch is the one worth monitoring, so a green badge on a dormant repository means the last run that
   happened rather than the state today. A failure also opens an issue, so it is visible without access to
   anyone's inbox.
-- Seventeen adversarial review rounds, each by a fresh model with no prior context, all published unedited in
-  [`docs/`](.). Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, **0**. Round seventeen,
-  against `4cc8a1c`, found no release blocker: the first round to do so. Every earlier round's blockers are
+- Twenty-one adversarial review rounds, each by a fresh model with no prior context, all published unedited in
+  [`docs/`](.). Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0, 1, 1, 0, **0**.
+  Round seventeen, against `4cc8a1c`, found no release blocker: the first round to do so. Every earlier round's blockers are
   closed against their reproductions, the pages are published and byte-identical, and round seventeen's
   eleven should-fix items are tracked in `status.md` (four closed in the commit after it, two folded into the
   mainnet gate, five open). Its inherent-limit list is not a backlog, but the things a browser page cannot

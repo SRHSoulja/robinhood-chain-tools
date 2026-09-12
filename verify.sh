@@ -252,6 +252,7 @@ for suite in $suite_files; do
 done
 
 say ""
+# --- summary: whether this run may be trusted (round 21 F-7 regression-tested below) ---
 if [ "$fail" -eq 0 ]; then
 # Round eighteen S-3: the two newest suites exit 0 and print a count, and nothing pinned their source, so a file
 # reduced to one check would still print "passed". The same rule as the browser suites: the reviewed source
@@ -268,6 +269,12 @@ for pair in "worker:test/worker.test.mjs" "csp_gate:test/csp-gate.test.sh" \
     say "  ok    $key suite file fingerprint exactly matches the baseline"
   fi
 done
+fi
+# Round 21 F-7: the loop above can set fail=1 on its own, after the `if` that gated whether it even ran had
+# already been decided. Printing "Everything passes" unconditionally inside that same branch is what let a
+# suite-file fingerprint failure here -- the last gate in this script -- read, at the very end of the run, as
+# a clean pass. $fail is re-tested here, once, after everything above (including this loop) has had its say.
+if [ "$fail" -eq 0 ]; then
   say "Everything passes, and nothing that was closed has reopened."
   say ""
   say "Not covered by any of the above, and not claimed to be:"

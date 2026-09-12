@@ -350,8 +350,24 @@ withBox('address,tokenId\n0x1111111111111111111111111111111111111111,1 2 3\n', '
   const line = fixture.list.split('\n')[1];
   check('deliveriesOn: a space-separated multi-id cell under a named tokenId column also counts as three',
     R.deliveriesOn(line, col) === 3, R.deliveriesOn(line, col));
+  // Round 21 F-6: requestedNftQuantity (what Assign asks for) had no rule at all for a named id cell holding
+  // several ids -- deliveriesOn (what the parser and the picker size for) is the only one of the two readers
+  // that had it. Same box, same line: the two must now agree.
+  const q = R.requestedNftQuantity(line, col, 1);
+  check('requestedNftQuantity: the same space-separated multi-id cell also counts as three, agreeing with deliveriesOn',
+    q.n === 3 && q.named === true, JSON.stringify(q));
 }
 );
+
+// ---- round 21 F-6, second shape: a headed file naming both an id and an amount names an id, not the amount --
+withBox('address,tokenId,amount\n0x1111111111111111111111111111111111111111,1,3\n', '721', () => {
+  const col = R.boxColumns();
+  const line = fixture.list.split('\n')[1];
+  const q = R.requestedNftQuantity(line, col, 1);
+  check('requestedNftQuantity: a named id column is read before a named amount column that sits beside it, not the amount',
+    q.n === 1, JSON.stringify(q));
+  check('deliveriesOn: agrees -- one id, not the amount', R.deliveriesOn(line, col) === 1, R.deliveriesOn(line, col));
+});
 
 // ---- the zero address is never a readable recipient -------------------------------------------------------
 {

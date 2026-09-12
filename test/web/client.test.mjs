@@ -157,6 +157,14 @@ function chainAnswer(O) {
         // a revert is indistinguishable from a token that will not answer unless you look at what was sent.
         (O.probes = O.probes || []).push(params[0] || {});
         if (O.estimateGas === 'revert') { const e = new Error('execution reverted'); e.revertData = '0x'; throw e; }
+        // Round 21: `estimateGas: 'revert'` fails every eth_estimateGas the same way, which is also the one
+        // this page issues for the earlier, unrelated per-token gas probe used to size the batch cap -- so it
+        // could never reach a send at all, and round nineteen's F-4 fix (the page's own pre-broadcast gas-
+        // limit check just before Send) went untested because of it. A predicate over the destination lets a
+        // test fail only the BulkSend estimate, the same way a real RPC could without also breaking the probe.
+        if (O.estimateGasFailFor && String((params[0] || {}).to || '').toLowerCase() === String(O.estimateGasFailFor).toLowerCase()) {
+          const e = new Error('execution reverted'); e.revertData = '0x'; throw e;
+        }
         return '0x' + Number(O.estimateGas || 0x186a0).toString(16);
       }
       case 'eth_getCode': {
@@ -1160,6 +1168,96 @@ await t('assign: round 20 F-6, "Apply weight" refuses rather than silently dropp
   check('round-20 F-6 Apply weight refuses rather than silently dropping the ids it did not write',
     /already names the exact NFT id/.test(await text(page, '#msgList')), await text(page, '#msgList'));
   check('round-20 F-6 and every id is still on the list afterward', after === paired, after.replace(/\n/g, ' | '));
+  await page.close();
+});
+
+// ---- round 21 F-4: "Apply weight" must not eat a bare ERC-1155 line's edition id and amount either ----------
+await t('assign: round 21 F-4, "Apply weight" refuses rather than silently eating the edition id and amount in a bare ERC-1155 list', async () => {
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, ED, '1155');
+  // The bare form Assign itself writes for an edition: address, which edition, how many.
+  await setList(page, A(0x111) + ',5,3\n' + A(0x222) + ',5,2\n');
+  // Flat mode needs no holder snapshot (the handler never reads `snap` on that branch), so the weighting row
+  // is revealed directly, the same way the "third instance" regression above does.
+  await page.evaluate(() => { document.getElementById('weightRow').style.display = 'flex'; });
+  await page.selectOption('#weight', 'flat'); await page.fill('#each', '4'); await page.waitForTimeout(200);
+  await page.click('#applyWeight'); await page.waitForTimeout(900);
+  const after = await val(page, '#list');
+  check('round-21 F-4 Apply weight refuses rather than silently eating the edition id and the per-wallet amount',
+    /already names the exact/.test(await text(page, '#msgList')), await text(page, '#msgList'));
+  check('round-21 F-4 and the box is untouched', after === A(0x111) + ',5,3\n' + A(0x222) + ',5,2\n', JSON.stringify(after));
+  await page.close();
+});
+
+// ---- round 21 F-4 control: ERC-20 has no ids at all, so a whole-number amount stays an amount -------------
+await t('assign: round 21 F-4 control, "Apply weight" still applies for ERC-20, where a bare whole-number amount is not a token id', async () => {
+  const page = await open(browser, {});
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, TOK, '20');
+  const original = A(0x111) + ',5\n' + A(0x222) + ',3\n';
+  await setList(page, original);
+  // The "Assign" controls -- #each among them -- are hidden outright for ERC-20 (syncStdControls: it has no
+  // token ids to assign), so there is no UI path to change "how many each" here; the default of 1 is what
+  // Apply Weight's flat mode will use, the same as it would for a real user on this standard.
+  await page.evaluate(() => { document.getElementById('weightRow').style.display = 'flex'; });
+  await page.selectOption('#weight', 'flat'); await page.waitForTimeout(200);
+  await page.click('#applyWeight'); await page.waitForTimeout(900);
+  const after = await val(page, '#list');
+  check('round-21 F-4 control: ERC-20 is not treated as though its amount were a token id',
+    !/already names the exact/.test(await text(page, '#msgList')), await text(page, '#msgList'));
+  check('round-21 F-4 control: Apply Weight actually ran and rewrote the list, rather than refusing it as though the amount were an id',
+    after !== original, JSON.stringify(after));
+  await page.close();
+});
+
+// ---- round 21 F-5: a gas-limit failure before the wallet is asked prints one sentence, not two -------------
+await t('send: round 21 F-5, a gas-limit failure before the wallet is asked prints one true sentence, not a second one that contradicts it', async () => {
+  const page = await open(browser, { approved: true, ownedIds: [71, 72], estimateGasFailFor: BULK_FOR_MOCK });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, A(0x111) + ',71\n' + A(0x222) + ',72\n');
+  await page.click('#send'); await page.waitForTimeout(5000);
+  const logText = await text(page, '#log');
+  const askedWallet = await page.evaluate(() => window.__asked.includes('eth_sendTransaction'));
+  check('round-21 F-5 the wallet was never asked to sign anything', !askedWallet, JSON.stringify(await page.evaluate(() => window.__asked)));
+  check('round-21 F-5 the page states the true sentence: not sent to your wallet at all, not held back',
+    /was not sent to your wallet at all\. Those recipients are not held back/.test(logText), logText.slice(-400));
+  check('round-21 F-5 and does not also print the contradicting sentence about being handed to the wallet',
+    !/handed to your wallet and this page did not get an answer/.test(logText), logText.slice(-400));
+  await page.close();
+});
+
+// ---- round 21 F-6: a named tokenIds cell holding several ids reads the same to Assign as to the parser -----
+await t('assign: round 21 F-6, a named tokenIds cell holding several ids reads the same to Assign as to the parser and the picker', async () => {
+  const page = await open(browser, { approved: true, ownedIds: [71, 72, 73, 74, 75, 76] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, 'address,tokenIds\n' + A(0x111) + ',"1 2 3"\n' + A(0x222) + ',"4 5"\n');
+  const before = await text(page, '#parseOut');
+  await page.click('#assign'); await page.waitForTimeout(2500);   // dialogs are accepted by default
+  await page.click('#parse'); await page.waitForTimeout(600);
+  const after = await text(page, '#parseOut');
+  check('round-21 F-6 the parser reads five deliveries from the named tokenIds cells', /5 recipients?/.test(before), before.slice(0, 120));
+  check('round-21 F-6 and Assign asks for the same five, not two', /5 recipients?/.test(after), after.slice(0, 120));
+  await page.close();
+});
+
+// ---- round 21 F-8 (round seventeen S-5): a zero-address line is named, and Assign does not loop -------------
+await t('assign: round 21 F-8, a zero-address line is refused by line number and reason before anything is read from the chain', async () => {
+  const zero = '0x0000000000000000000000000000000000000000';
+  const page = await open(browser, { approved: true, ownedIds: [71, 72, 73] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const original = A(0x111) + '\n' + zero + '\n' + A(0x222) + '\n';
+  await setList(page, original);
+  await page.click('#assign'); await page.waitForTimeout(2000);
+  const msg = await text(page, '#msgList');
+  const list = await val(page, '#list');
+  check('round-21 F-8 the zero-address line is named, by line number and reason', /line 2/.test(msg) && /zero address|burn/i.test(msg), msg.slice(0, 300));
+  check('round-21 F-8 and the box is left exactly as it was', list === original, JSON.stringify(list));
+  check('round-21 F-8 and Assign refuses before ever reaching the round-trip check that used to hide which line broke it',
+    !/did not round-trip through the recipient parser/.test(msg), msg.slice(0, 300));
   await page.close();
 });
 

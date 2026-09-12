@@ -148,6 +148,31 @@ else
   note ok "the live scripts mint their own token ids"
 fi
 
+# 6. Round 21 F-10: a numeric browser-test count in prose goes stale the moment a check is added or removed,
+#    silently, because nothing reruns the suite to check the sentence against it. The suites already print
+#    their own counts when they run, and ./verify.sh's output is the record of what passed -- a document
+#    should say that, not retype a number. Dated audit reports are excluded on the same grounds check 3 and
+#    check 4 above exclude them: each is a past reviewer's own measurement of a past commit, quoted as
+#    evidence in their own report, not a present claim this repository is making about itself today.
+python3 - <<'PY' || bad=1
+import glob, io, re, sys
+pat = re.compile(r'[0-9]+\s+(airdrop[- ]page|Check[- ]page|browser)\s+tests', re.I)
+targets = ['README.md'] + sorted(f for f in glob.glob('docs/*.md') if not re.match(r'docs/audit-\d', f))
+ok = True
+for f in targets:
+    try:
+        body = io.open(f, encoding='utf-8').read()
+    except FileNotFoundError:
+        continue
+    for i, line in enumerate(body.splitlines(), 1):
+        if pat.search(line):
+            print('  FAIL   %s:%d states a numeric browser-test count in prose: %s' % (f, i, line.strip()[:120]))
+            ok = False
+if ok:
+    print('  ok     no document states a numeric browser-test count the commands beside it could make stale')
+sys.exit(0 if ok else 1)
+PY
+
 echo
 if [ "$bad" -eq 0 ]; then echo "Preflight clean."; else echo "Preflight found something. Fix it before running anything slower."; fi
 exit "$bad"

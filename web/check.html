@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-0DSMW8H8haAYZmhzelAnpwDO6NNWXP6OYDpY/Az+i/s='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-TOWOG+YGhpdgmZysls/OzozNL5d36A0T7QpvXrB16D0='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <title>Robinhood Chain Check · read it before you sign</title>
 <meta name="description" content="Paste a transaction, a contract, or the calldata your wallet is about to sign, and read what it actually does on Robinhood Chain: what moves, what the contract can do to you, and why something failed.">
 <style>
@@ -341,6 +341,28 @@
     return { ok: false, data: null };
   }
 
+  // One reading of what an explorerJson('/smart-contracts/<addr>') answer says about verification, used for
+  // the contract itself and for a proxy's implementation alike. Round 21 F-1/F-2: this question used to be
+  // answered twice -- once here (round twenty F-2) and once, separately and older, at the proxy's own lookup
+  // -- and the two disagreed: a 200 body that is not a real Blockscout record (a rate-limit envelope, a
+  // gateway error page, an explorer that reports "not found" in the body rather than the status) is not an
+  // answer to "is the source published" and must read as could-not-check, not as a false, or falsely
+  // confident, one. Three states -- verified true, false, or null -- plus, only once verified is known,
+  // whether the match is full, partial, or (mainnet) not knowable at all.
+  function verificationOf(res) {
+    if (!res || !res.ok) return { verified: null, partial: undefined, down: true, record: null };
+    const rec = res.data;
+    if (!rec) return { verified: false, partial: undefined, down: false, record: null };      // a real 404
+    if (typeof rec.is_verified !== 'boolean') return { verified: null, partial: undefined, down: true, record: null };
+    return {
+      verified: rec.is_verified,
+      partial: rec.is_partially_verified === true ? true
+        : (rec.is_partially_verified === null || rec.is_partially_verified === undefined ? null : false),
+      down: false,
+      record: rec,
+    };
+  }
+
   // Everything worth knowing about one address, from the chain first and the explorer second. The chain
   // always answers; the explorer sometimes does not, and a page that falls over when it does not is useless.
   async function readAddress(addr) {
@@ -378,30 +400,18 @@
     }
 
     const scRes = await explorerJson('/smart-contracts/' + out.address);
-    const sc = scRes.data;
-    if (!scRes.ok) { out.verified = null; out.explorerDown = true; }
-    else if (!sc) { out.verified = false; }
-    // Round twenty F-2: explorerJson decided "this is a real answer" from the HTTP status and content-type
-    // alone, so a 200 JSON body that is not a Blockscout contract record at all -- a rate-limit envelope, a
-    // gateway's own error document, an explorer that answers "not found" in the body rather than the status --
-    // was returned as data, and `!!sc.is_verified` on a record with no such field read as a definite `false`:
-    // "no source published", stated as fact. Only a real 404 (sc === null) may say that; anything else that
-    // does not carry a real `is_verified` boolean was not an answer to this question at all.
-    else if (typeof sc.is_verified !== 'boolean') { out.verified = null; out.explorerDown = true; }
-    if (sc && typeof sc.is_verified === 'boolean') {
-      out.verified = sc.is_verified;
+    const scv = verificationOf(scRes);
+    out.verified = scv.verified;
+    out.partial = scv.partial;
+    if (scv.down) out.explorerDown = true;
+    const sc = scv.record;
+    if (sc) {
       out.name = sc.name || null;
       out.abi = sc.abi || null;
       out.compiler = sc.compiler_version || null;
       out.optimized = sc.optimization_enabled;
       out.evm = sc.evm_version || null;
       out.verifiedAt = sc.verified_at || null;
-      // Round twenty F-1: the mainnet Worker deliberately answers `is_partially_verified: null` when the
-      // module API it reads does not carry the field ("null, not a claim"). `!!null` is `false`, so this used
-      // to read "not known" as "not partial" and the pill said "matched" about a verification that could be
-      // full or partial. Three states now, matching what the Worker actually knows.
-      out.partial = sc.is_partially_verified === true ? true
-        : (sc.is_partially_verified === null || sc.is_partially_verified === undefined ? null : false);
       if (!out.proxy && sc.proxy_type && sc.implementations && sc.implementations.length) {
         try {
           out.proxy = { kind: String(sc.proxy_type).replace(/_/g, ' '), target: ethers.getAddress(sc.implementations[0].address_hash || sc.implementations[0].address) };
@@ -430,8 +440,16 @@
       out.proxyOwnAbi = out.abi; out.abi = null;
       if (!out.proxy.target) { out.proxy.code = '0x'; }
       const res = out.proxy.target ? await explorerJson('/smart-contracts/' + out.proxy.target) : { ok: false, data: null };
-      const impl = res.data;
-      out.proxy.verified = res.ok ? !!(impl && impl.is_verified) : null;
+      // Round 21 F-1/F-2: this used to be its own, separate reading of the same question `verificationOf`
+      // answers above -- `res.ok ? !!(impl && impl.is_verified) : null` -- which is why round twenty's F-2
+      // fix (a 200 body with no real is_verified boolean is not an answer) and F-1 fix (a verification that
+      // cannot be called full or partial is "not known", not "matched") were never applied to the code a
+      // proxy actually runs. One function, one answer, for both.
+      const implv = verificationOf(res);
+      out.proxy.verified = implv.verified;
+      out.proxy.partial = implv.partial;
+      if (implv.down) out.explorerDown = true;
+      const impl = implv.record;
       if (impl) {
         out.proxy.name = impl.name || null;
         // The forwarder's own ABI describes the forwarder. Everything this page says about what the contract
@@ -477,6 +495,15 @@
       if (hex.slice(i, i + 2) === '63') out.add('0x' + hex.slice(i + 2, i + 10));
     }
     return out;
+  }
+  // The three-way wording for "how sure is this page that the published source is ALL of the code that
+  // runs", shared by the contract's own pill and the proxy's (round 21 F-2: these were two copies, and only
+  // the contract's had a partial state at all -- a proxy in front of a partially verified implementation
+  // read as fully published with the caveat silently dropped).
+  function partialSuffix(partial) {
+    return partial === true ? ', partly matched'
+      : partial === null ? ' (whether the match is full or partial is not known)'
+      : ' and matched';
   }
   function knownFunctions(o) {
     const found = [];
@@ -690,7 +717,12 @@
       rows.push(h('div', { class: 'move' }, [
         h('div', { text: sentence || (p.unknown ? 'A call this page cannot name: ' + p.selector : p.signature) }),
         h('div', { class: 'mut mono', text: 'to ' + short(String(c.to || '?')) + (c.value ? '  with ' + ethers.formatEther(c.value) + ' ETH' : '') }),
-        unlimitedApproval(p, t && t.token)
+        // Round 21 F-3: round twenty's F-7 fix changed unlimitedApproval's second parameter from the token
+        // record to the whole readAddress record (it reads target.standard AND target.token), and updated
+        // callWarnings' call site but not this one. `t.token` has neither field, so both the supply
+        // comparison and the ERC-721/1155 exception were silently disabled for every call carried inside
+        // another. One argument, the same one callWarnings already passes.
+        unlimitedApproval(p, t)
           ? h('div', { class: 'bad', text: 'This inner call is an unlimited approval.' }) : null,
         (p.signature === 'setApprovalForAll(address,bool)' && p.args[1])
           ? h('div', { class: 'bad', text: 'This inner call hands over a whole collection.' }) : null,
@@ -931,12 +963,10 @@
               ? (o.proxy.verified ? 'ok' : o.proxy.verified === null ? 'warn' : 'bad')
               : (o.verified ? 'ok' : o.verified === null ? 'warn' : 'bad')),
           text: o.proxy
-            ? (o.proxy.verified ? 'the code it runs has published source'
+            ? (o.proxy.verified ? 'the code it runs has published source' + partialSuffix(o.proxy.partial)
               : o.proxy.verified === null ? 'could not check the code it runs'
               : 'the code it runs has published no source')
-            : (o.verified ? (o.partial === true ? 'source published, partly matched'
-                : o.partial === null ? 'source published (whether the match is full or partial is not known)'
-                : 'source published and matched')
+            : (o.verified ? 'source published' + partialSuffix(o.partial)
               : o.verified === null ? 'could not check for a published source' : 'no source published') }),
         o.standard ? h('span', { class: 'pill', text: o.standard }) : null,
         o.proxy ? h('span', { class: 'pill warn', text: 'proxy: the code can be swapped' }) : null,
@@ -988,8 +1018,13 @@
               : 'This page had no source to read, so this is the set of 4-byte selectors the bytecode dispatches on, matched against names it knows. ')
             + 'It is a floor and never a ceiling: whatever else the contract can do is in there too, unnamed. '),
         fns.complete ? link(o.address, 'the verified source on the explorer') : null,
-        o.partial === true ? document.createTextNode('  This contract is only partially verified, so even the published source may not be all of the code that runs.')
-          : o.partial === null ? document.createTextNode('  Whether this match is full or partial is not known, so even the published source may not be all of the code that runs.') : null,
+        // Round 21 F-2: this read o.partial unconditionally, which is the FORWARDER's own record. Behind a
+        // proxy the code this section is actually built from is the implementation's, so its own partial
+        // state is what has to be checked here -- the same state the pill above now reads with it.
+        (function (partial) {
+          return partial === true ? document.createTextNode('  This contract is only partially verified, so even the published source may not be all of the code that runs.')
+            : partial === null ? document.createTextNode('  Whether this match is full or partial is not known, so even the published source may not be all of the code that runs.') : null;
+        })(o.proxy ? o.proxy.partial : o.partial),
       ]),
       o.verified === false ? note('warn', 'No source has been published',
         'The bytecode is public and this page has read it, but nobody has shown which source code produced it. Nobody outside the people who deployed it knows what this contract does.') : null,

@@ -422,6 +422,65 @@ await t("check-page: H-02: partial verification is incomplete evidence", async (
   await page.close();
 });
 
+// ---- round 21 F-1: the round-twenty F-2 fix, applied at check.js:300, was not applied at check.js:344 ----
+await t('check-page: round 21 F-1, an unreadable explorer reply about the code behind a proxy is could-not-check, never a definite no-source-published', async () => {
+  const verified = {};
+  verified[PROXY] = { is_verified: true, name: 'Forwarder', abi: [] };
+  verified[IMPL] = { error: 'rate limited', retry_after: 30 };   // truthy, JSON, 200 -- and not a Blockscout record
+  const page = await open(browser, { verified });
+  const t = await ask(page, PROXY);
+  check('round-21 F-1 an unreadable implementation reply reads as could-not-check', /could not check the code it runs/.test(t), t.slice(0, 400));
+  check('round-21 F-1 and never as a definite no-source-published', !/the code it runs has published no source/.test(t), t.slice(0, 400));
+  await page.close();
+});
+
+// ---- round 21 F-2: a partially verified implementation behind a proxy keeps its partial caveat ----------
+await t('check-page: round 21 F-2, a partially verified implementation behind a proxy is not announced as fully published', async () => {
+  const verified = {};
+  verified[PROXY] = { is_verified: true, is_partially_verified: false, name: 'Forwarder', abi: [] };
+  verified[IMPL] = { is_verified: true, is_partially_verified: true, name: 'TheRealCode', abi: [
+    { type: 'function', name: 'mint', stateMutability: 'nonpayable', inputs: [{ name: 'to', type: 'address' }, { name: 'id', type: 'uint256' }] },
+  ] };
+  const page = await open(browser, { verified });
+  const t = await ask(page, PROXY);
+  check('round-21 F-2 a partially verified implementation keeps its partial caveat behind a proxy',
+    /partly matched|partially verified|full or partial/.test(t), t.slice(0, 500));
+  await page.close();
+});
+
+// ---- round 21 F-3a: renderInner still passes t.token where unlimitedApproval now wants the whole record ----
+await t('check-page: round 21 F-3a, an inner ERC-20 approval far beyond supply but under the 2^128 fallback still gets its warning', async () => {
+  const page = await open(browser, {});
+  const spender = A(0x1111);
+  // TOK's mocked totalSupply is 1000; 10^9 is a million times that and comfortably below the 2^128 floor this
+  // page falls back to when a call's target is unknown -- exactly the band round 21 F-3a found unguarded,
+  // because the supply comparison never ran at all once the wrong argument reached unlimitedApproval.
+  const inner = await page.evaluate(([spender, target]) => {
+    const iface = new window.ethers.Interface(['function approve(address,uint256)', 'function execute(address,uint256,bytes)']);
+    const a = iface.encodeFunctionData('approve', [spender, 10n ** 9n]);
+    return iface.encodeFunctionData('execute', [target, 0, a]);
+  }, [spender, TOK]);
+  const t = await ask(page, JSON.stringify({ to: TOK, data: inner }), ME, 6000);
+  check('round-21 F-3a the outer execute is decoded and its inner call is shown', /Calls carried inside this one/.test(t), t.slice(0, 400));
+  check('round-21 F-3a and the inner call gets its own unlimited-approval warning', /This inner call is an unlimited approval/.test(t), t.slice(0, 600));
+  await page.close();
+});
+
+// ---- round 21 F-3b: the same wrong argument drops F-7's ERC-721 exception for a call carried inside another --
+await t('check-page: round 21 F-3b, an inner ERC-721 approve for a hash-derived id is not called an unlimited approval', async () => {
+  const page = await open(browser, {});
+  const spender = A(0x1111);
+  const inner = await page.evaluate(([spender, target]) => {
+    const iface = new window.ethers.Interface(['function approve(address,uint256)', 'function execute(address,uint256,bytes)']);
+    const a = iface.encodeFunctionData('approve', [spender, 1n << 200n]);   // an ordinary hash-derived id, like ENS uses
+    return iface.encodeFunctionData('execute', [target, 0, a]);
+  }, [spender, NFT]);
+  const t = await ask(page, JSON.stringify({ to: NFT, data: inner }), ME, 6000);
+  check('round-21 F-3b the inner call is decoded and shown', /Calls carried inside this one/.test(t), t.slice(0, 400));
+  check('round-21 F-3b and it is not announced as an unlimited approval', !/This inner call is an unlimited approval/.test(t), t.slice(0, 600));
+  await page.close();
+});
+
 // ---- H-03: silence is not proof that nothing moved -------------------------------
 await t("check-page: H-03: silence is not proof that nothing moved", async () => {
   const page = await open(browser, { simLogs: [] });

@@ -183,7 +183,7 @@ moved".
 
     forge build
     forge test                 # 111 contract tests, plus 29 reviewer probes of which 9 must fail
-    npm install && npm test    # 477 browser tests, every answer mocked, no network
+    npm install && npm test    # every browser test, every answer mocked, no network -- it prints its own count
     ./test.sh                  # all of it
 
 The browser tests drive the real pages in headless Chromium and answer every RPC, explorer and price request

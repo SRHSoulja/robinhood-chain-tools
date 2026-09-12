@@ -26,10 +26,10 @@ serialize the same cells back without changing their columns or meaning.
 | `walletsInBox` | ● | | `boxColumns`, `addressOn`, `deliveriesOn` |
 | `unreadableLinesInBox` | ● | | `boxColumns`, `addressOn` |
 | `refuseForUnreadableLines` | ● | | via `unreadableLinesInBox` |
-| `deliveriesOn` | ● | | `splitRow`; named `tokenId` wins over an unrelated `amount` |
+| `deliveriesOn` | ● | | `splitRow`, `idCellDeliveryCount`; named `tokenId` wins over an unrelated `amount` |
 | `$('csv')` change | | ● | `splitRow` |
 | `$('pickUse')` click | ● | ● | via `walletsInBox` / `refuseForUnreadableLines` |
-| `$('assign')` click | ● | ● | `boxColumns`, `addressOn`, `requestedNftQuantity`, `serializeRow`; output is accepted only after `parseList` round-trips the same wallet/quantity meaning |
+| `$('assign')` click | ● | ● | `boxColumns`, `addressOn`, `recipientProblem`, `requestedNftQuantity`, `serializeRow`; output is accepted only after `parseList` round-trips the same wallet/quantity meaning |
 | `$('shuffle')` click | ● | ● | `boxColumns`, `addressOn`, `splitRow`, `serializeRow`; changes only the standard's named payload cells |
 | `$('applyWeight')` click | ● | ● | `boxColumns`, `addressOn`, `splitRow`, `serializeRow`; changes only the named amount cell |
 | `$('dropContracts')` click | ● | ● | `boxColumns`, `addressOn` |
@@ -56,6 +56,17 @@ And one that is sound and is recorded so nobody re-opens it:
 
 - **`$('snap')` uses none of the shared cutters and does not need to.** It only ever writes, and it writes one
   bare address per line, which is the simplest thing every reader can read.
+
+Round twenty-one found the row above written but not read: `requestedNftQuantity` (what `$('assign')` asks
+for) had its own, separate rule for a named id cell holding several ids, and it disagreed with `deliveriesOn`
+(what the parser and the picker size for) about exactly that shape. The two now share one function,
+`idCellDeliveryCount`, so this cannot recur for this cell; the mult/`xN` and bare-positional rules stay
+separate readers on purpose, because `requestedNftQuantity` refuses an invalid override (`x0`) that
+`deliveriesOn` silently falls back to one on, which is a real difference in what each caller needs, not an
+undiscovered twin. The same round also moved `recipientProblem` earlier in `$('assign')` -- checked per line,
+before the chain is ever read, rather than only by the round-trip check at the end -- so a refused line is
+named by number instead of surfacing as a generic "did not round-trip" after the box has already been
+rewritten and restored.
 
 ---
 
