@@ -14,7 +14,9 @@ RH_TMP="$(mktemp -d)"; trap 'rm -rf "$RH_TMP"' EXIT
 rsync -a --exclude .git --exclude node_modules --exclude out --exclude cache --exclude broadcast ./ "$RH_TMP/tree/"
 OLD="$(python3 -c "import json;print(json.load(open('deployments.testnet.json'))['BulkSend_v1_unoptimized'])")"
 cd "$RH_TMP/tree"
-# a document naming the old testnet address, with no mainnet record: refused, as today
+# a document naming the old testnet address, with no mainnet record: refused. The scratch copy starts without
+# the record whether or not the real tree has one, so this case means the same thing before and after the deploy.
+rm -f deployments.mainnet.json
 printf '\nMainnet BulkSend is at %s.\n' "$OLD" >> docs/status.md
 out="$(./preflight.sh 2>&1)"; rc=$?
 check "$([ $rc -ne 0 ] && echo "$out" | grep -q 'names .*a superseded BulkSend' && echo 0 || echo 1)" "without deployments.mainnet.json, a document naming the old testnet address is still refused"

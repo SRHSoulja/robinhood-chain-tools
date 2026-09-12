@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-vaDOV/+NZibMNAL5N2ZTRybLrDX7vdXgtv/SXhj2E2o='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-L2yzWaj9zTyv6RlkOopE2M6kQM0OFAsx1g/yOdbvlnQ='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -177,7 +177,7 @@
     // independently operated public endpoints follow it (both answer chain 4663 and eth_simulateV1, checked
     // 11 September 2026; chainlist marks neither as tracking). pickRpc() decides which is in use.
     4663:  { name: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com', explorer: 'https://robinhoodchain.blockscout.com',
-             rpcs: ['https://rpc.mainnet.chain.robinhood.com', 'https://robinhood-rpc.publicnode.com', 'https://robinhood.api.pocket.network'], bulk: '{{BULKSEND_MAINNET}}' },
+             rpcs: ['https://rpc.mainnet.chain.robinhood.com', 'https://robinhood-rpc.publicnode.com', 'https://robinhood.api.pocket.network'], bulk: '0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf' },
   };
   const BULK_ABI = [
     'function airdrop721(address token,address[] to,uint256[] ids,bool safe,bool lenient) returns (uint256 sent,uint256 skipped)',
@@ -305,7 +305,7 @@
     return { to: token, value: '0x0', data: DIRECT.encodeFunctionData('transfer(address,uint256)', [row.to, row.amount]) };
   }
   const hexChain = () => '0x' + chainId().toString(16);
-  const LIVE_CHAINS = new Set([46630]);   // add 4663 only when BulkSend is deployed, verified and tested on mainnet
+  const LIVE_CHAINS = new Set([46630, 4663]);   // 4663 added 12 September 2026: BulkSend v13 deployed there, byte-identical to the reviewed build (deployments.mainnet.json)
   // Which way this airdrop will go out.
   function deliveryPath() {
     if (!LIVE_CHAINS.has(chainId())) return 'notlive';   // mainnet is switched off until it is deployed and tested there

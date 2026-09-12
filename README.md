@@ -196,7 +196,8 @@ to the file in this repository:
     ./deploy/publish.sh airdrop
     ./deploy/publish.sh check
 
-Contracts, testnet only:
+Contracts. The testnet entry point below refuses any other chain; `DeployBulkSendMainnet` is its mainnet twin
+(chain 4663 only) and has run exactly once, on 12 September 2026, see `deployments.mainnet.json`:
 
     export RH_RPC=https://rpc.testnet.chain.robinhood.com
     export RH_DEPLOYER_PK=...          # from the environment, never an argument: arguments are readable by every process

@@ -1,0 +1,18 @@
+{
+ "BulkSend": "0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf",
+ "chain_id": 4663,
+ "tx": "0xfde31639c69dcac7f7dbf7b48a4b06891664fe48a3675223bd39c3ae22881e7c",
+ "block": 61365130,
+ "gas_used": 2145104,
+ "deployer": "0xcc6eb67bddb5ec3e8d3ecb18ea7c8c5668790322",
+ "nonce": 0,
+ "runtime_keccak256": "0xc1a27e659b9ec15895bed10e9917aa0f95c2a9ccb9f8e2db9d1fff1761adf178",
+ "runtime_bytes": 9752,
+ "source_sha256": "61f7bb7f208d307542d51fc4e42fe99d5519d94893ae3a60fb7f07534b4c1159",
+ "built_from": "bf4c61d49765b191de02686cbe06a1ee36502a25",
+ "compiler": "0.8.36+commit.8a079791, optimizer 10000 runs, cancun",
+ "verification": {
+  "sourcify": "exact_match, 12 September 2026",
+  "blockscout": "submitted via Sourcify; the explorer's own API answers non-browser clients with a challenge"
+ }
+}

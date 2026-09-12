@@ -8,18 +8,23 @@ it. Where something has not been tested, it says so; where a finding is open, it
 
 ## The gate
 
-**Testnet only. Mainnet is switched off in the page itself**, not by intent: the mainnet BulkSend address is
-an unsubstituted `{{BULKSEND_MAINNET}}` placeholder, so `bulkReady()` is false and the send refuses there.
+**Live on testnet and on mainnet.** BulkSend v13 was deployed to Robinhood Chain (4663) on 12 September 2026 at
+`0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf` (tx `0xfde31639…`, block 61365130), from the release tree `bf4c61d`, on the
+maintainer's explicit authorization. Its runtime read back from the mainnet RPC is byte-identical to what this
+source builds and to testnet's v13 (keccak `0xc1a27e659b…`); `deployments.mainnet.json` is the record, and gate 14
+re-derives that comparison in both workflows. Source verification: Sourcify exact match; the mainnet explorer's own
+verification API answers non-browser clients with a challenge, so it is verified there through Sourcify's import or
+the browser form.
 
-Four things have to be true before that changes, and all are currently false. A fifth, gate 14, is a control
-rather than a precondition, and it is now in place:
+Four things had to be true before mainnet, and on 12 September 2026 all four were. Gate 14 is the control that
+now watches it:
 
 | | state |
 | --- | --- |
-| a review round with no release blockers | **not met** — round seventeen found none; round eighteen then found one in code written that day, round nineteen one more in the fix, round twenty none, and round twenty-one none. The first of the two mainnet conditions has now been met three times; the round that finds none on a tree that then does not change has not happened, because this commit changes the tree round twenty-one reviewed |
+| a review round with no release blockers | **met** — rounds seventeen, twenty and twenty-one found none; after twenty-one the product tree did not change: the only commit before the deploy was release mechanics (`bf4c61d`: the mainnet deploy entry point, preflight tolerating the mainnet address, one plan sentence), with `src/BulkSend.sol` and both pages untouched |
 | a production mainnet RPC plan | **met**, 11 September 2026 — each chain lists three endpoints in order (Robinhood's own, then PublicNode, then Pocket on mainnet), all answering the right chain id and `eth_simulateV1` when checked; the page probes them in order at connect and on a network change and reads through the first that answers, saying so when it is not the first. The integrity workflow probes every listed endpoint four times a day and fails if the first, or every fallback, for a chain stops answering. No credential: all three are public, and the Worker keeps no RPC. See `plan.md`'s gate 9 |
 | a current real-wallet rehearsal on testnet | **met**, 11 September 2026 — four runs from the maintainer's own wallet against the published page and v13: ERC-721, ERC-1155 and ERC-20 from a browser wallet, and ERC-721 from a phone over WalletConnect with the tab backgrounded. Every hash read back from the explorer and the chain agrees with the page ([`real-wallet-run.md`](real-wallet-run.md); see also the proof table below and `plan.md`'s gate 10) |
-| explicit permission from the maintainer, given after that round | **not given** |
+| explicit permission from the maintainer, given after that round | **given**, 12 September 2026, after round twenty-one, in writing: "MAINNET DEPLOYMENT IS EXPLICITLY AUTHORIZED", naming the release-mechanics commit `bf4c61d` |
 | gate 14: both workflows check the mainnet deployment as well | **met** (round twenty) — before mainnet is enabled, both `.github/workflows/tests.yml` and `integrity.yml` check the mainnet deployment as well, and `integrity.yml` asserts the page names the mainnet address it was reviewed against. Today, with the `{{BULKSEND_MAINNET}}` placeholder still in and `LIVE_CHAINS` testnet-only, the new step in each workflow says so and passes; it activates itself the day that changes, rather than needing a hand-edit in the same breath as enabling mainnet |
 
 No one item alone is enough. The deployer holds about 0.002 mainnet ETH that someone else sent, which is enough
@@ -120,7 +125,7 @@ They sign with a testnet-only key that holds no mainnet balance and refuse to ru
 | ERC-20 batches really land | `live-send-all.mjs`, on chain: 3 recipients each holding exactly 1.5, to the wei | ✅ |
 | any of it against a real wallet extension, automatically | **no** — every wallet in every test here is written by this repository | ❌ |
 | any of it against a real wallet extension, by hand | **yes, four runs on 11 September 2026** against the published page and v13, from the maintainer's own wallet: ERC-721, ERC-1155 and ERC-20 from a browser wallet and ERC-721 from a phone over WalletConnect with the tab backgrounded; every hash read back from the explorer and the chain agrees with the page ([`real-wallet-run.md`](real-wallet-run.md)) | ✅ |
-| a real broadcast transaction on mainnet | **never, by design**; current evidence is read-only calls and local fork execution only | ❌ |
+| a real broadcast transaction on mainnet | **one**: the v13 deployment, tx `0xfde31639c69dcac7f7dbf7b48a4b06891664fe48a3675223bd39c3ae22881e7c`, 12 September 2026, from `DeployBulkSendMainnet`; the live scripts still refuse any chain but 46630 | ✅ |
 
 ## Reading the testnet deployer's activity
 

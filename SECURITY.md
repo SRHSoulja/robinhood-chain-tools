@@ -88,7 +88,8 @@ check this from the inside. Treat the count as what was attempted and the chain 
 
 ## Status
 
-Deployed on testnet only. Nothing here has been reviewed by a human audit firm.
+Deployed on testnet and, since 12 September 2026, on Robinhood Chain mainnet (4663) at `0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf`,
+byte-identical to the reviewed build. Nothing here has been reviewed by a human audit firm.
 [docs/for-reviewers.md](docs/for-reviewers.md) is the current threat model and the full review history;
 [docs/audit-2026-09-11-seventeenth-external.md](docs/audit-2026-09-11-seventeenth-external.md) is the most recent
 review in full, and [docs/status.md](docs/status.md) says which of its findings are closed and which are not. Every audit is in [docs/](docs/), unedited and in order. Read the newest one: the older reports describe

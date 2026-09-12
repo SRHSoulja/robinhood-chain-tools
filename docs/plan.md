@@ -2,18 +2,18 @@
 
 > ## Start here
 >
-> **State on 12 September 2026, the commit that carries this file.** Round twenty, on Opus against `11d52c6`
-> (round nineteen's closure), found **no release blocker**: nine should-fix items, none on the contract and
-> none on a path where value moves, three of them edges of round nineteen's fixes ("the fix is right and
-> nothing checked the consumer, or the order, around it"). All nine are closed in this commit against the
-> reviewer's own probe, and its missing control is gate 14 below. Two rounds have now found no blocker,
-> seventeen and twenty, but the gate as `status.md` words it is the round that finds none on a tree that
-> then does not change, and this tree changed after both. Round twenty-one reviews these nine closures; if
-> it finds no blocker, nothing is changed after it, and the gate is met. The second condition is the
-> maintainer's explicit word, which has not been given. Gate 11's explorer path, the harness, and gate 10's
-> real-wallet runs stand as recorded below.
-> **What remains:** round twenty-one on Opus against this commit, then the deploy of v13 (about 0.0003 ETH)
-> only on the maintainer's explicit word, then gate 13 and gate 14's mainnet branch on the same day.
+> **State on 12 September 2026, evening: BulkSend v13 is LIVE ON MAINNET.** Rounds seventeen, twenty and
+> twenty-one found no release blocker; after twenty-one the product tree did not change (the one commit before
+> the deploy, `bf4c61d`, was release mechanics only). On the maintainer's explicit written authorization the
+> contract was deployed once to Robinhood Chain 4663 from `DeployBulkSendMainnet`: `0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf`,
+> tx `0xfde31639c69dcac7f7dbf7b48a4b06891664fe48a3675223bd39c3ae22881e7c`, block 61365130, 2,145,104 gas, about 0.00021 ETH. The runtime read back
+> from the mainnet RPC is byte-identical to this source's build and to testnet's v13; Sourcify reports an exact
+> match; the deployment record is `deployments.mainnet.json`. This commit enables chain 4663 in the page (the
+> placeholder and `LIVE_CHAINS`, two lines) and gate 14's mainnet branch now runs in both workflows.
+> **What remains:** nothing before release. Post-mainnet candidates, none of them release work: native PRO REST
+> with a Bearer key for the Worker's contract, transaction and holder lookups; one bounded retry on an upstream
+> 5xx; chain-first run reconstruction on the page from `Airdrop20` logs and calldata; an equal-amount entry
+> point and a scratch-memory return read in a future contract version, each worth about one percent of gas.
 > Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0, 1, 1, 0, 0.
 >
 > - **BulkSend v13 is DEPLOYED on testnet** at `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (tx `0x5cb0037f…`), byte-identical
@@ -22,7 +22,7 @@
 > - **Rounds twelve and thirteen are fully closed.** Every probe file in the repository is at its baseline,
 >   and round thirteen's six browser probes are at **0 of 6**.
 > - **Phases 0 to 5 of this plan are done.** Phase 6 is the only one left and it needs the chain.
-> - **Mainnet is at nonce 0 and nothing may touch it.** Testnet gas and nonces move for reasons unrelated to
+> - **Mainnet: the deployer's nonce is 1, spent on the one deployment; nothing else may touch it.** Testnet gas and nonces move for reasons unrelated to
 >   this project -- the deployer is shared with the maintainer's game NFT experiments. See `status.md`.
 >
 > **Phase 6, as of the evening of 10 September 2026.** Steps 0 to 6 are done: the pre-deploy gate (every branch
