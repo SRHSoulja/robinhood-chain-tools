@@ -94,3 +94,12 @@ Deployed on testnet only. Nothing here has been reviewed by a human audit firm.
 review in full, and [docs/status.md](docs/status.md) says which of its findings are closed and which are not. Every audit is in [docs/](docs/), unedited and in order. Read the newest one: the older reports describe
 code that has since been rewritten, and several of their findings were themselves introduced by the fix for an
 earlier one.
+
+## Signed commits
+
+Commits and tags from 12 September 2026 onward are signed with the maintainer's SSH key, fingerprint
+`SHA256:h7qfEZ2laSGtWhvq3aePPj2dHd2ygeRr/PVDtoOWQnI`, and show as Verified on GitHub. To check a signature
+yourself rather than trust the badge, put the maintainer's email and public key on one line of an
+allowed-signers file, point `gpg.ssh.allowedSignersFile` at it, and run `git log --show-signature`. Earlier
+commits are unsigned; the release tag is the one that matters, and it will be signed.
+
