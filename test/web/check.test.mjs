@@ -183,6 +183,33 @@ async function freshBrowser() {
   browser = await chromium.launch(LAUNCH);
 }
 
+// ---- share: a link posted somewhere shows a real preview, not a blank one ---
+await t("share: favicon and Open Graph metadata", async () => {
+  const page = await open(browser, {});
+  const meta = await page.evaluate(() => {
+    const byProp = (p) => { const el = document.querySelector('meta[property="' + p + '"]'); return el ? el.getAttribute('content') : null; };
+    const byName = (n) => { const el = document.querySelector('meta[name="' + n + '"]'); return el ? el.getAttribute('content') : null; };
+    const icon = document.querySelector('link[rel="icon"]');
+    const touch = document.querySelector('link[rel="apple-touch-icon"]');
+    return {
+      iconHref: icon ? icon.getAttribute('href') : null,
+      touchHref: touch ? touch.getAttribute('href') : null,
+      ogImage: byProp('og:image'), ogWidth: byProp('og:image:width'), ogHeight: byProp('og:image:height'),
+      ogTitle: byProp('og:title'), ogDescription: byProp('og:description'),
+      twitterCard: byName('twitter:card'),
+      description: byName('description'),
+    };
+  });
+  check('the favicon is an inline SVG data URI, not a missing file', (meta.iconHref || '').startsWith('data:image/svg+xml'), meta.iconHref);
+  check('the apple touch icon points at the file this page publishes', meta.touchHref === '/apple-touch-icon.png', meta.touchHref);
+  check('og:image is this page’s own absolute URL', meta.ogImage === 'https://rhcheck.gmgnrepeat.com/og.png', meta.ogImage);
+  check('og:image:width/height are the card’s real dimensions', meta.ogWidth === '1200' && meta.ogHeight === '630', meta.ogWidth + 'x' + meta.ogHeight);
+  check('twitter:card asks for the large image, not a small thumbnail', meta.twitterCard === 'summary_large_image', meta.twitterCard);
+  check('og:title matches what this page is', meta.ogTitle === 'Robinhood Chain Check · read it before you sign', meta.ogTitle);
+  check('og:description is the page’s own description, verbatim', !!meta.description && meta.ogDescription === meta.description, JSON.stringify(meta));
+  await page.close();
+});
+
 // ---- what was pasted -------------------------------------------------------
 await t("check-page: what was pasted", async () => {
   const page = await open(browser, {});

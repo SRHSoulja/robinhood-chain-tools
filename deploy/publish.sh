@@ -44,10 +44,20 @@ done
 
 TARGET="${1:-}"
 case "$TARGET" in
-  airdrop) SRC="$ROOT/web/index.html"; WORKER="${WORKER_AIRDROP:-rh-airdrop}"; VERIFY="${URL_AIRDROP:-}"; ORIGIN_NAME="${ORIGIN_NAME_AIRDROP:-rhairdrop}" ;;
-  check)   SRC="$ROOT/web/check.html"; WORKER="${WORKER_CHECK:-rh-check}";    VERIFY="${URL_CHECK:-}";   ORIGIN_NAME="${ORIGIN_NAME_CHECK:-rhcheck}" ;;
+  airdrop) SRC="$ROOT/web/index.html"; WORKER="${WORKER_AIRDROP:-rh-airdrop}"; VERIFY="${URL_AIRDROP:-}"; ORIGIN_NAME="${ORIGIN_NAME_AIRDROP:-rhairdrop}"
+           OG_PNG="$ROOT/web/og-airdrop.png"; TOUCH_PNG="$ROOT/web/apple-touch-icon.png" ;;
+  check)   SRC="$ROOT/web/check.html"; WORKER="${WORKER_CHECK:-rh-check}";    VERIFY="${URL_CHECK:-}";   ORIGIN_NAME="${ORIGIN_NAME_CHECK:-rhcheck}"
+           OG_PNG="$ROOT/web/og-check.png"; TOUCH_PNG="$ROOT/web/apple-touch-icon-check.png" ;;
   *) echo "usage: $0 airdrop|check" >&2; exit 2 ;;
 esac
+
+# The share-card image and the home-screen icon are baked into the worker at publish time (deploy/render-worker.py
+# reads and embeds them, the same way it reads the page itself). A page whose og:image 404s is worse than a page
+# that names no image at all, so a missing file here refuses the whole publish rather than shipping a broken
+# preview that only shows up when someone actually shares the link.
+for f in "$OG_PNG" "$TOUCH_PNG"; do
+  [ -f "$f" ] || { echo "Refusing to publish: $f is missing. The $TARGET page's share image or home-screen icon would 404 if published." >&2; exit 1; }
+done
 
 : "${CF_ACCOUNT_ID:?set CF_ACCOUNT_ID (see the header of this script)}"
 if [ -z "${CF_API_TOKEN:-}" ]; then
@@ -132,7 +142,7 @@ fi
 
 # The Worker template itself lives in deploy/render-worker.py, so this script and test/worker.test.mjs build
 # the exact same worker.js from the exact same code rather than two copies that can drift apart.
-python3 deploy/render-worker.py "$SRC" "$WORK/worker.js" "$TARGET" "${WC_BUNDLE_URL:-}" "$WC_SHA256" "$CSP_HASH"
+python3 deploy/render-worker.py "$SRC" "$WORK/worker.js" "$TARGET" "${WC_BUNDLE_URL:-}" "$WC_SHA256" "$CSP_HASH" "$OG_PNG" "$TOUCH_PNG"
 
 node --check "$WORK/worker.js" 2>/dev/null || { echo "the generated worker does not parse" >&2; exit 1; }
 

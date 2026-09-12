@@ -437,6 +437,69 @@ async function freshBrowser() {
   browser = await chromium.launch(LAUNCH);
 }
 
+// ---- share: a link posted somewhere shows a real preview, not a blank one ---
+await t("share: favicon and Open Graph metadata", async () => {
+  const page = await open(browser, {});
+  const meta = await page.evaluate(() => {
+    const byProp = (p) => { const el = document.querySelector('meta[property="' + p + '"]'); return el ? el.getAttribute('content') : null; };
+    const byName = (n) => { const el = document.querySelector('meta[name="' + n + '"]'); return el ? el.getAttribute('content') : null; };
+    const icon = document.querySelector('link[rel="icon"]');
+    const touch = document.querySelector('link[rel="apple-touch-icon"]');
+    return {
+      iconHref: icon ? icon.getAttribute('href') : null,
+      touchHref: touch ? touch.getAttribute('href') : null,
+      ogImage: byProp('og:image'), ogWidth: byProp('og:image:width'), ogHeight: byProp('og:image:height'),
+      ogTitle: byProp('og:title'), ogDescription: byProp('og:description'),
+      twitterCard: byName('twitter:card'),
+      description: byName('description'),
+    };
+  });
+  check('the favicon is an inline SVG data URI, not a missing file', (meta.iconHref || '').startsWith('data:image/svg+xml'), meta.iconHref);
+  check('the apple touch icon points at the file this page publishes', meta.touchHref === '/apple-touch-icon.png', meta.touchHref);
+  check('og:image is this page’s own absolute URL', meta.ogImage === 'https://rhairdrop.gmgnrepeat.com/og.png', meta.ogImage);
+  check('og:image:width/height are the card’s real dimensions', meta.ogWidth === '1200' && meta.ogHeight === '630', meta.ogWidth + 'x' + meta.ogHeight);
+  check('twitter:card asks for the large image, not a small thumbnail', meta.twitterCard === 'summary_large_image', meta.twitterCard);
+  check('og:title matches what this page is', meta.ogTitle === 'BulkSend · Robinhood Chain airdrops', meta.ogTitle);
+  check('og:description is the page’s own description, verbatim', !!meta.description && meta.ogDescription === meta.description, JSON.stringify(meta));
+  await page.close();
+});
+
+// ---- support: the maintainer's tip addresses, pinned exactly -----------------
+// These three strings are the whole point of the test: a wrong character here sends someone's tip to a
+// wallet nobody controls, and nothing about that failure would look broken on the page.
+const TIP_EVM = '0xCb37f365900C7F5d455525ce77b486e81e92e8B7';
+const TIP_SOL = '6sb3gUXmTzhsRQVe8RDudm6yEPBknrqNYCVv25PncxbY';
+const TIP_BTC = 'bc1q4qndvm4zul3uy70rlw334q5a9clmszfemg3345';
+await t("support: the three donation addresses are exactly the maintainer's", async () => {
+  const page = await open(browser, {});
+  // Best effort: Chromium under Playwright can be granted clipboard permissions, but a file:// page is not
+  // always treated the same as a real origin, so this is not assumed to work -- the assertion below checks
+  // what actually happened rather than what was requested.
+  try { await page.context().grantPermissions(['clipboard-read', 'clipboard-write']); } catch (e) { /* fall through */ }
+
+  const addrs = await page.evaluate(() => ({
+    evm: document.getElementById('tipEvm')?.textContent,
+    sol: document.getElementById('tipSol')?.textContent,
+    btc: document.getElementById('tipBtc')?.textContent,
+  }));
+  check('the EVM address is exactly the maintainer’s, character for character', addrs.evm === TIP_EVM, addrs.evm);
+  check('the Solana address is exactly the maintainer’s, character for character', addrs.sol === TIP_SOL, addrs.sol);
+  check('the Bitcoin address is exactly the maintainer’s, character for character', addrs.btc === TIP_BTC, addrs.btc);
+
+  const buttons = await page.evaluate(() => Array.from(document.querySelectorAll('.tipCopy')).map((b) => b.dataset.for));
+  check('each of the three addresses has its own Copy button',
+    ['tipEvm', 'tipSol', 'tipBtc'].every((id) => buttons.includes(id)) && buttons.length === 3, JSON.stringify(buttons));
+
+  await page.click('.tipCopy[data-for="tipEvm"]');
+  await page.waitForTimeout(300);
+  const afterClick = await page.evaluate(() => document.querySelector('.tipCopy[data-for="tipEvm"]').textContent);
+  // Either the click actually copied (permission granted) or the page correctly noticed it could not and
+  // said so; anything else -- the label sitting unchanged at "Copy" -- means the handler never ran at all.
+  check('clicking Copy either copies (says "Copied") or admits it could not (says "Select and copy")',
+    afterClick === 'Copied' || afterClick === 'Select and copy', afterClick);
+  await page.close();
+});
+
 // ---- H-04: a real CSV reader ------------------------------------------------
 await t("parse: H-04: a real CSV reader", async () => {
   const page = await open(browser, {});

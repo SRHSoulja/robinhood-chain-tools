@@ -8,7 +8,7 @@
 // The worker under test is built the same way publish.sh builds it -- through deploy/render-worker.py, not a
 // second copy of the template -- so this suite and the published worker can never quietly drift apart.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -138,12 +138,28 @@ function makeFetch(callLog) {
 }
 
 // ---------- render the worker exactly as publish.sh would, then load it ----------
-function renderWorker(target) {
+// og/touch are optional file paths, passed through to render-worker.py exactly as publish.sh passes them: a
+// path it reads and base64-embeds itself, not content this test pre-encodes.
+function renderWorker(target, og, touch) {
   const dir = mkdtempSync(join(tmpdir(), 'rh-worker-'));
   const src = join(ROOT, target === 'airdrop' ? 'web/index.html' : 'web/check.html');
   const out = join(dir, 'worker.mjs');
-  execFileSync('python3', [join(ROOT, 'deploy/render-worker.py'), src, out, target, '', '', 'sha256-test'], { cwd: ROOT, stdio: 'inherit' });
+  const args = [join(ROOT, 'deploy/render-worker.py'), src, out, target, '', '', 'sha256-test'];
+  if (og) args.push(og, touch);
+  execFileSync('python3', args, { cwd: ROOT, stdio: 'inherit' });
   return out;
+}
+
+// ---------- tiny valid PNG fixtures for /og.png and /apple-touch-icon.png (not the real files) ----------
+// Two different 1x1 RGB PNGs, so a route that accidentally served the other one's bytes would be caught.
+const OG_FIXTURE = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNYJagEAAJGAN6pm1uMAAAAAElFTkSuQmCC', 'base64');
+const TOUCH_FIXTURE = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMw3u0CAAJXATP2D68sAAAAAElFTkSuQmCC', 'base64');
+function writeFixtures() {
+  const dir = mkdtempSync(join(tmpdir(), 'rh-og-fixture-'));
+  const og = join(dir, 'og.png'), touch = join(dir, 'touch.png');
+  writeFileSync(og, OG_FIXTURE);
+  writeFileSync(touch, TOUCH_FIXTURE);
+  return { og, touch };
 }
 
 const mkReq = (pathAndQuery) => ({ url: 'https://rh.gmgnrepeat.com' + pathAndQuery, headers: { get: () => null } });
@@ -320,6 +336,43 @@ async function run() {
     const rc = await checkWorker.fetch(mkReq(`/x/4663/smart-contracts/${SC_VERIFIED}`), KEYED_ENV);
     check('the check worker (Check’s own reader) translates smart-contracts identically to the airdrop worker',
       deepEqual(await ra.json(), await rc.json()));
+  }
+
+  // ---- /og.png and /apple-touch-icon.png: the share card and home-screen icon, served from this origin ----
+  {
+    const { og, touch } = writeFixtures();
+    const imgWorker = (await import('file://' + renderWorker('airdrop', og, touch))).default;
+    globalThis.fetch = makeFetch([]);
+
+    const rOg = await imgWorker.fetch(mkReq('/og.png'), NO_KEY_ENV);
+    check('/og.png answers 200', rOg.status === 200, rOg.status);
+    check('/og.png content-type is image/png', rOg.headers.get('content-type') === 'image/png', rOg.headers.get('content-type'));
+    check('/og.png cache-control is public, max-age=86400', rOg.headers.get('cache-control') === 'public, max-age=86400', rOg.headers.get('cache-control'));
+    const ogBytes = Buffer.from(await rOg.arrayBuffer());
+    check('/og.png body bytes equal the fixture passed in', ogBytes.equals(OG_FIXTURE), `${ogBytes.length} vs ${OG_FIXTURE.length}`);
+
+    const rTouch = await imgWorker.fetch(mkReq('/apple-touch-icon.png'), NO_KEY_ENV);
+    check('/apple-touch-icon.png answers 200', rTouch.status === 200, rTouch.status);
+    check('/apple-touch-icon.png content-type is image/png', rTouch.headers.get('content-type') === 'image/png', rTouch.headers.get('content-type'));
+    check('/apple-touch-icon.png cache-control is public, max-age=86400', rTouch.headers.get('cache-control') === 'public, max-age=86400', rTouch.headers.get('cache-control'));
+    const touchBytes = Buffer.from(await rTouch.arrayBuffer());
+    check('/apple-touch-icon.png body bytes equal the fixture passed in (not og.png’s)', touchBytes.equals(TOUCH_FIXTURE) && !touchBytes.equals(OG_FIXTURE), `${touchBytes.length} vs ${TOUCH_FIXTURE.length}`);
+
+    // responseHasKey clones before reading, but this response's body was already consumed above (arrayBuffer),
+    // and a clone taken after that throws. The bytes are already in hand, so the check reads them directly.
+    const bodyHasKey = (buf, resp) => buf.toString('latin1').includes(KEY) || Array.from(resp.headers.entries()).some(([, v]) => String(v).includes(KEY));
+    check('the key never appears in either image response', !bodyHasKey(ogBytes, rOg) && !bodyHasKey(touchBytes, rTouch));
+
+    // A worker built with no images (the existing 6-argument call, as every other case in this file makes it)
+    // must not break: the routes exist but answer 404, never a crash and never someone else's bytes.
+    const bareWorker = (await import('file://' + renderWorker('airdrop'))).default;
+    globalThis.fetch = makeFetch([]);
+    const rNone = await bareWorker.fetch(mkReq('/og.png'), NO_KEY_ENV);
+    check('with no image configured, /og.png 404s rather than crashing or guessing', rNone.status === 404, rNone.status);
+
+    // HEAD or an unknown path is unchanged: still the ordinary redirect-to-/ behaviour, not touched by this route.
+    const rUnknown = await imgWorker.fetch(mkReq('/some/unknown/path'), NO_KEY_ENV);
+    check('an unknown path is still the existing 302-to-/ behaviour, unchanged', rUnknown.status === 302 && rUnknown.headers.get('location') === '/', JSON.stringify([rUnknown.status, rUnknown.headers.get('location')]));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

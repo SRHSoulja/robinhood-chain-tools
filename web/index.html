@@ -3,9 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-L2yzWaj9zTyv6RlkOopE2M6kQM0OFAsx1g/yOdbvlnQ='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-ZP7F69HG2ZMoQh/kaSYIzhNV27phIzSyupO58nYSj0w='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AF%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#101412">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="GM GN Repeat">
+<meta property="og:title" content="BulkSend · Robinhood Chain airdrops">
+<meta property="og:description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
+<meta property="og:url" content="https://rhairdrop.gmgnrepeat.com/">
+<meta property="og:image" content="https://rhairdrop.gmgnrepeat.com/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="BulkSend: send an NFT or token to hundreds of wallets on Robinhood Chain in a few transactions.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="BulkSend · Robinhood Chain airdrops">
+<meta name="twitter:description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
+<meta name="twitter:image" content="https://rhairdrop.gmgnrepeat.com/og.png">
 <style>
   :root{ color-scheme: light dark; --bg:#f6f7f4; --ink:#17201c; --mut:#5f6b64; --line:#d9ded9; --card:#ffffff; --acc:#1f7a4d; --acc2:#0f5f3a; --warn:#9a5b00; --bad:#a32d2d; --ok:#1f7a4d; --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; }
   @media (prefers-color-scheme: dark){ :root{ --bg:#101412; --ink:#e8ede9; --mut:#9aa69f; --line:#27302b; --card:#171d19; --acc:#3fbf7f; --acc2:#6fd9a1; --warn:#e5ab5e; --bad:#f28b8b; --ok:#6fd9a1; }
@@ -155,6 +171,37 @@
     <div id="whyDisabled" class="hint"></div>
     <div class="log" id="log" tabindex="0" aria-live="polite"></div>
   </div>
+
+  <!-- These are the maintainer's own donation addresses, not a contract this page controls. A test in
+       test/web/client.test.mjs pins each one exactly (#tipEvm, #tipSol, #tipBtc); any change here must be
+       deliberate and reviewed, the same as a change to a contract address would be. -->
+  <section id="support" class="card">
+    <h2>Support this work</h2>
+    <p style="margin:0 0 10px;font-size:13.5px">BulkSend is free, open source, and takes no fee. If it saved you time or gas, a tip keeps it maintained.</p>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div>
+        <div style="font-size:13px;color:var(--mut);margin:0 0 4px">Ethereum, Robinhood Chain, Base, Arbitrum, HyperEVM and other EVM chains</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <code id="tipEvm" class="mono" style="user-select:all;word-break:break-all">0xCb37f365900C7F5d455525ce77b486e81e92e8B7</code>
+          <button type="button" class="secondary tipCopy" data-for="tipEvm">Copy</button>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:13px;color:var(--mut);margin:0 0 4px">Solana</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <code id="tipSol" class="mono" style="user-select:all;word-break:break-all">6sb3gUXmTzhsRQVe8RDudm6yEPBknrqNYCVv25PncxbY</code>
+          <button type="button" class="secondary tipCopy" data-for="tipSol">Copy</button>
+        </div>
+      </div>
+      <div>
+        <div style="font-size:13px;color:var(--mut);margin:0 0 4px">Bitcoin</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <code id="tipBtc" class="mono" style="user-select:all;word-break:break-all">bc1q4qndvm4zul3uy70rlw334q5a9clmszfemg3345</code>
+          <button type="button" class="secondary tipCopy" data-for="tipBtc">Copy</button>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
 <footer>
   Reviewed by several independent automated audits, not by a human audit firm.
@@ -3806,6 +3853,22 @@
     a.textContent = cfg().bulk; a.className = 'mono'; el.appendChild(a);
     el.appendChild(document.createTextNode(', source verified on the explorer. '));
   })();
+  // Support section: one shared handler for all three "Copy" buttons. Each reads the address from its own
+  // sibling <code> rather than from a copy pasted in here, so the button can never show something other than
+  // what the page actually displays.
+  document.querySelectorAll('.tipCopy').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const code = $(btn.dataset.for);
+      if (!code) return;
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') { btn.textContent = 'Select and copy'; return; }
+      try {
+        await navigator.clipboard.writeText(code.textContent);
+        const was = btn.textContent;
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = was; }, 2000);
+      } catch (e) { btn.textContent = 'Select and copy'; }
+    });
+  });
   $('safeRow').style.display = 'flex';
   // NFT-only controls make no sense for a plain token
   function syncStdControls() { syncGasRow(); const nft = std() !== '20'; $('assign').parentElement.style.display = nft ? 'flex' : 'none'; $('rand').parentElement.style.display = nft ? 'flex' : 'none'; $('safeRow').style.display = std() === '721' ? 'flex' : 'none'; }

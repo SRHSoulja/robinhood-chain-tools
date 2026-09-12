@@ -8,16 +8,22 @@ worker.js publish.sh would produce without publishing anything. publish.sh calls
 script's command line; test/worker.test.mjs calls it the same way. Neither one guesses at the template: there
 is one copy of it, and this file is it.
 """
-import json, re, sys
+import base64, json, re, sys
 
 
-def render(src, target, wc_bundle, wc_sha, csp_hash):
+def render(src, target, wc_bundle, wc_sha, csp_hash, og_png_path='', touch_png_path=''):
     m = re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]*)">', open(src, encoding="utf-8").read())
     assert m, "no CSP meta tag to derive the header from"
     # The same policy the page carries, sent as a header as well, where a browser cannot be tricked out of it by
     # anything that arrives before the meta tag is parsed. Plus the framing and form rules.
     csp_header = m.group(1) + "; frame-ancestors 'none'"
     html = open(src, encoding="utf-8").read()
+
+    # The share card and the home-screen icon are read from disk here, the same way the page itself is: a path
+    # comes in, this file does the reading, so publish.sh and this test-facing entry point can never disagree
+    # about what "the image for this target" means. Empty means not configured, and the route below 404s.
+    og_b64 = base64.b64encode(open(og_png_path, 'rb').read()).decode() if og_png_path else ''
+    touch_b64 = base64.b64encode(open(touch_png_path, 'rb').read()).decode() if touch_png_path else ''
 
     wc_route = """
   // The WalletConnect bundle is served from this same origin, so importing it needs no CORS and the page
@@ -37,6 +43,18 @@ def render(src, target, wc_bundle, wc_sha, csp_hash):
     return new Response(bytes, { headers: Object.assign(secure(), { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'public, max-age=86400' }) });
   }
 """ if target == "airdrop" else ""
+
+    # The share-card image and the home-screen icon are this page's own asset, served from this same origin so
+    # a link preview or an "add to home screen" never depends on a third party being reachable. Generated for
+    # both targets, next to the /wc.js route above: the airdrop page and the Check page each carry their own
+    # pair, baked in at publish time from the files publish.sh was given for that target.
+    og_route = """
+  if (url.pathname === '/og.png' || url.pathname === '/apple-touch-icon.png') {
+    const bytes = url.pathname === '/og.png' ? OG_PNG_BYTES : TOUCH_PNG_BYTES;
+    if (!bytes) return new Response('not found', { status: 404, headers: secure() });
+    return new Response(bytes, { headers: Object.assign(secure(), { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }) });
+  }
+"""
 
     # Gate 11 needs this on both pages, not just Check: Assign's holder-snapshot fallback and NFT inventory
     # read through it on the airdrop page, exactly as source verification and revert reasons do on Check
@@ -212,6 +230,11 @@ const HTML = %s;
 const WC_BUNDLE = %s;
 const WC_SHA256 = %s;
 const CSP = %s;
+const OG_PNG = %s;
+const TOUCH_PNG = %s;
+// Decoded once at module load, not per request: the bytes never change for the life of this deployment.
+const OG_PNG_BYTES = OG_PNG ? Uint8Array.from(atob(OG_PNG), (c) => c.charCodeAt(0)) : null;
+const TOUCH_PNG_BYTES = TOUCH_PNG ? Uint8Array.from(atob(TOUCH_PNG), (c) => c.charCodeAt(0)) : null;
 const EXPLORERS = { '4663': 'https://robinhoodchain.blockscout.com', '46630': 'https://explorer.testnet.chain.robinhood.com' };
 // Sent on every response. A wallet-connected page delivered once over plain HTTP can be replaced in transit
 // before any of its own protections exist, so the first request is redirected and the browser is told never
@@ -240,7 +263,7 @@ export default { async fetch(request, env) {
     // check. It is carried here too, and the sentence in SECURITY.md now says what actually pins a visitor.
     return new Response(null, { status: 301, headers: Object.assign(secure(), { location: url.toString() }) });
   }
-%s%s  // Anything else goes to the page rather than to a 404. Cloudflare replaces the headers on an error
+%s%s%s  // Anything else goes to the page rather than to a 404. Cloudflare replaces the headers on an error
   // response from a worker, so a 404 here arrives without HSTS or the rest of the hardening: a visitor whose
   // first ever contact with this host is a mistyped path would not be pinned to HTTPS. A redirect keeps them.
   if (url.pathname !== '/' && url.pathname !== '/index.html') {
@@ -248,9 +271,15 @@ export default { async fetch(request, env) {
   }
   return new Response(HTML, { headers: Object.assign(secure(), { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300', 'content-security-policy': CSP }) });
 } };
-""" % (target, json.dumps(html), json.dumps(wc_bundle or None), json.dumps(wc_sha or None), json.dumps(csp_header), wc_route, x_route)
+""" % (target, json.dumps(html), json.dumps(wc_bundle or None), json.dumps(wc_sha or None), json.dumps(csp_header),
+       json.dumps(og_b64 or None), json.dumps(touch_b64 or None), wc_route, og_route, x_route)
 
 
 if __name__ == "__main__":
-    src, out, target, wc_bundle, wc_sha, csp_hash = sys.argv[1:7]
-    open(out, "w", encoding="utf-8").write(render(src, target, wc_bundle, wc_sha, csp_hash))
+    argv = sys.argv[1:]
+    src, out, target, wc_bundle, wc_sha, csp_hash = argv[:6]
+    # Optional, and positional the same way SRC is: a path this file reads itself, so publish.sh never has to
+    # agree with a second copy of "how to turn a PNG into what the worker embeds."
+    og_png_path = argv[6] if len(argv) > 6 else ''
+    touch_png_path = argv[7] if len(argv) > 7 else ''
+    open(out, "w", encoding="utf-8").write(render(src, target, wc_bundle, wc_sha, csp_hash, og_png_path, touch_png_path))
