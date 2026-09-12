@@ -23,6 +23,8 @@ not published while blockers were open; the integrity workflow checks this four 
     forge test                    # 111 contract tests, plus 29 reviewer probes of which 9 must fail
     npm install && npm test       # 477 browser tests, all answers mocked, no network
     ./test.sh                     # both of the above
+    ./test/quick.sh assign        # the inner loop: node layers plus one browser area, under a minute
+    ./verify.sh                   # the commit gate; a filtered browser run is refused here
 
 The browser tests answer every RPC, explorer and price request from the test file itself, so a failure is the
 page's fault and nothing else. Many test names begin with an audit finding id; that test is what stops the

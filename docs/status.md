@@ -36,12 +36,15 @@ tokens were accepted. No transaction was signed or broadcast and no ETH was spen
 ## What runs
 
 ```
+./test/quick.sh [area ...]             # the inner loop: node layers in five seconds, plus the browser cases of an area
 ./test.sh                              # everything below except the live scripts
 forge test                             # 111 contract tests, plus 29 reviewer probes of which 9 must FAIL
 node test/web/client.test.mjs          # 362 airdrop page tests
 node test/web/check.test.mjs           # 129 Check page tests
 ./test/csp-gate.test.sh                #  21 checks that a weaker published CSP is refused
 node test/worker.test.mjs              #  31 checks on the Worker's mainnet explorer translation, offline
+node test/readers.test.mjs             #  74 checks on the page's own recipient-box readers, extracted from its bytes, in node
+ONLY=assign node test/web/client.test.mjs   # any area of the browser suite alone; a filtered run says so and verify refuses it
 forge test --match-path 'test/fork/MainnetGuards.t.sol'   # the paste guards against 20 real mainnet
                                        #   collections and 20 real tokens, on a read-only fork
 ```

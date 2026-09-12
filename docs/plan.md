@@ -5,10 +5,11 @@
 > **State on 12 September 2026, the commit that carries this file.** Round eighteen, on Opus against `79d6446`, found one
 > blocker in the day-old mainnet explorer translation: every unverified contract read as verified, live. It and
 > its root cause, plus all ten should-fix items, are closed against the reviewer's own probe, which reads seven
-> of seven fixed. Every gate before the mainnet question is done. **What remains:** the fast test harness from [`harness.md`](harness.md), being built on a branch from `36a654f`
-> (a Sonnet pass; no check removed, the full verify unchanged as the gate); then round nineteen on Opus against
-> the commit that lands it, the final review of the code that would go to mainnet; then the deploy of v13
-> (about 0.0003 ETH) only on the maintainer's explicit word. Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1,
+> of seven fixed. Every gate before the mainnet question is done. **What remains:** round nineteen on Opus against the commit that carries this file, the final review of the
+> code that would go to mainnet; then the deploy of v13 (about 0.0003 ETH) only on the maintainer's explicit
+> word. The fast test harness from [`harness.md`](harness.md) landed at `6f5233b`: the page's readers in node in
+> a fifth of a second, a five-second quick gate, any browser area alone in half a minute, and the full verify
+> unchanged as the commit gate. Every fix from here on costs what it should. Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1,
 > 2, 4, 5, 1, 0, 1.
 >
 > - **BulkSend v13 is DEPLOYED on testnet** at `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (tx `0x5cb0037f…`), byte-identical
