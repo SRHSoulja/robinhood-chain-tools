@@ -73,3 +73,14 @@ testnet path untouched; the mainnet path without a binding still returns the env
 mainnet collection's holders page, the maintainer's mainnet address's NFT inventory, one reverted mainnet
 transaction's reason, and BulkSend's own verification once it is deployed. Then the integrity workflow gains
 the step that fails on `{"error":"upstream"}` for `/x/4663/tokens/…`, and gate 11 is closed.
+
+## The key is on a free tier (round twenty)
+
+`BLOCKSCOUT_KEY` is a free-tier Blockscout PRO key: five requests a second, for an API Blockscout is in the
+middle of migrating. `integrity.yml` checks it four times a day and fails if it goes dark, which is the
+mechanical half of this working. There is no separate mechanical fix for the day it does go dark, and none is
+needed: the honest degradation is that every mainnet lookup through this path reads "could not check for a
+published source" instead of a wrong answer. That makes the Check page's headline claim on mainnet
+*unavailable* rather than *wrong*, which is the right failure mode for a page whose whole job is to say
+"could not tell" rather than guess. Documented here so it is an expected state rather than a surprise the day
+it happens.

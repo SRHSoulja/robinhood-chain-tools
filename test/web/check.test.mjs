@@ -246,6 +246,40 @@ await t('check-page: round 19 F-1, an unanswered explorer lookup is could-not-ch
   await page.close();
 });
 
+// ---- round 20 F-1: a verification the Worker cannot call full or partial is "not known", never "matched" ----
+await t('check-page: round 20 F-1, is_partially_verified: null reads as not known, never as a match', async () => {
+  const verified = {};
+  verified[NFT] = { is_verified: true, is_partially_verified: null, name: 'Test Collection', abi: [] };
+  const page = await open(browser, { verified });
+  const t = await ask(page, NFT);
+  check('round-20 F-1 the pill never claims a match it cannot tell is full or partial', !/source published and matched/.test(t), t.slice(0, 300));
+  check('round-20 F-1 and says plainly that this is not known', /whether the match is full or partial is not known/.test(t), t.slice(0, 400));
+  await page.close();
+});
+
+// ---- round 20 F-2: a 200 body that is not an answer is could-not-check, never a definite no-source-published ----
+await t('check-page: round 20 F-2, a wrong-shaped 200 JSON body is could-not-check, not a definite no-source-published', async () => {
+  const verified = {};
+  verified[NFT] = { error: 'rate limited', retry_after: 30 };   // truthy, JSON, 200 -- and not a Blockscout record
+  const page = await open(browser, { verified });
+  const t = await ask(page, NFT);
+  check('round-20 F-2 a wrong-shaped 200 body reads as could-not-check', /could not check for a published source/.test(t), t.slice(0, 400));
+  check('round-20 F-2 and never as a definite no-source-published', !/no source published|has published no source/i.test(t), t.slice(0, 400));
+  await page.close();
+});
+
+// ---- round 20 F-7: an ERC-721 approve(spender, tokenId) is a per-token approval, not an ERC-20 allowance ----
+await t('check-page: round 20 F-7, an ERC-721 approve for one id at or beyond totalSupply is not called an unlimited approval', async () => {
+  const page = await open(browser, {});
+  // Test Collection's totalSupply() is mocked at 1000; id 1000 is a live, ordinary id above it -- collections
+  // that number from a serial or have burned pieces routinely have one -- and is exactly what used to trip
+  // the ERC-20 "at or beyond supply is unlimited" rule on the selector approve(address,uint256) shares.
+  const t = await ask(page, JSON.stringify({ to: NFT, data: '0x095ea7b3' + A(0x1111).slice(2).padStart(64, '0') + (1000).toString(16).padStart(64, '0') }), ME);
+  check('round-20 F-7 the lede names the single NFT the approval covers', /move Test Collection #1000/.test(t), t.slice(0, 300));
+  check('round-20 F-7 and the page does not contradict it with an unlimited-approval warning', !/This is an unlimited approval/.test(t) && !/in any amount/.test(t), t.slice(0, 500));
+  await page.close();
+});
+
 // ---- the contract's newest refusals are named, not shown as selectors (round thirteen S-7, twin reader) ----
 await t("check-page: the contract's newest refusals are named, not shown as selectors (round thirteen S-7, twin reader)", async () => {
   // selectors from `cast sig`, so the test does not depend on the page's own library to name them

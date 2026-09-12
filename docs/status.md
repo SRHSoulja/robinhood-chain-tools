@@ -1,6 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 12 September 2026, against BulkSend **v13** and round nineteen.
+Last updated 12 September 2026, against BulkSend **v13** and round twenty.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -11,14 +11,16 @@ it. Where something has not been tested, it says so; where a finding is open, it
 **Testnet only. Mainnet is switched off in the page itself**, not by intent: the mainnet BulkSend address is
 an unsubstituted `{{BULKSEND_MAINNET}}` placeholder, so `bulkReady()` is false and the send refuses there.
 
-Four things have to be true before that changes, and all are currently false:
+Four things have to be true before that changes, and all are currently false. A fifth, gate 14, is a control
+rather than a precondition, and it is now in place:
 
 | | state |
 | --- | --- |
-| a review round with no release blockers | **not met** — round seventeen found none; round eighteen then found one in code written that day, and round nineteen one more in the fix; each is closed against its reproduction. The round that finds none on a tree that then does not change has not happened |
+| a review round with no release blockers | **not met** — round seventeen found none; round eighteen then found one in code written that day, round nineteen one more in the fix, and round twenty none. The first of the two mainnet conditions has now been met twice; the round that finds none on a tree that then does not change has not happened |
 | a production mainnet RPC plan | **not met** — the page names Robinhood's free public endpoint, which [the official documentation](https://docs.robinhood.com/chain/connecting/) calls rate-limited and not recommended for production. Choose a production provider, keep credentials out of the page, and monitor/fail over reads before enabling mainnet |
 | a current real-wallet rehearsal on testnet | **not met** — the v13 live scripts are green, but their wallets are written by this repository. The one manual MetaMask run predates v10. Run the final page through an injected wallet and the phone/WalletConnect path on testnet once each |
 | explicit permission from the maintainer, given after that round | **not given** |
+| gate 14: both workflows check the mainnet deployment as well | **met** (round twenty) — before mainnet is enabled, both `.github/workflows/tests.yml` and `integrity.yml` check the mainnet deployment as well, and `integrity.yml` asserts the page names the mainnet address it was reviewed against. Today, with the `{{BULKSEND_MAINNET}}` placeholder still in and `LIVE_CHAINS` testnet-only, the new step in each workflow says so and passes; it activates itself the day that changes, rather than needing a hand-edit in the same breath as enabling mainnet |
 
 No one item alone is enough. The deployer holds about 0.002 mainnet ETH that someone else sent, which is enough
 for three deployments, which is exactly why the rule is written down: available is not permitted. Its mainnet
@@ -143,6 +145,29 @@ ERC-1155 survey covers 6, which is every one that was findable and measurable. S
 a distribution, only its top, and the file says so.
 
 ## Open findings
+
+Round twenty, 12 September 2026, against `11d52c6`, on Opus. The full report is
+[`audit-2026-09-12-twentieth-external.md`](audit-2026-09-12-twentieth-external.md), published as written.
+**No release blocker.** Nine should-fix items, none on the contract and none on a path where value moves;
+three of them are edges of round nineteen's own fixes ("the fix is right and nothing checked the consumer, or
+the order, around it"). Its probe is `test/web/audit-probe-20.mjs`.
+
+### Round twenty findings
+
+| | | |
+| --- | --- | --- |
+| F-1 | "source published and matched" stated about a verification the page cannot tell is full or partial | closed: `out.partial` is now three states (`true`/`false`/`null`, matching what the mainnet Worker's `is_partially_verified` actually knows) rather than `!!sc.is_partially_verified`; the pill reads "whether the match is full or partial is not known" on `null`, never "matched" — `check.test.mjs` round-20 F-1 |
+| F-2 | any 200 JSON body was read as a real explorer answer, so a body with no `is_verified` in it at all became the definite claim "no source published" | closed: `readAddress` reads `sc`'s fields only when `typeof sc.is_verified === 'boolean'`; anything else is "could not check", the same as an unreached explorer — `check.test.mjs` round-20 F-2 |
+| F-3 | `myTokenIds` ended a cut-short inventory walk (a wrong-shaped page, or the walk's own twenty-page ceiling) as a complete one, and Assign and the picker stated the resulting count as fact | closed: `myTokenIds` now marks itself `truncated` on both triggers, the two lines the holder walk already had; Assign says "the explorer's answer was cut short" instead of a false shortfall, and the picker says "at least N" instead of "You hold N" — `client.test.mjs` round-20 F-3a, F-3b, and the picker case |
+| F-4 | a headed `address,amount` list (a "how many each" file with no id column at all) was reported as "already names its token ids", and refused | closed: the positional pairing test now runs only when the file has no heading at all, not merely no id column — `client.test.mjs` round-20 F-4 |
+| F-5 | a list where only some lines already named an id was read as "not paired" by an `.every()`, and re-paired at random with no question | closed: counted instead of `.every()`d; a partial match now asks too, naming how many of how many — `client.test.mjs` round-20 F-5 |
+| F-6 | "Apply weight" refused to eat the ids in a headed file but silently ate them in the bare `address,id` form Assign and the picker write for themselves | closed: the guard reads a line's id the same way (`lineNamesId`) regardless of whether the file has a heading — `client.test.mjs` round-20 F-6 |
+| F-7 | an ERC-721 `approve(spender, tokenId)` at or beyond the collection's `totalSupply` was called "an unlimited approval ... in any amount" | closed: `unlimitedApproval` is standard-aware now, the way `describeCall` already was; it defers to the single-NFT sentence on `approve(address,uint256)` for ERC-721/ERC-1155 — `check.test.mjs` round-20 F-7 |
+| F-8 | two documents (this file and `docs/for-reviewers.md`) stated browser-test counts that were wrong and disagreed with each other | closed: corrected in this commit to the counts the suites themselves print, including the cases this round added |
+| F-9 | the holder walk's "cut short" branch was unreachable whenever the FIRST page was the unreadable one, because the empty-list check ran first | closed: `truncated` is tested before `!uniq.length`; a genuinely empty result and a result whose only holder was the connected wallet now read differently too — `client.test.mjs` round-20 F-9 |
+
+All nine of the reviewer's probe assertions read fixed. Gate 14, in "The gate" above, closes the reviewer's
+other finding: no automated check watched the mainnet deployment.
 
 Round nineteen, 12 September 2026, against `39eaaf2`, on Opus. The full report is
 [`audit-2026-09-12-nineteenth-external.md`](audit-2026-09-12-nineteenth-external.md), published as written.

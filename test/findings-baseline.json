@@ -13,7 +13,8 @@
   "audit-probe-13": 0,
   "audit-probe-17": 2,
   "audit-probe-18": 0,
-  "audit-probe-19": 0
+  "audit-probe-19": 0,
+  "audit-probe-20": 0
  },
  "contract_probe_sources": {
   "AuditProbe": "0417777234c0aad9ab68ff2c0d9a432b38273f21d92ee4554fe3ffdb2e7f4008",
@@ -28,7 +29,8 @@
   "audit-probe-13": "6e1103f443cce95365115e55d5fa21c4edeaf2f966fb6a9b42eb5c564b0126b8",
   "audit-probe-17": "169a6bd9cd5be2afa026d8b72f9ca6c1d4478b281b7bab586925208c0b31df22",
   "audit-probe-18": "51842812215103de7df4e766aad447e8edeb68e53b23e8a4dbb5566dfb779869",
-  "audit-probe-19": "22d14429fee0ed276f2e4b3ecdb954e04a9b92ec9219f8dcb95ba98e0f3a1317"
+  "audit-probe-19": "22d14429fee0ed276f2e4b3ecdb954e04a9b92ec9219f8dcb95ba98e0f3a1317",
+  "audit-probe-20": "2df92cc39153cc322fbeb63f3ad1ff1361a5810c6b2754ede51b41f916ce91f9"
  },
  "contract_probe_assertions": {
   "AuditProbe": "58faa4fe9f082e1bbd74e487087307e4f66ace155d99da8d6452c582ca4033fc",
@@ -43,11 +45,12 @@
   "audit-probe-13": "7ff803e37c9db1cbb502f83b1ce95007288956b683b152a99b16333d903a18a3",
   "audit-probe-17": "a67c628d24cf6dd194af08bc3331d1268a7344d1c681a34469706d5d1a866f68",
   "audit-probe-18": "d74e0ba57261c7f39a640dd829cd99e3e4fc5ad009cae87f7e36b4c52be83bf4",
-  "audit-probe-19": "cdf462529504e22f73d621963a653bd00a82d9e0d4879a500c83530b653a0fdb"
+  "audit-probe-19": "cdf462529504e22f73d621963a653bd00a82d9e0d4879a500c83530b653a0fdb",
+  "audit-probe-20": "634e0ecd1a5d8a3915167cea750a3d4dc588579391f849f2238be17e126bc2c5"
  },
  "suite_files": {
-  "client": "a14de728220e09f71e6ff02c27ee5ea3300744d0dc1bafb5b0cd5305ff4ea9ab",
-  "check": "a8aec67a5a5c805939f5c682c9fccef38895ce72308ff1fc10cfd847dbc8f62e",
+  "client": "ca26c8c2a43ff51b1c760d7a2f1b81340f50c0a73fc4ea87fde3cf0359b6ed90",
+  "check": "a478463567b1a2fc6b84adb0173f4d672caf8c918a08d80721df412f8d5d55eb",
   "worker": "1e663ea92ad651cb008eb714a7230206a50414e3a8ded1c241cc480ea808f120",
   "csp_gate": "812e911013a4a36566b993660edd8cca87c5a464821db385a5f070fc91813604",
   "readers": "a2eb5d7e516d6b732cecf453640b3ed16917fb9e1fb1e3992ba77f3db4e94e20",

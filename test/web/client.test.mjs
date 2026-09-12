@@ -284,7 +284,10 @@ async function open(_stale, opts = {}) {
     if (url.includes('cdnjs.cloudflare.com')) return route.continue();   // the real ethers build
     if ((opts.deadRpcHosts || []).some((h) => url.includes(h))) return route.abort('connectionrefused');   // gate 9: an endpoint that is down
     if (url.includes('/holders')) { if (opts.delayHoldersMs) await new Promise((r) => setTimeout(r, opts.delayHoldersMs)); (opts.__holdersHosts = opts.__holdersHosts || []).push(new URL(url).host || 'self'); return route.fulfill({ contentType: 'application/json', body: JSON.stringify(opts.explorer || { items: [] }) }); }
-    if (url.includes('/nft')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(opts.ownedNfts || { items: [] }) });
+    // round 20 F-3: a function lets a test answer differently page to page (a real page, then one that is
+    // not a page of items at all), the way a real explorer walk is answered call by call. A plain object
+    // keeps answering the same thing forever, which is also how the walk's own twenty-page ceiling is tested.
+    if (url.includes('/nft')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify(typeof opts.ownedNfts === 'function' ? opts.ownedNfts() : (opts.ownedNfts || { items: [] })) });
     if (url.includes('api.coinbase.com')) return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { amount: '2500' } }) });
     if (url.includes('rpc.') && req.method() === 'POST') {
       let body; try { body = JSON.parse(req.postData() || '{}'); } catch { body = {}; }
@@ -522,6 +525,20 @@ await t("snapshot: M-03: an incomplete holder read is not used", async () => {
   check('M-03 a holder read that never ends is refused rather than silently truncated',
     (await text(page, '#msgList')).includes('incomplete') || (await text(page, '#log')).includes('cut short'),
     (await text(page, '#msgList')) + ' | ' + (await text(page, '#log')).slice(-120));
+  await page.close();
+});
+
+// ---- round 20 F-9: a first page that is not a page of holders is cut short, not "no holders" -------------
+await t('snapshot: round 20 F-9, when the FIRST page of the holder walk is not a page of items, the walk says it was cut short rather than that there are no holders', async () => {
+  const page = await open(browser, { explorer: { message: 'Not found' } });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#snapAddr', NFT); await page.click('#snap');
+  await page.waitForTimeout(3000);
+  const said = (await text(page, '#log')) + ' ' + (await text(page, '#msgList'));
+  check('round-20 F-9 the walk says it was cut short', /cut short|incomplete|Stopped after/.test(said), said.slice(-260));
+  check('round-20 F-9 and never states the explorer found no holders when the page could not be read at all',
+    !/returned no holders/.test(said), said.slice(-260));
   await page.close();
 });
 
@@ -1092,6 +1109,116 @@ await t('assign: round 19 F-10, a headed list is judged paired by its id column,
   await page.click('#assign'); await page.waitForTimeout(2500);
   check('round-19 F-10 Assign asks before re-pairing a headed, fully paired list', asked, 'no dialog');
   check('round-19 F-10 and a No leaves it untouched', (await val(page, '#list')) === before, JSON.stringify(await val(page, '#list')));
+  await page.close();
+});
+
+// ---- round 20 F-4: a headed "address,amount" list is not "already paired" ---------------------------------
+await t('assign: round 20 F-4, a headed "address,amount" list (no id column at all) is never read as already naming its token ids', async () => {
+  const page = await open(browser, { approved: true, ownedIds: [71, 72, 73, 74, 75] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#list', 'address,amount\n' + A(0x111) + ',3\n' + A(0x222) + ',2\n');
+  let asked = false; page.removeAllListeners('dialog'); page.on('dialog', (d) => { asked = true; d.dismiss(); });
+  await page.click('#assign'); await page.waitForTimeout(2500);
+  check('round-20 F-4 Assign never asks about ids a "how many each" file does not name', !asked, 'a dialog appeared');
+  const list = await val(page, '#list');
+  check('round-20 F-4 and pairs the wallets with the wallet\'s real ids instead',
+    /,7[1-5]\b/.test(list) && list.split('\n').filter(Boolean).length === 5, list.replace(/\n/g, ' | '));
+  await page.close();
+});
+
+// ---- round 20 F-5: a partly-paired list is not silently re-paired -------------------------------------------
+await t('assign: round 20 F-5, a list where only some lines already name an id is not silently re-paired at random', async () => {
+  const page = await open(browser, { approved: true, ownedIds: [71, 72, 73] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  const before = A(0x111) + ',11\n' + A(0x222) + ' x2\n';
+  await page.fill('#list', before);
+  let asked = null; page.removeAllListeners('dialog'); page.on('dialog', (d) => { asked = d.message(); d.dismiss(); });
+  await page.click('#assign'); await page.waitForTimeout(2500);
+  check('round-20 F-5 Assign asks before replacing an id that was typed by hand, and names the count',
+    !!asked && /already names its token ids on 1 of these 2 lines/.test(asked), String(asked));
+  check('round-20 F-5 and a No leaves the hand-typed id exactly as it was',
+    (await val(page, '#list')) === before, JSON.stringify(await val(page, '#list')));
+  await page.close();
+});
+
+// ---- round 20 F-6: "Apply weight" does not silently eat the ids in the bare form this page writes itself ----
+await t('assign: round 20 F-6, "Apply weight" refuses rather than silently dropping the ids in a bare, already-paired list', async () => {
+  const holders = { items: [{ address: { hash: A(0x111) }, value: '2' }, { address: { hash: A(0x222) }, value: '1' }] };
+  const page = await open(browser, { approved: true, ownedIds: [71, 72, 73], explorer: holders });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#snapAddr', NFT); await page.click('#snap'); await page.waitForTimeout(4000);
+  await page.click('#assign'); await page.waitForTimeout(2000);
+  const paired = await val(page, '#list');
+  const hadIds = /,7[123]\b/.test(paired);
+  await page.selectOption('#weight', 'flat'); await page.fill('#each', '1'); await page.waitForTimeout(200);
+  await page.click('#applyWeight'); await page.waitForTimeout(1200);
+  const after = await val(page, '#list');
+  check('round-20 F-6 Assign paired the bare list with real ids first (the shape this page writes for itself)', hadIds, paired.replace(/\n/g, ' | '));
+  check('round-20 F-6 Apply weight refuses rather than silently dropping the ids it did not write',
+    /already names the exact NFT id/.test(await text(page, '#msgList')), await text(page, '#msgList'));
+  check('round-20 F-6 and every id is still on the list afterward', after === paired, after.replace(/\n/g, ' | '));
+  await page.close();
+});
+
+// ---- round 20 F-3a: a wrong-shaped explorer page ends the inventory walk as complete -------------------------
+await t('assign: round 20 F-3a, a 200 body that is not a page of items ends the inventory walk as complete, and Assign is told it was cut short rather than a false count', async () => {
+  let calls = 0;
+  const ownedNfts = () => {
+    calls++;
+    if (calls === 1) return { items: Array.from({ length: 50 }, (_, i) => ({ token: { address_hash: NFT }, id: String(9000 + i) })), next_page_params: { page: 2 } };
+    return { message: 'Not found' };
+  };
+  const page = await open(browser, { ownedIds: [], ownedNfts });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, Array.from({ length: 60 }, (_, i) => A(0x32000 + i)).join('\n'));
+  await page.click('#assign');
+  await page.waitForFunction(() => /Assign stopped|Assigned|Could not read/.test(document.querySelector('#log').textContent || ''), null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(500);
+  const msg = await text(page, '#msgList');
+  check('round-20 F-3a Assign reports its read of the wallet as cut short, not a false shortfall',
+    /cut short|could not read all/.test(msg) && !/holds \d+ of them/.test(msg), 'calls=' + calls + ' msg=' + msg.slice(0, 200));
+  await page.close();
+});
+
+// ---- round 20 F-3b: the inventory walk's own twenty-page ceiling is a limit of this page, not a fact ----------
+await t('assign: round 20 F-3b, the inventory walk\'s own page ceiling is reported as cut short, not as a complete, final count', async () => {
+  const ownedNfts = { items: [{ token: { address_hash: NFT }, id: '9500' }], next_page_params: { page: 2 } };
+  const page = await open(browser, { ownedIds: [], ownedNfts });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await setList(page, Array.from({ length: 60 }, (_, i) => A(0x33000 + i)).join('\n'));
+  await page.click('#assign');
+  await page.waitForFunction(() => /Assign stopped|Assigned|Could not read/.test(document.querySelector('#log').textContent || ''), null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(500);
+  const msg = await text(page, '#msgList');
+  check('round-20 F-3b twenty requests with the explorer still offering a next page is reported as cut short',
+    /cut short|could not read all/.test(msg) && !/holds \d+ of them/.test(msg), msg.slice(0, 200));
+  await page.close();
+});
+
+// ---- round 20 F-3: the picker says the count could not be read in full, not a bare "You hold N" ----------
+await t('picker: round 20 F-3, the picker does not state a bare count when its own inventory read was cut short', async () => {
+  let calls = 0;
+  const ownedNfts = () => {
+    calls++;
+    if (calls === 1) return { items: Array.from({ length: 50 }, (_, i) => ({ token: { address_hash: NFT }, id: String(9800 + i) })), next_page_params: { page: 2 } };
+    return { message: 'Not found' };
+  };
+  const page = await open(browser, { approved: true, artOnchain: true, ownedIds: [], ownedNfts });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#list', A(0x71) + '\n');
+  await page.waitForTimeout(300);
+  await page.click('#pick'); await page.waitForTimeout(6000);
+  const msg = await text(page, '#pickMsg');
+  check('round-20 F-3 the picker says its read could not be completed, not a bare final count',
+    /could not read all/.test(msg), msg.slice(0, 300));
+  check('round-20 F-3 and never states the bare count as though it were the whole of what is held',
+    !/^You hold 50;/.test(msg), msg.slice(0, 300));
   await page.close();
 });
 

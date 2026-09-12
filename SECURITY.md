@@ -72,6 +72,10 @@ until you revoke it, and the thing that keeps it safe is that `BulkSend` has no 
 way to move anything except inside a transaction you sign. The page offers a Revoke button and tells you to
 use it. Use it.
 
+Because the contract is immutable and has no pause, once you have approved it for a collection **the page is
+the only lever anyone has.** Taking the page down, or republishing it with mainnet switched off, does not
+revoke an approval already granted; only a revoke transaction from your own wallet does that.
+
 There is one route that needs no approval at all: if your wallet supports EIP-5792 batching, the page sends
 the transfers as your own wallet and `BulkSend` is never approved for anything. The page prefers that route
 when the wallet offers it.

@@ -196,6 +196,47 @@ jobs:
           [ "$chain" = "$local_code" ] || { echo "the deployed runtime is NOT what this source builds"; exit 1; }
           echo "  ok    identical"
 
+      # Round twenty, gate 14 (the reviewer's missing control, docs/plan.md item 14): the step above watches
+      # testnet only, so on the day the {{BULKSEND_MAINNET}} placeholder is substituted, the strongest control
+      # this project has would still be watching a contract that holds nothing. This is the mainnet half of
+      # the same check, against the LIVE page already fetched to /tmp/live.html above -- not this repository's
+      # copy, because the whole point of this workflow is to watch what is actually served. Reads only; kept
+      # after the testnet bytecode step, so it is last.
+      - name: the mainnet deployment is watched too, once there is one
+        run: |
+          set -euo pipefail
+          if grep -qF '{{BULKSEND_MAINNET}}' /tmp/live.html; then
+            grep -qF 'LIVE_CHAINS = new Set([46630])' /tmp/live.html \
+              || { echo "the mainnet placeholder is still on the live page but LIVE_CHAINS no longer reads as testnet-only; that pair must move together"; exit 1; }
+            echo "  ok    mainnet is off; nothing on 4663 to watch"
+            exit 0
+          fi
+          test -f deployments.mainnet.json || { echo "the live page no longer carries the {{BULKSEND_MAINNET}} placeholder, but deployments.mainnet.json does not exist; record the mainnet deployment there before the placeholder is removed"; exit 1; }
+          addr="$(python3 - <<'PY'
+          import json
+          print(json.load(open('deployments.mainnet.json'))['BulkSend'].lower())
+          PY
+          )"
+          python3 - "$addr" <<'PY'
+          import re, sys
+          addr = sys.argv[1]
+          s = open('/tmp/live.html', encoding='utf-8').read()
+          i = s.find('4663:')
+          seg = s[i:s.find('},', i)] if i >= 0 else ''
+          m = re.search(r"bulk: '(0x[0-9a-fA-F]{40})'", seg)
+          if not m or m.group(1).lower() != addr:
+              print('the live page does not name the mainnet address ' + addr + ' for chain 4663 (' + ('found ' + m.group(1) if m else 'no bulk address found') + ')')
+              sys.exit(1)
+          print('  ok    the live page names the mainnet address ' + addr)
+          PY
+          chain="$(curl -sS --max-time 30 -X POST https://rpc.mainnet.chain.robinhood.com \
+            -H 'content-type: application/json' \
+            -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"$addr\",\"latest\"]}" \
+            | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"])')"
+          built="$(python3 -c "import json;print(json.load(open('out/BulkSend.sol/BulkSend.json'))['deployedBytecode']['object'])")"
+          [ "$chain" = "$built" ] || { echo "the deployed mainnet runtime is not what this source builds"; exit 1; }
+          echo "  ok    mainnet $(( (${#built} - 2) / 2 )) bytes, identical at $addr"
+
       # A monitor whose only channel is one person's e-mail is a monitor that fails quietly. This opens an
       # issue on the repository, which is public, searchable, and does not depend on anyone reading their
       # mail on a weekend.

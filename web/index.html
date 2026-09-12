@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-X2WFwzzmIywvi+dIUMENH9d9vCl6AaNUXDwLuGwu+HM='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-hBqUURE6OttgdjSpD0wHO21FTUjUGTdz3dDSL2+NCxA='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <style>
@@ -989,6 +989,22 @@
     if (rest.length > 1 && rest.every((x) => wholeText(x) !== null)) return { n: rest.length, raw: rest.join(','), named: false };
     return { n: fallback, raw: String(fallback), named: false };
   }
+  // Round twenty F-4/F-5/F-6: one answer to "does this line already carry a whole token id", shared by
+  // Assign's already-paired guard and Apply Weight's id-eating guard, so the two can never disagree about the
+  // same line the way they used to. By column name when the file has a heading -- and ONLY when that heading
+  // names an id column; a headed file with no id column (an `address,amount` file, say) never counts, however
+  // whole its other cells are (F-4). Positionally only for a bare list, which is what every list this page
+  // writes for itself looks like (F-6).
+  function lineNamesId(line, col) {
+    const cells = splitRow(String(line || '').trim());
+    if (col) {
+      if (col.id === undefined) return false;
+      const v = String(cells[col.id] ?? '').trim();
+      return v !== '' && v.split(/[\s|]+/).filter(Boolean).every((x) => wholeText(x) !== null);
+    }
+    const rest = cells.filter(Boolean).slice(1).filter((x) => !/^x\d+$/i.test(x));
+    return rest.length > 0 && rest.every((x) => wholeText(x) !== null);
+  }
   // Some addresses are not recipients. The zero address burns; BulkSend has no owner and no rescue function,
   // so anything sent there is gone; a token's own contract almost never gives it back either. The contract
   // refuses itself, but the wallet-batch path never reaches the contract, so the refusal has to live here too.
@@ -1508,6 +1524,7 @@
     const ids = await myTokenIds(token, PICK_CAP + 40).catch(() => []);
     if (pick.gen !== mine) return;
     pick.held = ids.length;
+    pick.heldTruncated = !!ids.truncated;   // round twenty F-3: a cut-short walk is not a count of what is held
     pick.ids = ids.slice(0, PICK_CAP);
     if (!pick.ids.length) {
       say('pickMsg', 'Your wallet does not appear to hold anything in this collection, or the explorer would not say.', 'bad');
@@ -1545,7 +1562,7 @@
     const shown = pick.ids.filter((id) => (pick.meta.get(String(id)) || {}).img).length;
     say('pickMsg', shown + ' of ' + pick.ids.length + ' have their picture on the chain.'
       + (offchain ? '  ' + offchain + ' keep theirs on a web server, which this page will not fetch: allowing that would tell that server who is looking, on a page that also signs transactions. Those still send normally.' : '')
-      + (ids.length > pick.ids.length ? '  You hold ' + ids.length + '; this shows the first ' + pick.ids.length + ', which is as many as are worth choosing between by eye. For more than that, "Assign my token ids" uses everything you hold.' : ''), shown ? 'ok' : 'warn');
+      + (ids.length > pick.ids.length ? '  ' + (pick.heldTruncated ? 'You hold at least ' + ids.length : 'You hold ' + ids.length) + '; this shows the first ' + pick.ids.length + ', which is as many as are worth choosing between by eye. For more than that, "Assign my token ids" uses everything you hold.' : (pick.heldTruncated ? '  This page could not read all of what you hold, so ' + ids.length + ' is at least what is shown, not a full count.' : '')), shown ? 'ok' : 'warn');
   }
   // Fills in pictures on tiles already on screen, without rebuilding the grid and losing what is selected.
   function paintTiles() {
@@ -1915,8 +1932,16 @@
         if (page === 199) truncated = true;
       }
       const uniq = [...new Set(holders)].filter(h => h !== ethers.ZeroAddress && (!me || h.toLowerCase() !== me.toLowerCase()));
-      if (!uniq.length) { log('The explorer returned no holders for that address.', 'bad'); return; }
+      // Round twenty F-9: this used to run after the empty-list check below, which made it unreachable
+      // whenever the FIRST page was the unreadable one -- the commonest case, because the first page is the
+      // only one every lookup makes. "Cut short" has to be said before "found none", or it never is.
       if (truncated) { say('msgList', 'Stopped after ' + holders.length + ' holders, so this list is incomplete. It has not been used.', 'bad'); log('The holder list was cut short, so nothing was loaded. Narrow the collection or bring your own list.', 'bad'); return; }
+      if (!uniq.length) {
+        // A second way this sentence used to lie: every holder found was you, or the zero address, and both
+        // are filtered out above. That is not "the explorer returned no holders"; it is "nobody else holds it".
+        log(holders.length ? 'The explorer found holders for that address, but the only one(s) were the connected account or the zero address, so there is nobody else to list.' : 'The explorer returned no holders for that address.', 'bad');
+        return;
+      }
       const endBlock = await rpBlock.getBlockNumber().catch(() => null);
       if (startBlock && endBlock && endBlock !== startBlock) {
         log('The chain moved from block ' + startBlock + ' to ' + endBlock + ' while this was being read. Those two numbers do not say which block the explorer had indexed, so they neither prove nor disprove that this list is consistent: someone who traded mid-read can appear twice or not at all.', 'warn');
@@ -2051,8 +2076,12 @@
     }
     let capped = 0, unknown = 0, total = 0;
     const acol = boxColumns();
-    if (standard === '721' && acol && acol.id !== undefined
-        && lines.some((line) => String(splitRow(line)[acol.id] ?? '').trim())) {
+    // Round twenty F-6: this guard only ever saw a HEADED file with a named id column. Every list this page
+    // writes for itself -- Assign's own output, the picker's "Use these" -- is bare, so the guard never fired
+    // on the one shape it needed to catch most, and Apply Weight silently rewrote each line down to its bare
+    // address, dropping the id. `lineNamesId` reads a bare line's id positionally, the same way Assign's own
+    // already-paired check now does, so the two guards can no longer disagree about the same file.
+    if (standard === '721' && lines.some((line) => lineNamesId(line, acol))) {
       say('msgList', 'That file already names the exact NFT id on each line. An amount cannot multiply one '
         + 'unique NFT into several, so weighting it would describe more deliveries than the ids actually name. '
         + 'Nothing has been changed. Use a wallet-and-amount list before assigning ids, or add each exact id as its own line.', 'bad');
@@ -2153,17 +2182,23 @@
     if (!wants.length) { say('msgList', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
     // Round eighteen S-6 (round seventeen S-2): a list that already names an id on every line is a list that
     // has been paired. Assign would re-pair it at random and say so only afterwards. Ask first.
+    //
+    // Round twenty F-4/F-5: `lineNamesId` is now the same test everywhere this question is asked (F-4: a
+    // headed `address,amount` file has no id column at all, and is never "paired" merely because its one
+    // other column happens to hold whole numbers). And this used to be an `.every()`, so ONE unpaired line
+    // made the whole list read as unpaired, and Assign replaced ids that had been typed by hand with no
+    // question asked at all (F-5). Count instead, and ask about a partial match too.
     {
-      const alreadyPaired = $('list').value.split(/\r?\n/).filter((l) => addressOn(l, col)).every((l) => {
-        const cells = splitRow(l.trim());
-        // Round nineteen F-10: by column name when there is a heading, as every other reader does; positionally
-        // only for a bare list. A headed list with a label column in front is otherwise never "paired".
-        if (col && col.id !== undefined) { const v = String(cells[col.id] ?? '').trim(); return v !== '' && v.split(/[\s|]+/).filter(Boolean).every((x) => wholeText(x) !== null); }
-        const rest = cells.filter(Boolean).slice(1).filter((x) => !/^x\d+$/i.test(x));
-        return rest.length > 0 && rest.every((x) => wholeText(x) !== null);
-      });
-      if (alreadyPaired && !confirm('Every line already names its token ids. Assign would throw those pairings away and pair the wallets with your holdings again. Continue?')) {
-        say('msgList', 'Left as it is: every line already names its ids.', 'ok'); return;
+      const addressed = $('list').value.split(/\r?\n/).filter((l) => addressOn(l, col));
+      const pairedCount = addressed.filter((l) => lineNamesId(l, col)).length;
+      if (addressed.length && pairedCount === addressed.length) {
+        if (!confirm('Every line already names its token ids. Assign would throw those pairings away and pair the wallets with your holdings again. Continue?')) {
+          say('msgList', 'Left as it is: every line already names its ids.', 'ok'); return;
+        }
+      } else if (pairedCount > 0) {
+        if (!confirm('This file already names its token ids on ' + pairedCount + ' of these ' + addressed.length + ' lines. Assign would throw those pairings away too and pair every wallet with your holdings again. Continue?')) {
+          say('msgList', 'Left as it is: ' + pairedCount + ' of ' + addressed.length + ' lines already name a token id.', 'ok'); return;
+        }
       }
     }
     const wallets = wants.map(w => w.to);
@@ -2270,8 +2305,16 @@
         if (ta.toLowerCase() === token.toLowerCase() && it.id != null) out.push(BigInt(it.id));
       }
       if (d.truncated) out.truncated = true;   // round nineteen F-3: the Worker said its answer was cut short; carry that out
+      // Round twenty F-3: the holder walk two hundred lines above already has both of these lines. A page
+      // that comes back HTTP 200 but is not a page of items at all -- a gateway's own document, an explorer
+      // version that answers "not found" in the body -- is neither a full page nor the explorer's own
+      // end-of-list signal, and ending the walk there must not read as "that was everything".
+      if (!Array.isArray(d.items)) { out.truncated = true; break; }
       const p = d.next_page_params; if (!p) break;
       next = Object.entries(p).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
+      // The walk's own ceiling is a limit of this page, not a fact about the wallet. The explorer still had
+      // more to say on request twenty; this stopped asking, and stopping is not the same as finishing.
+      if (page === 19) out.truncated = true;
     }
     const sorted = out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)); if (out.truncated) sorted.truncated = true;
     return sorted;

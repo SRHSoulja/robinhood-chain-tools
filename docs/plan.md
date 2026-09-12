@@ -2,13 +2,19 @@
 
 > ## Start here
 >
-> **State on 12 September 2026, the commit that carries this file.** Round nineteen, on Opus against `39eaaf2`
-> (the harness and round eighteen's closure), found one blocker in round eighteen's fix: the Check page read an
-> unanswered explorer lookup as "no source published". It and all eleven should-fix items are closed against
-> the reviewer's own probe, three of three fixed, at the new harness's price: a filtered case in four seconds,
-> an area in under a minute, one full verify at the commit. Every gate before the mainnet question is done.
-> **What remains:** round twenty on Opus against this commit, then the deploy of v13 (about 0.0003 ETH) only on
-> the maintainer's explicit word. Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0, 1, 1.
+> **State on 12 September 2026, the commit that carries this file.** Round twenty, on Opus against `11d52c6`
+> (round nineteen's closure), found **no release blocker**: nine should-fix items, none on the contract and
+> none on a path where value moves, three of them edges of round nineteen's fixes ("the fix is right and
+> nothing checked the consumer, or the order, around it"). All nine are closed in this commit against the
+> reviewer's own probe, and its missing control is gate 14 below. Two rounds have now found no blocker,
+> seventeen and twenty, but the gate as `status.md` words it is the round that finds none on a tree that
+> then does not change, and this tree changed after both. Round twenty-one reviews these nine closures; if
+> it finds no blocker, nothing is changed after it, and the gate is met. The second condition is the
+> maintainer's explicit word, which has not been given. Gate 11's explorer path, the harness, and gate 10's
+> real-wallet runs stand as recorded below.
+> **What remains:** round twenty-one on Opus against this commit, then the deploy of v13 (about 0.0003 ETH)
+> only on the maintainer's explicit word, then gate 13 and gate 14's mainnet branch on the same day.
+> Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0, 1, 1, 0.
 >
 > - **BulkSend v13 is DEPLOYED on testnet** at `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (tx `0x5cb0037f…`), byte-identical
 >   at 9,752 bytes, fully verified. The on-chain B-1 reproduction against it reverts `IsAnNft`
@@ -95,6 +101,14 @@
 >     address from a `deployments.mainnet.json` and compares both, and the page's `{{BULKSEND_MAINNET}}`
 >     placeholder is replaced by `preflight.sh` reading that file, never by hand. Until then the placeholder is
 >     what keeps mainnet off, and the check that would notice a wrong mainnet address does not exist.
+>  14. **Every automated check on the deployed contract watches testnet only** (round twenty, the reviewer's
+>     "missing control"): both workflows read `deployments.testnet.json` and ask the testnet RPC, so on the
+>     day the placeholder is swapped the strongest control this project has would still be watching a
+>     contract that holds nothing. Both workflows now end with a mainnet step: while the page carries the
+>     placeholder it asserts mainnet is off and passes; once the placeholder is gone it must find
+>     `deployments.mainnet.json`, assert the page names that address, and compare mainnet bytecode to the
+>     build, failing clearly on a missing file or a mismatch. The enabling change is therefore checked by
+>     the same step that checked the placeholder, not by editing a grep on the day.
 >  12. **The send path must not depend on the wallet's RPC** (round seventeen S-8, second item). S-3's fix
 >     takes the hash from `eth_sendTransaction` and waits on this page's RPC; gate 9's production endpoint
 >     then covers every read the page makes. Proven by the S-3 regression and by one real-wallet send under

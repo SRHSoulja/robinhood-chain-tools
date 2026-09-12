@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-VOZnDEHhsDCZu1HI0/OhCaoDd7iQoYXaSI11zPdPL94='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-0DSMW8H8haAYZmhzelAnpwDO6NNWXP6OYDpY/Az+i/s='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com; img-src 'self' data:; base-uri 'none'; form-action 'none'">
 <title>Robinhood Chain Check · read it before you sign</title>
 <meta name="description" content="Paste a transaction, a contract, or the calldata your wallet is about to sign, and read what it actually does on Robinhood Chain: what moves, what the contract can do to you, and why something failed.">
 <style>
@@ -381,15 +381,27 @@
     const sc = scRes.data;
     if (!scRes.ok) { out.verified = null; out.explorerDown = true; }
     else if (!sc) { out.verified = false; }
-    if (sc) {
-      out.verified = !!sc.is_verified;
+    // Round twenty F-2: explorerJson decided "this is a real answer" from the HTTP status and content-type
+    // alone, so a 200 JSON body that is not a Blockscout contract record at all -- a rate-limit envelope, a
+    // gateway's own error document, an explorer that answers "not found" in the body rather than the status --
+    // was returned as data, and `!!sc.is_verified` on a record with no such field read as a definite `false`:
+    // "no source published", stated as fact. Only a real 404 (sc === null) may say that; anything else that
+    // does not carry a real `is_verified` boolean was not an answer to this question at all.
+    else if (typeof sc.is_verified !== 'boolean') { out.verified = null; out.explorerDown = true; }
+    if (sc && typeof sc.is_verified === 'boolean') {
+      out.verified = sc.is_verified;
       out.name = sc.name || null;
       out.abi = sc.abi || null;
       out.compiler = sc.compiler_version || null;
       out.optimized = sc.optimization_enabled;
       out.evm = sc.evm_version || null;
       out.verifiedAt = sc.verified_at || null;
-      out.partial = !!sc.is_partially_verified;
+      // Round twenty F-1: the mainnet Worker deliberately answers `is_partially_verified: null` when the
+      // module API it reads does not carry the field ("null, not a claim"). `!!null` is `false`, so this used
+      // to read "not known" as "not partial" and the pill said "matched" about a verification that could be
+      // full or partial. Three states now, matching what the Worker actually knows.
+      out.partial = sc.is_partially_verified === true ? true
+        : (sc.is_partially_verified === null || sc.is_partially_verified === undefined ? null : false);
       if (!out.proxy && sc.proxy_type && sc.implementations && sc.implementations.length) {
         try {
           out.proxy = { kind: String(sc.proxy_type).replace(/_/g, ' '), target: ethers.getAddress(sc.implementations[0].address_hash || sc.implementations[0].address) };
@@ -527,10 +539,17 @@
     'permit(address,address,uint256,uint256,uint8,bytes32,bytes32)': { spender: 1, amount: 2,
       how: 'It is granted from a signature, so there is no separate approval transaction of your own to find afterwards. ' },
   };
-  const unlimitedApproval = (p, token) => {
+  // Round twenty F-7: `approve(address,uint256)` is the same selector on ERC-721, where the number is a
+  // token id and never an amount. Comparing a token id against a collection's totalSupply and calling
+  // anything at or beyond it "unlimited" is wrong in both directions on a real collection -- ids are not
+  // dense, so a live id at or past totalSupply is ordinary -- and describeCall already gives the honest
+  // per-token sentence for exactly this call, directly above where this would otherwise contradict it.
+  // increaseAllowance and permit are not part of any NFT standard, so they need no such exception.
+  const unlimitedApproval = (p, target) => {
     const sh = p && p.signature ? APPROVAL_SHAPES[p.signature] : null;
     if (!sh || !p.args) return null;
-    return unlimitedFor(p.args[sh.amount], token) ? { spender: p.args[sh.spender], how: sh.how } : null;
+    if (p.signature === 'approve(address,uint256)' && target && (target.standard === 'ERC-721' || target.standard === 'ERC-1155')) return null;
+    return unlimitedFor(p.args[sh.amount], target && target.token) ? { spender: p.args[sh.spender], how: sh.how } : null;
   };
   function fmtAmount(v, token) {
     if (UNLIMITED(v)) return 'an unlimited amount';
@@ -915,7 +934,9 @@
             ? (o.proxy.verified ? 'the code it runs has published source'
               : o.proxy.verified === null ? 'could not check the code it runs'
               : 'the code it runs has published no source')
-            : (o.verified ? (o.partial ? 'source published, partly matched' : 'source published and matched')
+            : (o.verified ? (o.partial === true ? 'source published, partly matched'
+                : o.partial === null ? 'source published (whether the match is full or partial is not known)'
+                : 'source published and matched')
               : o.verified === null ? 'could not check for a published source' : 'no source published') }),
         o.standard ? h('span', { class: 'pill', text: o.standard }) : null,
         o.proxy ? h('span', { class: 'pill warn', text: 'proxy: the code can be swapped' }) : null,
@@ -967,7 +988,8 @@
               : 'This page had no source to read, so this is the set of 4-byte selectors the bytecode dispatches on, matched against names it knows. ')
             + 'It is a floor and never a ceiling: whatever else the contract can do is in there too, unnamed. '),
         fns.complete ? link(o.address, 'the verified source on the explorer') : null,
-        o.partial ? document.createTextNode('  This contract is only partially verified, so even the published source may not be all of the code that runs.') : null,
+        o.partial === true ? document.createTextNode('  This contract is only partially verified, so even the published source may not be all of the code that runs.')
+          : o.partial === null ? document.createTextNode('  Whether this match is full or partial is not known, so even the published source may not be all of the code that runs.') : null,
       ]),
       o.verified === false ? note('warn', 'No source has been published',
         'The bytecode is public and this page has read it, but nobody has shown which source code produced it. Nobody outside the people who deployed it knows what this contract does.') : null,
@@ -988,7 +1010,7 @@
   // batch and a call carried inside another all say the same things about the same bytes.
   function callWarnings(parsed, target, sim, from) {
     const w = [];
-    const unl = unlimitedApproval(parsed, target && target.token);
+    const unl = unlimitedApproval(parsed, target);
     if (unl)
       w.push(['bad', 'This is an unlimited approval', 'It lets ' + short(unl.spender)
         + ' take that token out of your wallet at any point in the future, in any amount, without asking again. '
