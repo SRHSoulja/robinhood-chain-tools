@@ -50,8 +50,10 @@ input that is refused with the reason. A list that works today is meant to work 
 
 ## BulkSend
 
-One contract, three transfer families (ERC-721, ERC-1155, ERC-20), each with a strict and a lenient entry point. It holds nothing: every transfer is `transferFrom(msg.sender, …)`, so it can
-only move what you approved, inside the transaction you signed. **No owner, no upgrade path, no fees, no
+One contract, three transfer families (ERC-721, ERC-1155, ERC-20), each supporting strict and lenient modes,
+with configurable-gas variants for lenient mode. It holds nothing: every asset moves directly from `msg.sender` to
+the recipient and BulkSend never takes custody, so it can only move what you approved, inside the transaction
+you signed. **No owner, no upgrade path, no fees, no
 pause.** If you want it to stop, stop calling it.
 
 Deployed, as v13, on both networks, with runtime bytecode byte-for-byte equal to what this repository builds and to each other:
