@@ -383,7 +383,8 @@ its probe files are in the repository and in the baseline, so they gate like eve
    repository's own receipt parsing.
 5. Publish both pages, then round fourteen.
 
-Nothing is deployed yet and the mainnet deployer is still at nonce 0.
+(Written before the deploy. v13 went to testnet on 10 September 2026 and to mainnet on 12 September 2026; the
+mainnet deployer's nonce is 1. See the start-here block.)
 
 ## Standing practices adopted this round
 

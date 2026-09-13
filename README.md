@@ -16,9 +16,12 @@ community. Both are free, both are open source, and neither takes a fee.
 | **BulkSend** | send an NFT or a token to hundreds of wallets in a few transactions | [rhairdrop.gmgnrepeat.com](https://rhairdrop.gmgnrepeat.com/) | `src/BulkSend.sol`, `web/index.html` |
 | **Check** | read a transaction or a contract in plain English before you sign it | [rhcheck.gmgnrepeat.com](https://rhcheck.gmgnrepeat.com/) | `web/check.html` |
 
-> **Testnet only.** `BulkSend` is deployed and verified on Robinhood Chain testnet (46630) and nowhere else.
-> Mainnet is switched off in the page, in code, not just by intent. Check is read-only and works on both
-> networks because it never signs anything.
+> **Live on mainnet and testnet.** `BulkSend` v13 is deployed on Robinhood Chain mainnet (4663) at
+> `0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf` since 12 September 2026, and on testnet (46630) at
+> `0xf2ed6359f5dee0334d68cd21d306d9d3e7a49232`; the two runtimes are byte-identical to each other and to what
+> this repository builds (`deployments.mainnet.json`, `deployments.testnet.json`). The page opens on mainnet
+> and offers testnet one click away for rehearsals. Check is read-only and works on both networks because it
+> never signs anything.
 
 ---
 

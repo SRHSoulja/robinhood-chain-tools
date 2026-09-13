@@ -145,7 +145,8 @@ Nothing here may touch them, and nothing here can:
   holdings, but only in the browser suites, against a wallet this repository writes.
 
 The practical consequence for anyone reading a balance here: **a change in testnet gas or nonce is not a signal
-about this project.** Mainnet is the one to watch, and it is at nonce 0.
+about this project.** Mainnet is the one to watch: the deployer's nonce there is 1, spent on the one v13
+deployment on 12 September 2026, and any further movement would be news.
 
 ## Where the numbers come from
 
