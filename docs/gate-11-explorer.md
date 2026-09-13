@@ -84,3 +84,15 @@ published source" instead of a wrong answer. That makes the Check page's headlin
 *unavailable* rather than *wrong*, which is the right failure mode for a page whose whole job is to say
 "could not tell" rather than guess. Documented here so it is an expected state rather than a surprise the day
 it happens.
+
+## 13 September 2026: a bounded retry on an upstream 5xx
+
+The PRO gateway's backend for chain 4663 answers 500 after about two seconds on roughly one call in three
+during a bad hour, and the same request correctly a second later. Measured on 12 September from this machine
+and from a disposable Worker on Cloudflare egress, and again on 13 September, when it turned three green
+deploys into red integrity badges in two days. Both upstream paths in the Worker (the keyed translation and
+the direct passthrough) now go through one helper: a thrown fetch or a 5xx is asked again after 300 ms and
+then 600 ms, three attempts in all; anything below 500 is an answer and is never asked again, so a rate-limit
+envelope is not retried into a worse rate limit. The envelope, the no-store header, and every success-shape
+rule are unchanged; nine cases in `test/worker.test.mjs` pin the attempt counts on both paths.
+

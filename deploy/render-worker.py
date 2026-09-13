@@ -126,17 +126,21 @@ const TRUST_CSP = %s;
         for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
         u.searchParams.set('chain_id', '4663');
         u.searchParams.set('apikey', env.BLOCKSCOUT_KEY);
-        let r;
-        try {
-          // Round eighteen S-7 and S-8: these subrequests are not cached at the edge. Cached for a minute, a NOTOK
-          // answer was everyone's answer for a minute, and the key in the URL was part of the cache key. Good
-          // answers are cached by this Worker's own response header; failures carry no-store.
-          r = await fetch(u.toString(), {
-            headers: { accept: 'application/json' },
-            signal: AbortSignal.timeout(10000),
-            cf: { cacheTtl: 0 },
-          });
-        } catch (e) { return { ok: false, status: 0 }; }
+        // Round eighteen S-7 and S-8: these subrequests are not cached at the edge. Cached for a minute, a NOTOK
+        // answer was everyone's answer for a minute, and the key in the URL was part of the cache key. Good
+        // answers are cached by this Worker's own response header; failures carry no-store.
+        // The gateway's backend for this chain answers 500 after a couple of seconds on roughly one call in
+        // three during a bad hour (measured 12 and 13 September 2026, from here and from Cloudflare egress), and
+        // answers the same request correctly a second later. So a 5xx or no answer at all is asked again, at most
+        // twice, after 300 and then 600 milliseconds. A 4xx and any 200 are answers and are never retried: a
+        // rate-limit envelope retried is a rate limit made worse. Three attempts is the whole budget, for the
+        // paged inventory walk as much as for a single lookup.
+        const r = await fetchWithRetry(u.toString(), {
+          headers: { accept: 'application/json' },
+          signal: AbortSignal.timeout(10000),
+          cf: { cacheTtl: 0 },
+        });
+        if (!r) return { ok: false, status: 0 };
         const ct = String(r.headers.get('content-type') || '');
         if (!r.ok || !ct.includes('json')) return { ok: false, status: r.status };
         let json; try { json = await r.json(); } catch (e) { return { ok: false, status: r.status }; }
@@ -238,7 +242,7 @@ const TRUST_CSP = %s;
     // testnet explorer still answers, but it is not a working spoof and the code should not imply it is.
     // `redirect: 'manual'` because following one would let an explorer decide which host gets to put a
     // document on this origin.
-    const upstream = await fetch(base + '/api/v2' + x[2] + search, {
+    const upstream = await fetchWithRetry(base + '/api/v2' + x[2] + search, {
       headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' },
       redirect: 'manual',
       cf: { cacheEverything: true, cacheTtl: 60 },
@@ -246,7 +250,7 @@ const TRUST_CSP = %s;
     // Only a real answer is worth keeping. The explorer occasionally answers a challenge page instead, and
     // caching that for a minute serves the failure to everyone who asks in that minute -- including after the
     // explorer has recovered. A transient error must not become the cached answer.
-    const good = upstream.ok && String(upstream.headers.get('content-type') || '').includes('json');
+    const good = !!upstream && upstream.ok && String(upstream.headers.get('content-type') || '').includes('json');
     // Refusing to relabel a bad response is not the same as refusing to serve its bytes, which is what this
     // used to do. Nothing that is not a real JSON answer is passed through at all now: not the body, and not
     // the status. The status matters as much as the body, because Cloudflare intercepts a 404 from a worker
@@ -254,7 +258,7 @@ const TRUST_CSP = %s;
     // already treats this shape as "could not check" rather than "nothing found", which is the distinction
     // that keeps a failed lookup from being reported as a clean bill of health.
     if (!good) {
-      return new Response(JSON.stringify({ error: 'upstream', status: upstream.status }), {
+      return new Response(JSON.stringify({ error: 'upstream', status: upstream ? upstream.status : 0 }), {
         status: 200,
         headers: Object.assign(secure(), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }),
       });
@@ -276,6 +280,19 @@ const TOUCH_PNG = %s;
 const OG_PNG_BYTES = OG_PNG ? Uint8Array.from(atob(OG_PNG), (c) => c.charCodeAt(0)) : null;
 const TOUCH_PNG_BYTES = TOUCH_PNG ? Uint8Array.from(atob(TOUCH_PNG), (c) => c.charCodeAt(0)) : null;
 %sconst EXPLORERS = { '4663': 'https://robinhoodchain.blockscout.com', '46630': 'https://explorer.testnet.chain.robinhood.com' };
+// One upstream request with a bounded retry: a thrown fetch or a 5xx is tried again after 300 ms and then
+// 600 ms, three attempts in all; anything below 500 is an answer and is returned at once. Returns null when
+// every attempt threw. Written once here because both the keyed translation and the direct passthrough
+// talk to the same intermittently unwell explorer backends.
+async function fetchWithRetry(url, init) {
+  let r = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise((resolve) => setTimeout(resolve, 300 * attempt));
+    try { r = await fetch(url, init); } catch (e) { r = null; continue; }
+    if (r.status < 500) return r;
+  }
+  return r;
+}
 // Sent on every response. A wallet-connected page delivered once over plain HTTP can be replaced in transit
 // before any of its own protections exist, so the first request is redirected and the browser is told never
 // to try HTTP again. No preload: that is a decision about every subdomain, not just this one.

@@ -75,6 +75,15 @@ const okJson = (body) => new Response(JSON.stringify(body), { status: 200, heade
 function makeFetch(callLog) {
   return async function fetchMock(url, init) {
     const u = new URL(String(url));
+    // A queue of failures to hand out before answering normally: a number is an HTTP status to answer with,
+    // 0 means the fetch itself throws. Lets a case say "the first two calls are 500s" without knowing the URL.
+    if (u.hostname === 'explorer.testnet.chain.robinhood.com' || u.hostname === 'api.blockscout.com') (fetchMock.all = fetchMock.all || []).push(u.hostname);
+    if (fetchMock.flaky && fetchMock.flaky.length && (u.hostname === 'api.blockscout.com' || u.hostname === 'explorer.testnet.chain.robinhood.com')) {
+      const st = fetchMock.flaky.shift();
+      (fetchMock.flakyLog = fetchMock.flakyLog || []).push(st);
+      if (st === 0) throw new TypeError('network');
+      return new Response(JSON.stringify({ error: 'Internal server error', source: 'upstream' }), { status: st, headers: { 'content-type': 'application/json' } });
+    }
     if (u.hostname === 'api.blockscout.com') {
       callLog.push(u.toString());
       (fetchMock.inits = fetchMock.inits || []).push(init || {});
@@ -196,6 +205,38 @@ const responseHasKey = async (resp) => {
 async function run() {
   const airdropWorker = (await import('file://' + renderWorker('airdrop'))).default;
   const checkWorker = (await import('file://' + renderWorker('check'))).default;
+
+  // ---- a bounded retry on an upstream 5xx or a thrown fetch (13 September 2026) ----
+  // The gateway answered 500 on about one call in three during a bad hour and the same request correctly a
+  // second later. Three attempts at most; a 4xx and every 200 are answers and are never asked again.
+  {
+    const isEnv = (b) => b && b.error === 'upstream';
+    let f = makeFetch([]); f.flaky = [500]; globalThis.fetch = f;
+    let r = await airdropWorker.fetch(mkReq(`/x/4663/tokens/${HOLDERS_TOKEN}/holders`), KEYED_ENV); let b = await r.json();
+    check('retry: one 500 then an answer is the answer, in two upstream calls', Array.isArray(b.items) && f.all.length === 2 && f.flakyLog.length === 1, JSON.stringify({ items: Array.isArray(b.items), calls: f.all.length }));
+    f = makeFetch([]); f.flaky = [500, 500]; globalThis.fetch = f;
+    r = await airdropWorker.fetch(mkReq(`/x/4663/tokens/${HOLDERS_TOKEN}/holders`), KEYED_ENV); b = await r.json();
+    check('retry: two 500s then an answer is the answer, in three upstream calls', Array.isArray(b.items) && f.all.length === 3, JSON.stringify({ items: Array.isArray(b.items), calls: f.all.length }));
+    f = makeFetch([]); f.flaky = [500, 500, 500, 500]; globalThis.fetch = f;
+    r = await airdropWorker.fetch(mkReq(`/x/4663/tokens/${HOLDERS_TOKEN}/holders`), KEYED_ENV); b = await r.json();
+    check('retry: three 500s is the envelope with status 500, and a fourth call is never made', isEnv(b) && b.status === 500 && f.all.length === 3 && f.flaky.length === 1, JSON.stringify({ b, calls: f.all.length }));
+    check('retry: the envelope after three failures still carries no-store', r.headers.get('cache-control') === 'no-store', r.headers.get('cache-control'));
+    f = makeFetch([]); f.flaky = [403]; globalThis.fetch = f;
+    r = await airdropWorker.fetch(mkReq(`/x/4663/smart-contracts/${SC_VERIFIED}`), KEYED_ENV); b = await r.json();
+    check('retry: a 403 is an answer: the envelope with status 403 after exactly one call', isEnv(b) && b.status === 403 && f.all.length === 1, JSON.stringify({ b, calls: f.all.length }));
+    f = makeFetch([]); f.flaky = [0]; globalThis.fetch = f;
+    r = await airdropWorker.fetch(mkReq(`/x/4663/transactions/${TX_OK}`), KEYED_ENV); b = await r.json();
+    check('retry: a fetch that throws once, then answers, is the answer, in two calls', b.status === 'ok' && b.hash === TX_OK && f.all.length === 2 && f.flakyLog.length === 1, JSON.stringify({ b: b.status, calls: f.all.length }));
+    f = makeFetch([]); f.flaky = [0, 0, 0]; globalThis.fetch = f;
+    r = await airdropWorker.fetch(mkReq(`/x/4663/transactions/${TX_OK}`), KEYED_ENV); b = await r.json();
+    check('retry: three throws is the envelope with status 0', isEnv(b) && b.status === 0 && f.flakyLog.length === 3, JSON.stringify(b));
+    f = makeFetch([]); f.flaky = [502]; globalThis.fetch = f;
+    r = await airdropWorker.fetch(mkReq(`/x/46630/tokens/${HOLDERS_TOKEN}/holders`), KEYED_ENV); b = await r.json();
+    check('retry: the testnet passthrough retries a 502 too, and then passes the answer through untouched', b.untouched === true && f.all.length === 2, JSON.stringify({ b, calls: f.all.length }));
+    f = makeFetch([]); f.flaky = [500, 500, 500]; globalThis.fetch = f;
+    r = await airdropWorker.fetch(mkReq(`/x/46630/tokens/${HOLDERS_TOKEN}/holders`), KEYED_ENV); b = await r.json();
+    check('retry: the passthrough after three 500s is the envelope with status 500', isEnv(b) && b.status === 500 && f.all.length === 3, JSON.stringify({ b, calls: f.all.length }));
+  }
 
   // ---- holders: full page carries next_page_params, short page does not ----
   {
