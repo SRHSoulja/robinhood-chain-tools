@@ -26,15 +26,14 @@ now watches it:
 | a production mainnet RPC plan | **met**, 11 September 2026 — each chain lists three endpoints in order (Robinhood's own, then PublicNode, then Pocket on mainnet), all answering the right chain id and `eth_simulateV1` when checked; the page probes them in order at connect and on a network change and reads through the first that answers, saying so when it is not the first. The integrity workflow probes every listed endpoint four times a day and fails if the first, or every fallback, for a chain stops answering. No credential: all three are public, and the Worker keeps no RPC. See `plan.md`'s gate 9 |
 | a current real-wallet rehearsal on testnet | **met**, 11 September 2026 — four runs from the maintainer's own wallet against the published page and v13: ERC-721, ERC-1155 and ERC-20 from a browser wallet, and ERC-721 from a phone over WalletConnect with the tab backgrounded. Every hash read back from the explorer and the chain agrees with the page ([`real-wallet-run.md`](real-wallet-run.md); see also the proof table below and `plan.md`'s gate 10) |
 | explicit permission from the maintainer, given after that round | **given**, 12 September 2026, after round twenty-one, in writing: "MAINNET DEPLOYMENT IS EXPLICITLY AUTHORIZED", naming the release-mechanics commit `bf4c61d` |
-| gate 14: both workflows check the mainnet deployment as well | **met** (round twenty) — before mainnet is enabled, both `.github/workflows/tests.yml` and `integrity.yml` check the mainnet deployment as well, and `integrity.yml` asserts the page names the mainnet address it was reviewed against. Today, with the `{{BULKSEND_MAINNET}}` placeholder still in and `LIVE_CHAINS` testnet-only, the new step in each workflow says so and passes; it activates itself the day that changes, rather than needing a hand-edit in the same breath as enabling mainnet |
+| gate 14: both workflows check the mainnet deployment as well | **met** (round twenty) — before mainnet is enabled, both `.github/workflows/tests.yml` and `integrity.yml` check the mainnet deployment as well, and `integrity.yml` asserts the page names the mainnet address it was reviewed against. Since 12 September 2026 the placeholder is gone, the page names the live mainnet address `0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf`, `LIVE_CHAINS` is `[46630, 4663]`, and the mainnet branch of that step runs on every push and four times a day against the live page, comparing the mainnet runtime to the build |
 
-No one item alone is enough. The deployer holds about 0.002 mainnet ETH that someone else sent, which is enough
-for three deployments, which is exactly why the rule is written down: available is not permitted. Its mainnet
-nonce is 0.
+No one item alone was enough, and the deployment happened only when all four held. The deployer's mainnet
+nonce is 1: one transaction, the v13 deployment, about 0.00021 ETH; the rest of its balance is untouched.
 
-Current unreleased validation, 11 September 2026: the complete current-tree gate passed all five ordinary
-contract test files, the whole airdrop-page suite, the whole Check-page suite, and every publish-policy check,
-with zero failures anywhere. The suites print their own counts when they run; `./verify.sh`'s output is the
+Validation at the release, 12 September 2026: the complete gate passed on the release tree and again on the
+mainnet-enabling tree: all five ordinary contract test files, the whole airdrop-page suite, the whole Check-page
+suite, and every publish-policy check, with zero failures anywhere, and CI repeated it on every push since. The suites print their own counts when they run; `./verify.sh`'s output is the
 record of what passed, not a number retyped here (round 21 F-10 -- this document is the one `PROMPT.md` tells
 a reviewer to disbelieve first, so a count that goes stale by hand is the cheapest possible signal that it
 is not maintained).

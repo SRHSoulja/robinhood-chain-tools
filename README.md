@@ -41,7 +41,7 @@ safety behavior would be lost by treating one as a drop-in replacement.
 
 **What a batch costs:** [docs/gas-and-batches.md](docs/gas-and-batches.md) is every gas figure this tool
 relies on, measured on the chain rather than estimated: what one recipient costs for each kind of token, what
-a thousand-piece airdrop costs at each batch size, where one transaction stops (819 recipients, 32.2M gas),
+a thousand-piece airdrop costs at each batch size, where one transaction stopped for the one token it was measured on (819 recipients, 32.2M gas; not a ceiling: the page measures the token in hand each run and caps a batch from that, normally 200 and never above 400),
 and why the order of the token ids changes the price by 45% on a lazily-minted collection.
 
 **How to say who gets what:** [docs/recipient-lists.md](docs/recipient-lists.md) is the whole of the
@@ -50,12 +50,16 @@ input that is refused with the reason. A list that works today is meant to work 
 
 ## BulkSend
 
-One contract, three functions. It holds nothing: every transfer is `transferFrom(msg.sender, …)`, so it can
+One contract, three transfer families (ERC-721, ERC-1155, ERC-20), each with a strict and a lenient entry point. It holds nothing: every transfer is `transferFrom(msg.sender, …)`, so it can
 only move what you approved, inside the transaction you signed. **No owner, no upgrade path, no fees, no
 pause.** If you want it to stop, stop calling it.
 
-Deployed at [`0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232`](https://explorer.testnet.chain.robinhood.com/address/0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232),
-verified, runtime bytecode byte-for-byte equal to what this repository builds.
+Deployed, as v13, on both networks, with runtime bytecode byte-for-byte equal to what this repository builds and to each other:
+
+| network | BulkSend | record |
+|---|---|---|
+| Robinhood Chain mainnet (4663) | [`0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf`](https://robinhoodchain.blockscout.com/address/0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf), deployed 12 September 2026, source verified (Sourcify exact match) | `deployments.mainnet.json` |
+| Robinhood Chain testnet (46630) | [`0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232`](https://explorer.testnet.chain.robinhood.com/address/0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232), deployed 10 September 2026, verified on the explorer | `deployments.testnet.json` |
 
 ### Modes
 
