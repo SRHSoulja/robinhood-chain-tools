@@ -58,6 +58,9 @@ for (const c of CASES) {
     };
   }, ME);
 
+  // This script's tokens live on testnet, and since 12 September 2026 a fresh visit opens on mainnet. Choose
+  // testnet the way a returning tester's browser would, by the remembered network, before the page loads.
+  await page.addInitScript(() => { try { localStorage.setItem('bulksend:net', '46630'); } catch (e) {} });
   await page.goto(PAGE, { waitUntil: 'load' });
   await page.waitForTimeout(800);
   await page.click('#connect'); await page.waitForTimeout(2500);

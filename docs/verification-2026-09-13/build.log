@@ -1,0 +1,375 @@
+Compiling 71 files with Solc 0.8.36
+Solc 0.8.36 finished in 6.82s
+Compiler run successful with warnings:
+Warning (5159): "selfdestruct" has been deprecated. Note that, starting from the Cancun hard fork, the underlying opcode no longer deletes the code and data associated with an account and only transfers its Ether to the beneficiary, unless executed in the same transaction in which the contract was created (see EIP-6780). Any use in newly deployed contracts is strongly discouraged even if the new behavior is taken into account. Future changes to the EVM might further reduce the functionality of the opcode.
+ --> test/FloorAudit.t.sol:9:47:
+  |
+9 |     constructor(address payable to) payable { selfdestruct(to); }
+  |                                               ^^^^^^^^^^^^
+
+Warning (6321): Unnamed return variable can remain unassigned. Add an explicit return with value to all non-reverting code paths or name the variable.
+   --> test/RealTokens.sol:134:97:
+    |
+134 |     function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) { uint256 x; while (true) { x++; } }
+    |                                                                                                 ^^^^^^
+
+Warning (6321): Unnamed return variable can remain unassigned. Add an explicit return with value to all non-reverting code paths or name the variable.
+   --> test/RealTokens.sol:135:107:
+    |
+135 |     function onERC1155Received(address, address, uint256, uint256, bytes calldata) external pure returns (bytes4) { uint256 x; while (true) { x++; } }
+    |                                                                                                           ^^^^^^
+
+note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
+ --> test/FloorAudit.t.sol:4:8
+  |
+4 | import "forge-std/Test.sol";
+  |        ^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unaliased-plain-import
+
+note[mixed-case-function]: function names should use mixedCase
+   --> src/BulkSend.sol:128:14
+    |
+128 |     function LENIENT_GAS() external pure returns (uint256) { return DEFAULT_GAS; }
+    |              ^^^^^^^^^^^
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+
+note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
+ --> test/IdAmountProbe.t.sol:4:8
+  |
+4 | import "forge-std/Test.sol";
+  |        ^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unaliased-plain-import
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> test/IdAmountProbe.t.sol:17:52
+   |
+17 |         for (uint256 i; i < n; i++) a[i] = address(uint160(0xB0B + i));
+   |                                                    ^^^^^^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint160' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+note[mixed-case-function]: function names should use mixedCase
+   --> test/Audit12.t.sol:198:14
+    |
+198 |     function _gas400_oz721(bool safeMode) internal {
+    |              ^^^^^^^^^^^^^
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+
+note[named-struct-fields]: prefer initializing structs with named fields
+   --> src/BulkSend.sol:138:44
+    |
+138 |         return _airdrop721(token, to, ids, Opts(safe, lenient, DEFAULT_GAS));
+    |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#named-struct-fields
+
+note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
+ --> test/BulkSend.t.sol:4:8
+  |
+4 | import "forge-std/Test.sol";
+  |        ^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unaliased-plain-import
+
+note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
+ --> test/BulkSendReal.t.sol:4:8
+  |
+4 | import "forge-std/Test.sol";
+  |        ^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unaliased-plain-import
+
+note[mixed-case-function]: function names should use mixedCase
+   --> test/Audit12.t.sol:214:14
+    |
+214 |     function _gas400_a721() internal {
+    |              ^^^^^^^^^^^^
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+
+note[mixed-case-function]: function names should use mixedCase
+   --> test/Audit12.t.sol:230:14
+    |
+230 |     function _gas400_oz20() internal {
+    |              ^^^^^^^^^^^^
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+
+note[named-struct-fields]: prefer initializing structs with named fields
+   --> src/BulkSend.sol:150:44
+    |
+150 |         return _airdrop721(token, to, ids, Opts(safe, lenient, _checkGas(gasPerTransfer, lenient)));
+    |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#named-struct-fields
+
+note[unused-import]: unused imports should be removed
+  --> test/Audit12.t.sol:11:21
+   |
+11 | import {MockERC721, MockERC20} from "./Mocks.sol";
+   |                     ^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
+
+note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
+ --> test/AuditProbe.t.sol:7:8
+  |
+7 | import "forge-std/Test.sol";
+  |        ^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unaliased-plain-import
+
+note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
+ --> test/Reentrancy.t.sol:4:8
+  |
+4 | import "forge-std/Test.sol";
+  |        ^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unaliased-plain-import
+
+note[mixed-case-function]: function names should use mixedCase
+  --> test/fork/MainnetGuards.t.sol:23:14
+   |
+23 |     function checkNotNft_v12(address t, uint256 probeAmount) external view {
+   |              ^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> test/BulkSend.t.sol:25:53
+   |
+25 |         for (uint256 i; i < n; i++) to[i] = address(uint160(0x1000 + i));
+   |                                                     ^^^^^^^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint160' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+note[named-struct-fields]: prefer initializing structs with named fields
+   --> src/BulkSend.sol:210:54
+    |
+210 |         return _airdrop1155(token, to, ids, amounts, Opts(false, lenient, DEFAULT_GAS));
+    |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#named-struct-fields
+
+note[named-struct-fields]: prefer initializing structs with named fields
+   --> src/BulkSend.sol:222:54
+    |
+222 |         return _airdrop1155(token, to, ids, amounts, Opts(false, lenient, _checkGas(gasPerTransfer, lenient)));
+    |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#named-struct-fields
+
+note[named-struct-fields]: prefer initializing structs with named fields
+   --> src/BulkSend.sol:277:47
+    |
+277 |         return _airdrop20(token, to, amounts, Opts(false, lenient, DEFAULT_GAS));
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#named-struct-fields
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> test/BulkSend.t.sol:42:75
+   |
+42 |         for (uint256 i = 1; i <= n; i++) assertEq(nft.ownerOf(i), address(uint160(0x1000 + i - 1)));
+   |                                                                           ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint160' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
+  --> test/FloorAudit.t.sol:24:9
+   |
+24 |         e.transfer(address(bulk), 10);
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#erc20-unchecked-transfer
+
+note[mixed-case-variable]: mutable variables should use mixedCase
+  --> test/Reentrancy.t.sol:67:17
+   |
+67 |         bytes32 SKIPPED = keccak256("Skipped(address,address,uint256,uint256,bytes)");
+   |                 ^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
+note[mixed-case-variable]: mutable variables should use mixedCase
+  --> test/Reentrancy.t.sol:68:17
+   |
+68 |         bytes32 SUMMARY = keccak256("Airdrop1155(address,address,uint256,uint256)");
+   |                 ^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+
+note[unused-import]: unused imports should be removed
+  --> test/Audit12.t.sol:12:28
+   |
+12 | import {OZ721, A721, OZ20, NoReturn20} from "./RealTokens.sol";
+   |                            ^^^^^^^^^^
+   |
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> test/FloorAudit.t.sol:71:27
+   |
+71 |             to[i]=address(uint160(0xB000+r)); ids[i]=id+1; amounts[i]=amount; expected[r][id]+=amount;
+   |                           ^^^^^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint160' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+   --> test/BulkSendReal.t.sol:448:224
+    |
+448 | ...code(logs[i].data, (uint256, uint256, bytes)); assertEq(bytes4(reason), Blacklist20.Blocked.selector); found = true; }
+    |                                                            ^^^^^^^^^^^^^^
+    |
+    = note: Consider disabling this lint if you're certain the cast is safe:
+            
+            // casting to 'bytes4' is safe because [explain why]
+            // forge-lint: disable-next-line(unsafe-typecast)
+            
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+note[named-struct-fields]: prefer initializing structs with named fields
+   --> src/BulkSend.sol:288:47
+    |
+288 |         return _airdrop20(token, to, amounts, Opts(false, lenient, _checkGas(gasPerTransfer, lenient)));
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#named-struct-fields
+
+note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
+ --> script/Rehearsal.s.sol:4:8
+  |
+4 | import "forge-std/Script.sol";
+  |        ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unaliased-plain-import
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+   --> test/AuditProbe.t.sol:129:27
+    |
+129 |                 emitted = bytes4(reason);
+    |                           ^^^^^^^^^^^^^^
+    |
+    = note: Consider disabling this lint if you're certain the cast is safe:
+            
+            // casting to 'bytes4' is safe because [explain why]
+            // forge-lint: disable-next-line(unsafe-typecast)
+            
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> test/FloorAudit.t.sol:78:67
+   |
+78 |             for(uint256 r;r<5;r++) { assertEq(t.balanceOf(address(uint160(0xB000+r)),id+1),expected[r][id]);total+=expected[r][id]; }
+   |                                                                   ^^^^^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint160' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
+ --> test/Invariants.t.sol:4:8
+  |
+4 | import "forge-std/Test.sol";
+  |        ^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unaliased-plain-import
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+   --> test/Audit12.t.sol:205:57
+    |
+205 |         for (uint256 i; i < 400; i++) { to[i] = address(uint160(0x10000 + i)); ids[i] = i + 1; }
+    |                                                         ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: Consider disabling this lint if you're certain the cast is safe:
+            
+            // casting to 'uint160' is safe because [explain why]
+            // forge-lint: disable-next-line(unsafe-typecast)
+            
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+note[unaliased-plain-import]: use named imports '{A, B}' or alias 'import ".." as X'
+ --> script/Deploy.s.sol:4:8
+  |
+4 | import "forge-std/Script.sol";
+  |        ^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: https://book.getfoundry.sh/reference/forge/forge-lint#unaliased-plain-import
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+  --> test/Invariants.t.sol:38:56
+   |
+38 |         for (uint256 i; i < 16; i++) pool.push(address(uint160(0x51E0000 + i)));
+   |                                                        ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: Consider disabling this lint if you're certain the cast is safe:
+           
+           // casting to 'uint160' is safe because [explain why]
+           // forge-lint: disable-next-line(unsafe-typecast)
+           
+           
+   = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+   --> test/Audit12.t.sol:221:57
+    |
+221 |         for (uint256 i; i < 400; i++) { to[i] = address(uint160(0x20000 + i)); ids[i] = i + 1; }
+    |                                                         ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: Consider disabling this lint if you're certain the cast is safe:
+            
+            // casting to 'uint160' is safe because [explain why]
+            // forge-lint: disable-next-line(unsafe-typecast)
+            
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+
+warning[unsafe-typecast]: typecasts that can truncate values should be checked
+   --> test/Audit12.t.sol:237:57
+    |
+237 |         for (uint256 i; i < 400; i++) { to[i] = address(uint160(0x30000 + i)); amounts[i] = 1 ether; }
+    |                                                         ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: Consider disabling this lint if you're certain the cast is safe:
+            
+            // casting to 'uint160' is safe because [explain why]
+            // forge-lint: disable-next-line(unsafe-typecast)
+            
+            
+    = help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+

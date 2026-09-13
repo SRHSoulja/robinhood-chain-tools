@@ -1,0 +1,83 @@
+v22.20.0
+forge Version: 1.4.1-v1.4.1
+Commit SHA: cf7746048646f2ecff48246dd61e265e49ab16f0
+Build Timestamp: 2025-10-14T13:49:09.432023782Z (1760449749)
+Build Profile: maxperf
+  ok     web/index.html carries a CSP that matches its script
+  ok     web/check.html carries a CSP that matches its script
+  ok     check.html carries the current check.js
+  ok     page, manifest, tests and probes name the same BulkSend
+  ok     no published document names a superseded BulkSend
+  ok     all 15 contract errors reach the user as a sentence, on both pages
+  ok     no absolute home paths in tracked files
+  ok     no key material in tracked files
+  ok     the live scripts mint their own token ids
+  ok     no document states a numeric browser-test count the commands beside it could make stale
+
+Preflight clean.
+ok    evidence-file manifest and complete probe sources exactly match the baseline
+=== contracts: every ordinary test file on its own ===
+  contracts: 6 of 6 ordinary test files passed
+
+=== readers: the page's own pure functions, extracted from web/index.html and run in node ===
+  77 passed, 0 failed
+
+=== the suites: does everything still work ===
+  client page: 417 passed, 0 failed
+  check page: 151 passed, 0 failed
+
+=== the publish gate: can a weaker policy get out ===
+  21 passed, 0 failed, every weakening refused
+
+=== gate 11: the Worker's mainnet explorer translation ===
+  42 passed, 0 failed
+
+=== the probes: is everything that was fixed still fixed ===
+  ok    browser probes audit-probe-12: 0 findings reproduce, exactly the baseline
+  ok    browser probes audit-probe-12 fingerprint exactly matches the baseline
+  ok    browser probes audit-probe-13: 0 findings reproduce, exactly the baseline
+  ok    browser probes audit-probe-13 fingerprint exactly matches the baseline
+  ok    browser probes audit-probe-17: 1 findings reproduce, exactly the baseline
+  ok    browser probes audit-probe-17 fingerprint exactly matches the baseline
+  ok    browser probes audit-probe-18: 0 findings reproduce, exactly the baseline
+  ok    browser probes audit-probe-18 fingerprint exactly matches the baseline
+  ok    browser probes audit-probe-19: 0 findings reproduce, exactly the baseline
+  ok    browser probes audit-probe-19 fingerprint exactly matches the baseline
+  ok    browser probes audit-probe-20: 0 findings reproduce, exactly the baseline
+  ok    browser probes audit-probe-20 fingerprint exactly matches the baseline
+  ok    browser probes audit-probe-21: 0 findings reproduce, exactly the baseline
+  ok    browser probes audit-probe-21 fingerprint exactly matches the baseline
+  ok    browser probes audit-probe-check: 0 findings reproduce, exactly the baseline
+  ok    browser probes audit-probe-check fingerprint exactly matches the baseline
+  ok    browser probes audit-probe-check2: 1 findings reproduce, exactly the baseline
+  ok    browser probes audit-probe-check2 fingerprint exactly matches the baseline
+  ok    browser probes audit-probe: 8 findings reproduce, exactly the baseline
+  ok    browser probes audit-probe fingerprint exactly matches the baseline
+  ok    contract probes Audit12: 5 probe assertions pass, exactly the baseline
+  ok    contract probes Audit12 fingerprint exactly matches the baseline
+  ok    contract probes Audit13: 1 probe assertions pass, exactly the baseline
+  ok    contract probes Audit13 fingerprint exactly matches the baseline
+  ok    contract probes AuditProbe: 14 probe assertions pass, exactly the baseline
+  ok    contract probes AuditProbe fingerprint exactly matches the baseline
+  ok    client page suite file fingerprint exactly matches the baseline
+  ok    check page suite file fingerprint exactly matches the baseline
+
+  ok    worker suite file fingerprint exactly matches the baseline
+  ok    csp_gate suite file fingerprint exactly matches the baseline
+  ok    contract_bulksend suite file fingerprint exactly matches the baseline
+  ok    contract_real suite file fingerprint exactly matches the baseline
+  ok    contract_reentrancy suite file fingerprint exactly matches the baseline
+  ok    contract_idamount suite file fingerprint exactly matches the baseline
+  ok    contract_invariants suite file fingerprint exactly matches the baseline
+  ok    contract_mocks suite file fingerprint exactly matches the baseline
+  ok    contract_realtokens suite file fingerprint exactly matches the baseline
+  ok    readers suite file fingerprint exactly matches the baseline
+  ok    lib suite file fingerprint exactly matches the baseline
+Everything passes, and nothing that was closed has reopened.
+
+Not covered by any of the above, and not claimed to be:
+  - the live scripts (they need the network): live-chain, live-send, live-wallet-batch
+  - test/fork/, which asks the paste guards about REAL mainnet contracts on a read-only local fork:
+      forge test --match-path 'test/fork/MainnetGuards.t.sol'
+  - anything against a real wallet extension. The maintainer has driven the page from a phone with
+    MetaMask once, by hand, against a pre-v10 contract. Nothing automatic covers it.

@@ -1,0 +1,10 @@
+No files changed, compilation skipped
+
+Ran 4 tests for test/fork/MainnetGuards.t.sol:MainnetGuardsForkTest
+[PASS] test_every_real_nft_is_accepted_by_the_nft_guard() (gas: 189218)
+[PASS] test_every_real_nft_is_refused_by_the_erc20_guard() (gas: 141025)
+[PASS] test_no_real_erc20_is_wrongly_refused() (gas: 234728)
+[PASS] test_the_v12_guard_let_every_one_of_them_through() (gas: 179275)
+Suite result: ok. 4 passed; 0 failed; 0 skipped; finished in 62.99s (204.19s CPU time)
+
+Ran 1 test suite in 62.99s (62.99s CPU time): 4 tests passed, 0 failed, 0 skipped (4 total tests)

@@ -14,7 +14,9 @@
 > with a Bearer key for the Worker's contract, transaction and holder lookups; one bounded retry on an upstream
 > 5xx; chain-first run reconstruction on the page from `Airdrop20` logs and calldata; an equal-amount entry
 > point and a scratch-memory return read in a future contract version, each worth about one percent of gas.
-> Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0, 1, 1, 0, 0.
+> Round twenty-two (13 September, external, after the release, against the live tree) found no must-fix and
+> nothing worth new bytecode; its report, artifacts and adopted test are in the tree.
+> Blockers by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0, 1, 1, 0, 0, 0.
 >
 > - **BulkSend v13 is DEPLOYED on testnet** at `0xf2eD6359F5deE0334d68cd21d306D9D3E7a49232` (tx `0x5cb0037f…`), byte-identical
 >   at 9,752 bytes, fully verified. The on-chain B-1 reproduction against it reverts `IsAnNft`

@@ -126,7 +126,7 @@ which is the case worth monitoring for.
   stretch is the one worth monitoring, so a green badge on a dormant repository means the last run that
   happened rather than the state today. A failure also opens an issue, so it is visible without access to
   anyone's inbox.
-- Twenty-one adversarial review rounds, each by a fresh model with no prior context, all published unedited in
+- Twenty-two adversarial review rounds, each by a fresh model with no prior context, all published unedited in
   [`docs/`](.). Blocking findings by round: 15, 11, 5, 9, 9, 4, 6, 3, 4, 3, 5, 1, 2, 4, 5, 1, 0, 1, 1, 0, **0**.
   Round seventeen, against `4cc8a1c`, found no release blocker: the first round to do so. Every earlier round's blockers are
   closed against their reproductions, the pages are published and byte-identical, and round seventeen's

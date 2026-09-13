@@ -1,0 +1,6 @@
+
+> rh-airdrop@1.0.0 postinstall
+> playwright install chromium --only-shell || true
+
+
+added 11 packages in 2s

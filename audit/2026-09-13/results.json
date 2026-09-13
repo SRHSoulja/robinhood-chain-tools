@@ -1,0 +1,1070 @@
+{
+  "environment": {
+    "chain": "local Anvil Cancun; no Nitro L1 surcharge",
+    "compiler": "0.8.36",
+    "optimizerRuns": 10000,
+    "viaIR": false,
+    "erc20Allowance": "finite, nonzero remainder",
+    "recipients": "distinct, fresh EOAs",
+    "sender": "nonzero remainder; no storage-clear refunds",
+    "sourceHash": "0x0f2641803b5733747fc14a3c2000cc82dc4d457033090ffe90f44bfb19a840c6"
+  },
+  "singles": [
+    {
+      "name": "ERC20 transfer",
+      "gas": 51471,
+      "intrinsic": 21632
+    },
+    {
+      "name": "ERC721 safe EOA",
+      "gas": 62414,
+      "intrinsic": 21940
+    },
+    {
+      "name": "ERC721 unsafe EOA",
+      "gas": 59642,
+      "intrinsic": 21940
+    },
+    {
+      "name": "ERC1155 EOA",
+      "gas": 56849,
+      "intrinsic": 22348
+    },
+    {
+      "name": "ERC721A safe EOA",
+      "gas": 86234,
+      "intrinsic": 21940
+    }
+  ],
+  "rows": [
+    {
+      "shape": "A",
+      "n": 1,
+      "variant": "reference",
+      "gas": 63163,
+      "perRecipient": 63163,
+      "bytes": 228,
+      "intrinsic": 22560
+    },
+    {
+      "shape": "A",
+      "n": 1,
+      "variant": "strict",
+      "gas": 68198,
+      "perRecipient": 68198,
+      "bytes": 260,
+      "intrinsic": 22688
+    },
+    {
+      "shape": "A",
+      "n": 1,
+      "variant": "lenient",
+      "gas": 68518,
+      "perRecipient": 68518,
+      "bytes": 260,
+      "intrinsic": 22700
+    },
+    {
+      "shape": "A",
+      "n": 10,
+      "variant": "reference",
+      "gas": 311289,
+      "perRecipient": 31128.9,
+      "bytes": 804,
+      "intrinsic": 27684
+    },
+    {
+      "shape": "A",
+      "n": 10,
+      "variant": "strict",
+      "gas": 318609,
+      "perRecipient": 31860.9,
+      "bytes": 836,
+      "intrinsic": 27812
+    },
+    {
+      "shape": "A",
+      "n": 10,
+      "variant": "lenient",
+      "gas": 321701,
+      "perRecipient": 32170.1,
+      "bytes": 836,
+      "intrinsic": 27824
+    },
+    {
+      "shape": "A",
+      "n": 50,
+      "variant": "reference",
+      "gas": 1414524,
+      "perRecipient": 28290.48,
+      "bytes": 3364,
+      "intrinsic": 50764
+    },
+    {
+      "shape": "A",
+      "n": 50,
+      "variant": "strict",
+      "gas": 1429058,
+      "perRecipient": 28581.16,
+      "bytes": 3396,
+      "intrinsic": 50892
+    },
+    {
+      "shape": "A",
+      "n": 50,
+      "variant": "lenient",
+      "gas": 1444470,
+      "perRecipient": 28889.4,
+      "bytes": 3396,
+      "intrinsic": 50904
+    },
+    {
+      "shape": "A",
+      "n": 100,
+      "variant": "reference",
+      "gas": 2793915,
+      "perRecipient": 27939.15,
+      "bytes": 6564,
+      "intrinsic": 79632
+    },
+    {
+      "shape": "A",
+      "n": 100,
+      "variant": "strict",
+      "gas": 2817477,
+      "perRecipient": 28174.77,
+      "bytes": 6596,
+      "intrinsic": 79772,
+      "tokenExecution": 2595291,
+      "routerExecution": 142414
+    },
+    {
+      "shape": "A",
+      "n": 100,
+      "variant": "lenient",
+      "gas": 2848289,
+      "perRecipient": 28482.89,
+      "bytes": 6596,
+      "intrinsic": 79784
+    },
+    {
+      "shape": "A",
+      "n": 300,
+      "variant": "reference",
+      "gas": 8315337,
+      "perRecipient": 27717.79,
+      "bytes": 19364,
+      "intrinsic": 195296
+    },
+    {
+      "shape": "A",
+      "n": 300,
+      "variant": "strict",
+      "gas": 8374967,
+      "perRecipient": 27916.556666666667,
+      "bytes": 19396,
+      "intrinsic": 195436
+    },
+    {
+      "shape": "A",
+      "n": 300,
+      "variant": "lenient",
+      "gas": 8467379,
+      "perRecipient": 28224.596666666668,
+      "bytes": 19396,
+      "intrinsic": 195448
+    },
+    {
+      "shape": "B",
+      "n": 1,
+      "variant": "reference",
+      "gas": 63163,
+      "perRecipient": 63163,
+      "bytes": 228,
+      "intrinsic": 22560
+    },
+    {
+      "shape": "B",
+      "n": 1,
+      "variant": "strict",
+      "gas": 68198,
+      "perRecipient": 68198,
+      "bytes": 260,
+      "intrinsic": 22688
+    },
+    {
+      "shape": "B",
+      "n": 1,
+      "variant": "lenient",
+      "gas": 68518,
+      "perRecipient": 68518,
+      "bytes": 260,
+      "intrinsic": 22700
+    },
+    {
+      "shape": "B",
+      "n": 1,
+      "variant": "specialized",
+      "gas": 67104,
+      "perRecipient": 67104,
+      "bytes": 164,
+      "intrinsic": 22280
+    },
+    {
+      "shape": "B",
+      "n": 10,
+      "variant": "reference",
+      "gas": 311289,
+      "perRecipient": 31128.9,
+      "bytes": 804,
+      "intrinsic": 27684
+    },
+    {
+      "shape": "B",
+      "n": 10,
+      "variant": "strict",
+      "gas": 317946,
+      "perRecipient": 31794.6,
+      "bytes": 836,
+      "intrinsic": 27812
+    },
+    {
+      "shape": "B",
+      "n": 10,
+      "variant": "lenient",
+      "gas": 321038,
+      "perRecipient": 32103.8,
+      "bytes": 836,
+      "intrinsic": 27824
+    },
+    {
+      "shape": "B",
+      "n": 10,
+      "variant": "specialized",
+      "gas": 315067,
+      "perRecipient": 31506.7,
+      "bytes": 452,
+      "intrinsic": 25592
+    },
+    {
+      "shape": "B",
+      "n": 50,
+      "variant": "reference",
+      "gas": 1414152,
+      "perRecipient": 28283.04,
+      "bytes": 3364,
+      "intrinsic": 50392
+    },
+    {
+      "shape": "B",
+      "n": 50,
+      "variant": "strict",
+      "gas": 1428021,
+      "perRecipient": 28560.42,
+      "bytes": 3396,
+      "intrinsic": 50520
+    },
+    {
+      "shape": "B",
+      "n": 50,
+      "variant": "lenient",
+      "gas": 1443433,
+      "perRecipient": 28868.66,
+      "bytes": 3396,
+      "intrinsic": 50532
+    },
+    {
+      "shape": "B",
+      "n": 50,
+      "variant": "specialized",
+      "gas": 1417260,
+      "perRecipient": 28345.2,
+      "bytes": 1732,
+      "intrinsic": 40300
+    },
+    {
+      "shape": "B",
+      "n": 100,
+      "variant": "reference",
+      "gas": 2793003,
+      "perRecipient": 27930.03,
+      "bytes": 6564,
+      "intrinsic": 78720
+    },
+    {
+      "shape": "B",
+      "n": 100,
+      "variant": "strict",
+      "gas": 2815898,
+      "perRecipient": 28158.98,
+      "bytes": 6596,
+      "intrinsic": 78860,
+      "tokenExecution": 2595124,
+      "routerExecution": 141914
+    },
+    {
+      "shape": "B",
+      "n": 100,
+      "variant": "lenient",
+      "gas": 2846710,
+      "perRecipient": 28467.1,
+      "bytes": 6596,
+      "intrinsic": 78872
+    },
+    {
+      "shape": "B",
+      "n": 100,
+      "variant": "specialized",
+      "gas": 2795283,
+      "perRecipient": 27952.83,
+      "bytes": 3332,
+      "intrinsic": 58640
+    },
+    {
+      "shape": "B",
+      "n": 300,
+      "variant": "reference",
+      "gas": 8312157,
+      "perRecipient": 27707.19,
+      "bytes": 19364,
+      "intrinsic": 192116
+    },
+    {
+      "shape": "B",
+      "n": 300,
+      "variant": "strict",
+      "gas": 8371110,
+      "perRecipient": 27903.7,
+      "bytes": 19396,
+      "intrinsic": 192256
+    },
+    {
+      "shape": "B",
+      "n": 300,
+      "variant": "lenient",
+      "gas": 8463522,
+      "perRecipient": 28211.74,
+      "bytes": 19396,
+      "intrinsic": 192268
+    },
+    {
+      "shape": "B",
+      "n": 300,
+      "variant": "specialized",
+      "gas": 8311068,
+      "perRecipient": 27703.56,
+      "bytes": 9732,
+      "intrinsic": 132024
+    },
+    {
+      "shape": "C",
+      "n": 1,
+      "variant": "reference",
+      "gas": 70331,
+      "perRecipient": 70331,
+      "bytes": 260,
+      "intrinsic": 22640
+    },
+    {
+      "shape": "C",
+      "n": 1,
+      "variant": "strict",
+      "gas": 74297,
+      "perRecipient": 74297,
+      "bytes": 292,
+      "intrinsic": 22768
+    },
+    {
+      "shape": "C",
+      "n": 1,
+      "variant": "lenient",
+      "gas": 74724,
+      "perRecipient": 74724,
+      "bytes": 292,
+      "intrinsic": 22780
+    },
+    {
+      "shape": "C",
+      "n": 1,
+      "variant": "specialized",
+      "gas": 73682,
+      "perRecipient": 73682,
+      "bytes": 196,
+      "intrinsic": 22360
+    },
+    {
+      "shape": "C",
+      "n": 10,
+      "variant": "reference",
+      "gas": 406241,
+      "perRecipient": 40624.1,
+      "bytes": 836,
+      "intrinsic": 27224
+    },
+    {
+      "shape": "C",
+      "n": 10,
+      "variant": "strict",
+      "gas": 410492,
+      "perRecipient": 41049.2,
+      "bytes": 868,
+      "intrinsic": 27340
+    },
+    {
+      "shape": "C",
+      "n": 10,
+      "variant": "lenient",
+      "gas": 414764,
+      "perRecipient": 41476.4,
+      "bytes": 868,
+      "intrinsic": 27352
+    },
+    {
+      "shape": "C",
+      "n": 10,
+      "variant": "specialized",
+      "gas": 410759,
+      "perRecipient": 41075.9,
+      "bytes": 484,
+      "intrinsic": 25672
+    },
+    {
+      "shape": "C",
+      "n": 50,
+      "variant": "reference",
+      "gas": 1899109,
+      "perRecipient": 37982.18,
+      "bytes": 3396,
+      "intrinsic": 47532
+    },
+    {
+      "shape": "C",
+      "n": 50,
+      "variant": "strict",
+      "gas": 1904680,
+      "perRecipient": 38093.6,
+      "bytes": 3428,
+      "intrinsic": 47648
+    },
+    {
+      "shape": "C",
+      "n": 50,
+      "variant": "lenient",
+      "gas": 1926141,
+      "perRecipient": 38522.82,
+      "bytes": 3428,
+      "intrinsic": 47660
+    },
+    {
+      "shape": "C",
+      "n": 50,
+      "variant": "specialized",
+      "gas": 1908867,
+      "perRecipient": 38177.34,
+      "bytes": 1764,
+      "intrinsic": 40380
+    },
+    {
+      "shape": "C",
+      "n": 100,
+      "variant": "reference",
+      "gas": 3765149,
+      "perRecipient": 37651.49,
+      "bytes": 6596,
+      "intrinsic": 72872
+    },
+    {
+      "shape": "C",
+      "n": 100,
+      "variant": "strict",
+      "gas": 3772382,
+      "perRecipient": 37723.82,
+      "bytes": 6628,
+      "intrinsic": 73000,
+      "tokenExecution": 3601070,
+      "routerExecution": 98312
+    },
+    {
+      "shape": "C",
+      "n": 100,
+      "variant": "lenient",
+      "gas": 3815559,
+      "perRecipient": 38155.59,
+      "bytes": 6628,
+      "intrinsic": 73012
+    },
+    {
+      "shape": "C",
+      "n": 100,
+      "variant": "specialized",
+      "gas": 3781457,
+      "perRecipient": 37814.57,
+      "bytes": 3364,
+      "intrinsic": 58720
+    },
+    {
+      "shape": "C",
+      "n": 300,
+      "variant": "reference",
+      "gas": 11229873,
+      "perRecipient": 37432.91,
+      "bytes": 19396,
+      "intrinsic": 174796
+    },
+    {
+      "shape": "C",
+      "n": 300,
+      "variant": "strict",
+      "gas": 11243706,
+      "perRecipient": 37479.02,
+      "bytes": 19428,
+      "intrinsic": 174924
+    },
+    {
+      "shape": "C",
+      "n": 300,
+      "variant": "lenient",
+      "gas": 11376316,
+      "perRecipient": 37921.05333333334,
+      "bytes": 19428,
+      "intrinsic": 174936
+    },
+    {
+      "shape": "C",
+      "n": 300,
+      "variant": "specialized",
+      "gas": 11271841,
+      "perRecipient": 37572.80333333334,
+      "bytes": 9764,
+      "intrinsic": 132104
+    },
+    {
+      "shape": "D",
+      "n": 1,
+      "variant": "reference",
+      "gas": 70331,
+      "perRecipient": 70331,
+      "bytes": 260,
+      "intrinsic": 22640
+    },
+    {
+      "shape": "D",
+      "n": 1,
+      "variant": "strict",
+      "gas": 74297,
+      "perRecipient": 74297,
+      "bytes": 292,
+      "intrinsic": 22768
+    },
+    {
+      "shape": "D",
+      "n": 1,
+      "variant": "lenient",
+      "gas": 74724,
+      "perRecipient": 74724,
+      "bytes": 292,
+      "intrinsic": 22780
+    },
+    {
+      "shape": "D",
+      "n": 10,
+      "variant": "reference",
+      "gas": 406241,
+      "perRecipient": 40624.1,
+      "bytes": 836,
+      "intrinsic": 27224
+    },
+    {
+      "shape": "D",
+      "n": 10,
+      "variant": "strict",
+      "gas": 410492,
+      "perRecipient": 41049.2,
+      "bytes": 868,
+      "intrinsic": 27340
+    },
+    {
+      "shape": "D",
+      "n": 10,
+      "variant": "lenient",
+      "gas": 414764,
+      "perRecipient": 41476.4,
+      "bytes": 868,
+      "intrinsic": 27352
+    },
+    {
+      "shape": "D",
+      "n": 50,
+      "variant": "reference",
+      "gas": 1899109,
+      "perRecipient": 37982.18,
+      "bytes": 3396,
+      "intrinsic": 47532
+    },
+    {
+      "shape": "D",
+      "n": 50,
+      "variant": "strict",
+      "gas": 1904680,
+      "perRecipient": 38093.6,
+      "bytes": 3428,
+      "intrinsic": 47648
+    },
+    {
+      "shape": "D",
+      "n": 50,
+      "variant": "lenient",
+      "gas": 1926141,
+      "perRecipient": 38522.82,
+      "bytes": 3428,
+      "intrinsic": 47660
+    },
+    {
+      "shape": "D",
+      "n": 100,
+      "variant": "reference",
+      "gas": 3765317,
+      "perRecipient": 37653.17,
+      "bytes": 6596,
+      "intrinsic": 73040
+    },
+    {
+      "shape": "D",
+      "n": 100,
+      "variant": "strict",
+      "gas": 3772550,
+      "perRecipient": 37725.5,
+      "bytes": 6628,
+      "intrinsic": 73168,
+      "tokenExecution": 3601070,
+      "routerExecution": 98312
+    },
+    {
+      "shape": "D",
+      "n": 100,
+      "variant": "lenient",
+      "gas": 3815727,
+      "perRecipient": 38157.27,
+      "bytes": 6628,
+      "intrinsic": 73180
+    },
+    {
+      "shape": "D",
+      "n": 300,
+      "variant": "reference",
+      "gas": 11231913,
+      "perRecipient": 37439.71,
+      "bytes": 19396,
+      "intrinsic": 176836
+    },
+    {
+      "shape": "D",
+      "n": 300,
+      "variant": "strict",
+      "gas": 11245746,
+      "perRecipient": 37485.82,
+      "bytes": 19428,
+      "intrinsic": 176964
+    },
+    {
+      "shape": "D",
+      "n": 300,
+      "variant": "lenient",
+      "gas": 11378356,
+      "perRecipient": 37927.85333333333,
+      "bytes": 19428,
+      "intrinsic": 176976
+    },
+    {
+      "shape": "E",
+      "n": 1,
+      "variant": "reference",
+      "gas": 65019,
+      "perRecipient": 65019,
+      "bytes": 324,
+      "intrinsic": 22908
+    },
+    {
+      "shape": "E",
+      "n": 1,
+      "variant": "strict",
+      "gas": 67575,
+      "perRecipient": 67575,
+      "bytes": 356,
+      "intrinsic": 23048
+    },
+    {
+      "shape": "E",
+      "n": 1,
+      "variant": "lenient",
+      "gas": 68004,
+      "perRecipient": 68004,
+      "bytes": 356,
+      "intrinsic": 23060
+    },
+    {
+      "shape": "E",
+      "n": 1,
+      "variant": "specialized",
+      "gas": 66271,
+      "perRecipient": 66271,
+      "bytes": 196,
+      "intrinsic": 22348
+    },
+    {
+      "shape": "E",
+      "n": 10,
+      "variant": "reference",
+      "gas": 349785,
+      "perRecipient": 34978.5,
+      "bytes": 1188,
+      "intrinsic": 28764
+    },
+    {
+      "shape": "E",
+      "n": 10,
+      "variant": "strict",
+      "gas": 352587,
+      "perRecipient": 35258.7,
+      "bytes": 1220,
+      "intrinsic": 28880
+    },
+    {
+      "shape": "E",
+      "n": 10,
+      "variant": "lenient",
+      "gas": 356968,
+      "perRecipient": 35696.8,
+      "bytes": 1220,
+      "intrinsic": 28892
+    },
+    {
+      "shape": "E",
+      "n": 10,
+      "variant": "specialized",
+      "gas": 349429,
+      "perRecipient": 34942.9,
+      "bytes": 484,
+      "intrinsic": 25660
+    },
+    {
+      "shape": "E",
+      "n": 50,
+      "variant": "reference",
+      "gas": 1615293,
+      "perRecipient": 32305.86,
+      "bytes": 5028,
+      "intrinsic": 54672
+    },
+    {
+      "shape": "E",
+      "n": 50,
+      "variant": "strict",
+      "gas": 1619295,
+      "perRecipient": 32385.9,
+      "bytes": 5060,
+      "intrinsic": 54788
+    },
+    {
+      "shape": "E",
+      "n": 50,
+      "variant": "lenient",
+      "gas": 1641493,
+      "perRecipient": 32829.86,
+      "bytes": 5060,
+      "intrinsic": 54800
+    },
+    {
+      "shape": "E",
+      "n": 50,
+      "variant": "specialized",
+      "gas": 1607897,
+      "perRecipient": 32157.94,
+      "bytes": 1764,
+      "intrinsic": 40368
+    },
+    {
+      "shape": "E",
+      "n": 100,
+      "variant": "reference",
+      "gas": 3197133,
+      "perRecipient": 31971.33,
+      "bytes": 9828,
+      "intrinsic": 87012
+    },
+    {
+      "shape": "E",
+      "n": 100,
+      "variant": "strict",
+      "gas": 3202647,
+      "perRecipient": 32026.47,
+      "bytes": 9860,
+      "intrinsic": 87140,
+      "tokenExecution": 3003500,
+      "routerExecution": 112007
+    },
+    {
+      "shape": "E",
+      "n": 100,
+      "variant": "lenient",
+      "gas": 3247694,
+      "perRecipient": 32476.94,
+      "bytes": 9860,
+      "intrinsic": 87152
+    },
+    {
+      "shape": "E",
+      "n": 100,
+      "variant": "specialized",
+      "gas": 3180937,
+      "perRecipient": 31809.37,
+      "bytes": 3364,
+      "intrinsic": 58708
+    },
+    {
+      "shape": "E",
+      "n": 300,
+      "variant": "reference",
+      "gas": 9524541,
+      "perRecipient": 31748.47,
+      "bytes": 29028,
+      "intrinsic": 216420
+    },
+    {
+      "shape": "E",
+      "n": 300,
+      "variant": "strict",
+      "gas": 9536055,
+      "perRecipient": 31786.85,
+      "bytes": 29060,
+      "intrinsic": 216548
+    },
+    {
+      "shape": "E",
+      "n": 300,
+      "variant": "lenient",
+      "gas": 9678952,
+      "perRecipient": 32263.173333333332,
+      "bytes": 29060,
+      "intrinsic": 216560
+    },
+    {
+      "shape": "E",
+      "n": 300,
+      "variant": "specialized",
+      "gas": 9473121,
+      "perRecipient": 31577.07,
+      "bytes": 9764,
+      "intrinsic": 132092
+    },
+    {
+      "shape": "F",
+      "n": 1,
+      "variant": "reference",
+      "gas": 65019,
+      "perRecipient": 65019,
+      "bytes": 324,
+      "intrinsic": 22908
+    },
+    {
+      "shape": "F",
+      "n": 1,
+      "variant": "strict",
+      "gas": 67575,
+      "perRecipient": 67575,
+      "bytes": 356,
+      "intrinsic": 23048
+    },
+    {
+      "shape": "F",
+      "n": 1,
+      "variant": "lenient",
+      "gas": 68004,
+      "perRecipient": 68004,
+      "bytes": 356,
+      "intrinsic": 23060
+    },
+    {
+      "shape": "F",
+      "n": 10,
+      "variant": "reference",
+      "gas": 392985,
+      "perRecipient": 39298.5,
+      "bytes": 1188,
+      "intrinsic": 28764
+    },
+    {
+      "shape": "F",
+      "n": 10,
+      "variant": "strict",
+      "gas": 395787,
+      "perRecipient": 39578.7,
+      "bytes": 1220,
+      "intrinsic": 28880
+    },
+    {
+      "shape": "F",
+      "n": 10,
+      "variant": "lenient",
+      "gas": 400168,
+      "perRecipient": 40016.8,
+      "bytes": 1220,
+      "intrinsic": 28892
+    },
+    {
+      "shape": "F",
+      "n": 50,
+      "variant": "reference",
+      "gas": 1687293,
+      "perRecipient": 33745.86,
+      "bytes": 5028,
+      "intrinsic": 54672
+    },
+    {
+      "shape": "F",
+      "n": 50,
+      "variant": "strict",
+      "gas": 1691295,
+      "perRecipient": 33825.9,
+      "bytes": 5060,
+      "intrinsic": 54788
+    },
+    {
+      "shape": "F",
+      "n": 50,
+      "variant": "lenient",
+      "gas": 1713493,
+      "perRecipient": 34269.86,
+      "bytes": 5060,
+      "intrinsic": 54800
+    },
+    {
+      "shape": "F",
+      "n": 100,
+      "variant": "reference",
+      "gas": 3269133,
+      "perRecipient": 32691.33,
+      "bytes": 9828,
+      "intrinsic": 87012
+    },
+    {
+      "shape": "F",
+      "n": 100,
+      "variant": "strict",
+      "gas": 3274647,
+      "perRecipient": 32746.47,
+      "bytes": 9860,
+      "intrinsic": 87140,
+      "tokenExecution": 3075500,
+      "routerExecution": 112007
+    },
+    {
+      "shape": "F",
+      "n": 100,
+      "variant": "lenient",
+      "gas": 3319694,
+      "perRecipient": 33196.94,
+      "bytes": 9860,
+      "intrinsic": 87152
+    },
+    {
+      "shape": "F",
+      "n": 300,
+      "variant": "reference",
+      "gas": 9596541,
+      "perRecipient": 31988.47,
+      "bytes": 29028,
+      "intrinsic": 216420
+    },
+    {
+      "shape": "F",
+      "n": 300,
+      "variant": "strict",
+      "gas": 9608055,
+      "perRecipient": 32026.85,
+      "bytes": 29060,
+      "intrinsic": 216548
+    },
+    {
+      "shape": "F",
+      "n": 300,
+      "variant": "lenient",
+      "gas": 9750952,
+      "perRecipient": 32503.173333333332,
+      "bytes": 29060,
+      "intrinsic": 216560
+    },
+    {
+      "shape": "OZ721 unsafe",
+      "n": 100,
+      "variant": "reference",
+      "gas": 3486937,
+      "perRecipient": 34869.37,
+      "bytes": 6596,
+      "intrinsic": 72860
+    },
+    {
+      "shape": "OZ721 unsafe",
+      "n": 100,
+      "variant": "strict",
+      "gas": 3494170,
+      "perRecipient": 34941.7,
+      "bytes": 6628,
+      "intrinsic": 72988
+    },
+    {
+      "shape": "ERC721A ascending",
+      "n": 100,
+      "variant": "reference",
+      "gas": 5478849,
+      "perRecipient": 54788.49,
+      "bytes": 6596,
+      "intrinsic": 72872
+    },
+    {
+      "shape": "ERC721A ascending",
+      "n": 100,
+      "variant": "strict",
+      "gas": 5486122,
+      "perRecipient": 54861.22,
+      "bytes": 6628,
+      "intrinsic": 73000
+    },
+    {
+      "shape": "ERC721A gapped ascending",
+      "n": 100,
+      "variant": "reference",
+      "gas": 7896300,
+      "perRecipient": 78963,
+      "bytes": 6596,
+      "intrinsic": 73040
+    },
+    {
+      "shape": "ERC721A gapped ascending",
+      "n": 100,
+      "variant": "strict",
+      "gas": 7903573,
+      "perRecipient": 79035.73,
+      "bytes": 6628,
+      "intrinsic": 73168
+    },
+    {
+      "shape": "ERC721A descending",
+      "n": 100,
+      "variant": "reference",
+      "gas": 6441723,
+      "perRecipient": 64417.23,
+      "bytes": 6596,
+      "intrinsic": 72872
+    },
+    {
+      "shape": "ERC721A descending",
+      "n": 100,
+      "variant": "strict",
+      "gas": 6468719,
+      "perRecipient": 64687.19,
+      "bytes": 6628,
+      "intrinsic": 73000
+    }
+  ]
+}

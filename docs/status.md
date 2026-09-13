@@ -1,6 +1,6 @@
 # What is tested, what is not, and what is still open
 
-Last updated 12 September 2026, against BulkSend **v13** and round twenty-one.
+Last updated 13 September 2026, against BulkSend **v13** and round twenty-two.
 
 This file exists so that the state of the project is readable from the repository rather than from anyone's
 summary of it. Everything here is a count or a verdict that can be reproduced by running the command beside
@@ -22,7 +22,7 @@ now watches it:
 
 | | state |
 | --- | --- |
-| a review round with no release blockers | **met** — rounds seventeen, twenty and twenty-one found none; after twenty-one the product tree did not change: the only commit before the deploy was release mechanics (`bf4c61d`: the mainnet deploy entry point, preflight tolerating the mainnet address, one plan sentence), with `src/BulkSend.sol` and both pages untouched |
+| a review round with no release blockers | **met** — rounds seventeen, twenty, twenty-one and (after the release) twenty-two found none; after twenty-one the product tree did not change: the only commit before the deploy was release mechanics (`bf4c61d`: the mainnet deploy entry point, preflight tolerating the mainnet address, one plan sentence), with `src/BulkSend.sol` and both pages untouched |
 | a production mainnet RPC plan | **met**, 11 September 2026 — each chain lists three endpoints in order (Robinhood's own, then PublicNode, then Pocket on mainnet), all answering the right chain id and `eth_simulateV1` when checked; the page probes them in order at connect and on a network change and reads through the first that answers, saying so when it is not the first. The integrity workflow probes every listed endpoint four times a day and fails if the first, or every fallback, for a chain stops answering. No credential: all three are public, and the Worker keeps no RPC. See `plan.md`'s gate 9 |
 | a current real-wallet rehearsal on testnet | **met**, 11 September 2026 — four runs from the maintainer's own wallet against the published page and v13: ERC-721, ERC-1155 and ERC-20 from a browser wallet, and ERC-721 from a phone over WalletConnect with the tab backgrounded. Every hash read back from the explorer and the chain agrees with the page ([`real-wallet-run.md`](real-wallet-run.md); see also the proof table below and `plan.md`'s gate 10) |
 | explicit permission from the maintainer, given after that round | **given**, 12 September 2026, after round twenty-one, in writing: "MAINNET DEPLOYMENT IS EXPLICITLY AUTHORIZED", naming the release-mechanics commit `bf4c61d` |
@@ -155,6 +155,31 @@ ERC-1155 survey covers 6, which is every one that was findable and measurable. S
 a distribution, only its top, and the file says so.
 
 ## Open findings
+
+Round twenty-two, 13 September 2026, against `3cba293` (the live release tree), by an external model run by the
+maintainer (GPT), after the mainnet release. The full report is
+[`audit-2026-09-13-twenty-second-external.md`](audit-2026-09-13-twenty-second-external.md), published as
+delivered, with its benchmark artifacts under `audit/2026-09-13/` and its final-verification bundle under
+`docs/verification-2026-09-13/`. **No must-fix.** Its verdict: no mainnet-blocking authorization or asset-routing
+defect; gas already close to a practical safe-loop floor; every candidate optimization below one percent and
+not worth new bytecode; and a "do not touch" list that names the transient guard, the classification probes,
+the exact return validation, the lenient stipend and reason cap, the summary and skip events, and the ascending
+NFT order, each with the reason it earns its keep. It independently verified the live mainnet runtime against
+the canonical build from two RPC endpoints, and ran the full pinned gate.
+
+### Round twenty-two findings
+
+| | | |
+| --- | --- | --- |
+| informational | direct deposits to the contract are irrecoverable; no rescue surface | already documented; the design is no custody, so there is nothing to rescue by construction |
+| low | the classification probes make uncapped staticcalls, so a gas-burning "token" can exhaust a bounded transaction before any transfer | availability only, no funds; kept, since a cap would trade a real guard for a rare grief |
+| informational | call-success counters do not prove economic delivery | documented; the page checks holdings after every batch and says a token can lie |
+| informational | unsafe ERC-721 transfers can reach contracts that cannot recover them | deliberate mode, off by default, said on the page |
+| harness | `test/web/live-chain.mjs` supplied testnet tokens while the page now opens on mainnet | closed: every live script chooses testnet before the page loads, the way a returning tester's browser would |
+
+Adopted: `test/FloorAudit.t.sol` (five tests, including a 512-case mixed ERC-1155 fuzz that checks every
+recipient and id pair, direct-deposit and forced-ETH behaviour, attached-ETH rejection, late lenient rollback,
+and the malicious-classification case), pinned by `verify.sh` like every other ordinary suite.
 
 Round twenty-one, 12 September 2026, against `42eab38`, on Opus. The full report is
 [`audit-2026-09-12-twenty-first-external.md`](audit-2026-09-12-twenty-first-external.md), published as

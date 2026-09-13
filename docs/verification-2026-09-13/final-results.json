@@ -1,0 +1,89 @@
+{
+  "pinned_build": "PASS",
+  "pinned_verify": "PASS",
+  "pinned_versions": {
+    "foundry": "1.4.1",
+    "node": "22.20.0",
+    "solc": "0.8.36",
+    "evm": "cancun",
+    "optimizer_runs": 10000,
+    "via_ir": false
+  },
+  "contract_suites": "6/6",
+  "browser_client": "417 passed, 0 failed",
+  "browser_check": "151 passed, 0 failed",
+  "readers": "77 passed, 0 failed",
+  "worker": "42 passed, 0 failed",
+  "csp_gate": "21 passed, 0 failed",
+  "fork": "4 passed, 0 failed",
+  "probe_fingerprints": "all match",
+  "live_browser_unseeded": "FAIL: 4 of 4 did not measure",
+  "live_browser_existing_testnet_fixture": "PASS: all 4 measured",
+  "ci_os_dependency_bootstrap": "FAIL: sudo requires password; pinned browser installation and full suites passed with existing host dependencies",
+  "connector_reproducibility": "PASS",
+  "live": {
+    "mainnet": "PASS",
+    "frontend": "PASS",
+    "block": 62069242,
+    "address": "0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf",
+    "runtimeBytes": 9752,
+    "runtimeKeccak256": "0xc1a27e659b9ec15895bed10e9917aa0f95c2a9ccb9f8e2db9d1fff1761adf178",
+    "constructor": "No arguments; complete creation input matches canonical initcode",
+    "immutables": "None",
+    "constants": {
+      "DEFAULT_GAS": 400000,
+      "MIN_GAS": 100000,
+      "MAX_GAS": 5000000,
+      "LENIENT_GAS": 400000
+    },
+    "selectors": [
+      {
+        "signature": "airdrop721(address,address[],uint256[],bool,bool)",
+        "selector": "0xb097e731"
+      },
+      {
+        "signature": "airdrop1155(address,address[],uint256[],uint256[],bool)",
+        "selector": "0xd00a888d"
+      },
+      {
+        "signature": "airdrop20(address,address[],uint256[],bool)",
+        "selector": "0x97e763b3"
+      },
+      {
+        "signature": "airdrop721WithGas(address,address[],uint256[],bool,bool,uint256)",
+        "selector": "0x45310558"
+      },
+      {
+        "signature": "airdrop1155WithGas(address,address[],uint256[],uint256[],bool,uint256)",
+        "selector": "0xeb0f0b68"
+      },
+      {
+        "signature": "airdrop20WithGas(address,address[],uint256[],bool,uint256)",
+        "selector": "0xc0d13d4e"
+      },
+      {
+        "signature": "DEFAULT_GAS()",
+        "selector": "0x56c3e5e9"
+      },
+      {
+        "signature": "MIN_GAS()",
+        "selector": "0x20d2c951"
+      },
+      {
+        "signature": "MAX_GAS()",
+        "selector": "0x5f2a9f41"
+      },
+      {
+        "signature": "LENIENT_GAS()",
+        "selector": "0xdf1c9e47"
+      }
+    ],
+    "compiler": {
+      "version": "0.8.36+commit.8a079791"
+    },
+    "secondary": "PASS at same block",
+    "testnet": "PASS"
+  },
+  "production_changes": false,
+  "broadcast_transactions": false
+}

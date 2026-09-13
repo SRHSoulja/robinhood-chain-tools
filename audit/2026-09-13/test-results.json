@@ -1,0 +1,240 @@
+{
+  "test/Audit12.t.sol:Audit12": {
+    "results": {
+      "test_gas_400_recipients()": "Success",
+      "test_hybrid_404_is_refused_by_the_ambiguity_check()": "Success",
+      "test_probe_airdrop20_on_an_erc721_moves_nfts_and_calls_it_a_token_delivery()": "Failure",
+      "test_probe_mustBeNft_refuses_a_bare_require_721_when_the_first_id_is_not_minted()": "Failure",
+      "test_probe_one_false_answer_reverts_the_whole_lenient_erc20_batch()": "Success",
+      "test_probe_the_same_bare_require_721_is_accepted_when_ids0_exists()": "Success",
+      "test_returndatasize_reads_the_transfer_call_not_a_nested_one()": "Success"
+    },
+    "invariants": []
+  },
+  "test/Audit13.t.sol:Audit13": {
+    "results": {
+      "test_probe_mustNotBeNft_is_bypassed_when_the_first_id_is_not_minted()": "Failure",
+      "test_probe_strict_mode_survives_the_same_paste()": "Success"
+    },
+    "invariants": []
+  },
+  "test/AuditProbe.t.sol:AuditProbe": {
+    "results": {
+      "test_probe_F1a_erc20ReturningFalseThroughThe721EntryPointIsCountedAsDelivered()": "Failure",
+      "test_probe_F1b_the721EntryPointWillHappilyMoveErc20Balances()": "Failure",
+      "test_probe_F2_zeroReasonSelectorMatchesNoDeclaredError()": "Failure",
+      "test_probe_F3_aOneByteStopContractIsCountedAsAUsdtStyleDelivery()": "Failure",
+      "test_probe_a23ByteNonDelegationAccountIsNotRejected()": "Failure",
+      "test_probe_countersReconcileAgainstRealBalances_erc20Lenient()": "Success",
+      "test_probe_duplicateRecipientsWithExactAllowance()": "Success",
+      "test_probe_feeOnTransferInLenientModeAlsoOverstatesDelivery()": "Success",
+      "test_probe_gasHogAtMinAndMaxStipendStillRecordsHonestly()": "Success",
+      "test_probe_gasSweep_neverReportsADeliveryThatDidNotHappen()": "Success",
+      "test_probe_lengthAndEmptyChecksOn1155And20()": "Success",
+      "test_probe_lenientGasPerRecipientAcrossBatchSizes()": "Success",
+      "test_probe_lockIsReleasedByARevertInTheSameTransaction()": "Success",
+      "test_probe_noAdminSurfaceAndNoStorageWritten()": "Success",
+      "test_probe_noThirdPartyCanSpendAnotherWalletsApproval()": "Success",
+      "test_probe_oversizeSuccessReturndataIsNeverADelivery()": "Success",
+      "test_probe_politeNoOpIsCountedAsDeliveredInEveryLenientPath()": "Failure",
+      "test_probe_reentrantRecipientIsSkippedAndGenuinelyUnpaid()": "Success",
+      "test_probe_skippedEventsForIdenticalRowsAreIndistinguishable()": "Success",
+      "test_probe_theDeliveredSetDoesNotDependOnTheGasLimit()": "Success"
+    },
+    "invariants": []
+  },
+  "test/BulkSend.t.sol:BulkSendTest": {
+    "results": {
+      "test1155_lenient_skips_deaf_contract()": "Success",
+      "test1155_sends_amounts()": "Success",
+      "test20_sends_and_tolerates_no_return_tokens()": "Success",
+      "test20_strict_reverts_on_insufficient_balance_lenient_skips()": "Success",
+      "test721_cannot_move_someone_elses_token()": "Success",
+      "test721_gas_per_recipient_in_a_batch_of_200()": "Success",
+      "test721_lenient_skips_bad_recipient_and_delivers_the_rest()": "Success",
+      "test721_lenient_skips_ids_you_do_not_own()": "Success",
+      "test721_needs_approval()": "Success",
+      "test721_rejects_mismatched_and_empty()": "Success",
+      "test721_sends_each_id_to_each_recipient()": "Success",
+      "test721_strict_reverts_whole_batch_on_one_bad_recipient()": "Success",
+      "test_contract_holds_nothing_after_batches()": "Success"
+    },
+    "invariants": []
+  },
+  "test/BulkSendReal.t.sol:BulkSendRealTest": {
+    "results": {
+      "testBareRevert721_deliversWhenALaterIdAnswers()": "Success",
+      "testBareRevert721_deliversWhenOnlyIntrospectionAnswers()": "Success",
+      "testBareRevert721_throughTheErc20Path_isCaughtByTheIdProbe()": "Success",
+      "testBareRevert721_throughTheErc20Path_isCaughtByTheLastIdWhenTheFirstIsDead()": "Success",
+      "testBareRevert721_withNeitherIntrospectionNorOperators_isTheResidual()": "Success",
+      "testBareRevert721_withoutIntrospection_isStillRefused()": "Success",
+      "testBlacklist20_blocked_recipient_strict_reverts_lenient_skips_with_reason()": "Success",
+      "testChatty1155_anAnswerIsAmbiguousInBothModes()": "Success",
+      "testChatty721_lenient_anAnswerIsAmbiguousNotDelivered()": "Success",
+      "testDeafContract_isStillNotAnNft()": "Success",
+      "testERC20_gas_hog_recipient_cannot_sink_a_lenient_batch()": "Success",
+      "testERC20_paidButAnsweredWrong_revertsInsteadOfSkipping()": "Success",
+      "testERC20_revertedTransferIsStillSkippable()": "Success",
+      "testERC721A_sequential_ids_deliver()": "Success",
+      "testERC721_throughTheErc20Path_isRefused()": "Success",
+      "testERC721_throughTheErc20Path_whenNeitherProbedAmountIsALiveId()": "Success",
+      "testERC721_throughTheErc20Path_whenTheFirstAmountIsNotALiveId()": "Success",
+      "testERC721_throughTheErc20Path_withRealAmounts_isRefusedOutright()": "Success",
+      "testErc1155_throughTheErc20Path_isRefused()": "Success",
+      "testFalse20_returningFalseRevertsBothModes()": "Success",
+      "testFee20_delivers_less_than_sent_and_reports_sent_count_only()": "Success",
+      "testFuzz_OZ1155_amounts_conserve_supply(uint8,uint32)": "Success",
+      "testFuzz_OZ20_conserves_total(uint8,uint64)": "Success",
+      "testFuzz_OZ721_any_batch_size_delivers_exactly(uint8)": "Success",
+      "testHeavyHonestHook_skipped_when_lenient_delivered_when_strict()": "Success",
+      "testLenient_fully_funded_batch_delivers_everyone()": "Success",
+      "testLenient_underfunded_batch_reverts_instead_of_blaming_a_recipient()": "Success",
+      "testNoIntrospection721_throughTheErc20Path_isCaughtByTheOperatorQuestion()": "Success",
+      "testNoReturn20_stillDeliversWithTheMirrorAsARealMirror()": "Success",
+      "testNoReturn20_usdt_style_delivers()": "Success",
+      "testNoReturn20_zero_address_is_never_burned_even_though_the_token_allows_it()": "Success",
+      "testOZ1155_gas_hog_and_bomb_in_lenient_batch_skipped_rest_delivered()": "Success",
+      "testOZ1155_lenient_skips_bad_and_over_amount_delivers_rest()": "Success",
+      "testOZ1155_lenient_zeroAddressIsSkippedNotBurned()": "Success",
+      "testOZ1155_rejectsMismatchedLengths_andEmpty()": "Success",
+      "testOZ1155_strict_amounts_to_wallets_and_accepting_contract()": "Success",
+      "testOZ1155_strict_reverts_on_deaf_wrongmagic_rejecting_insufficient()": "Success",
+      "testOZ1155_strict_zeroAddressRevertsTheBatch()": "Success",
+      "testOZ1155_without_approval_strict_reverts_lenient_skips()": "Success",
+      "testOZ20_allowance_short_strict_reverts_lenient_skips_tail()": "Success",
+      "testOZ20_eoa_as_token_address_is_never_a_delivery()": "Success",
+      "testOZ20_not_a_token_address_strict_reverts_lenient_skips()": "Success",
+      "testOZ20_rejectsMismatchedLengths_andEmpty()": "Success",
+      "testOZ20_strict_exact_amounts_and_allowance_consumed()": "Success",
+      "testOZ20_zero_address_strict_reverts_lenient_skips()": "Success",
+      "testOZ721Enumerable_delivers_and_enumeration_holds()": "Success",
+      "testOZ721_duplicate_id_in_list_strict_reverts_lenient_skips_second()": "Success",
+      "testOZ721_gas_griefing_at_front_of_long_lenient_batch_cannot_sink_it()": "Success",
+      "testOZ721_nonexistent_id_strict_reverts_lenient_skips()": "Success",
+      "testOZ721_paused_collection_strict_reverts_lenient_skips_everything()": "Success",
+      "testOZ721_reentrant_recipient_cannot_steal_and_batch_completes()": "Success",
+      "testOZ721_return_bomb_recipient_lenient_skipped_rest_delivered()": "Success",
+      "testOZ721_safe_lenient_skips_each_bad_recipient_with_reason()": "Success",
+      "testOZ721_safe_strict_reverts_for_deaf_wrongmagic_rejecting()": "Success",
+      "testOZ721_safe_strict_to_accepting_contract()": "Success",
+      "testOZ721_same_wallet_many_ids_and_send_to_self()": "Success",
+      "testOZ721_single_id_approval_is_enough_for_that_id_only()": "Success",
+      "testOZ721_stranger_cannot_use_my_approval()": "Success",
+      "testOZ721_strict_safe_forwards_full_gas_so_a_heavy_honest_hook_still_works()": "Success",
+      "testOZ721_strict_unsafe_all_delivered()": "Success",
+      "testOZ721_three_gas_hogs_in_lenient_batch_all_skipped_rest_delivered()": "Success",
+      "testOZ721_unsafe_lenient_skips_unowned()": "Success",
+      "testOZ721_unsafe_strict_reverts_on_unowned_with_oz_error()": "Success",
+      "testOZ721_without_approval_nothing_moves_in_either_mode()": "Success",
+      "testOZ721_zero_recipient_strict_reverts_lenient_skips_and_never_burns()": "Success",
+      "testRealErc20_isNotRefusedByTheOperatorQuestion()": "Success",
+      "testRealErc20_stillDeliversWithTheMirrorAsARealMirror()": "Success",
+      "testRealErc20_stillDeliversWithTheMirrorGuardInPlace()": "Success",
+      "testReturnBomb_costs_no_more_than_an_ordinary_failure()": "Success",
+      "testSkippedReason_is_truncated()": "Success",
+      "testStrict20_bubblesTheTokensOwnError()": "Success",
+      "testStrict20_longRevertReasonArrivesWhole()": "Success",
+      "testStrict_sent_count_equals_batch_size()": "Success",
+      "testWeird20_odd_return_data_is_a_failure_not_a_panic()": "Success",
+      "test_aContractThatAnswersAVoidCallIsRefusedRatherThanCounted()": "Success",
+      "test_aContractThatImpersonatesAnNftIsStillCountedAsSent()": "Success",
+      "test_aSilentContractWithNoOwnerOfIsRefused()": "Success",
+      "test_bulk_has_no_owner_no_ether_path_no_state()": "Success",
+      "test_chosenGas_deliversARecipientTheDefaultWouldSkip()": "Success",
+      "test_chosenGas_isRefusedInStrictMode()": "Success",
+      "test_chosenGas_refusesValuesOutsideTheBounds()": "Success",
+      "test_chosenGas_reservesEnoughToRecordTheOutcome()": "Success",
+      "test_chosenGas_stillContainsAGasHog()": "Success",
+      "test_chosenGas_worksFor1155And20()": "Success",
+      "test_defaults_and_bounds_are_what_the_page_says()": "Success",
+      "test_delegatedWalletIsNotMistakenForAToken()": "Success",
+      "test_erc20ReturningTwoWordsIsAmbiguousNotDelivered()": "Success",
+      "test_feeOnTransferDeliversLessThanTheAmountCounted()": "Success",
+      "test_refusesToBeItsOwnRecipient()": "Success",
+      "test_zeroAmountIsRefused()": "Success"
+    },
+    "invariants": []
+  },
+  "test/IdAmountProbe.t.sol:IdAmountProbe": {
+    "results": {
+      "test_false20ThroughThe721EntryPointIsRefused()": "Success",
+      "test_noReturn20ThroughThe721EntryPointIsRefused()": "Success"
+    },
+    "invariants": []
+  },
+  "test/Invariants.t.sol:BulkSendInvariants": {
+    "results": {
+      "invariant_bulkHoldsNothing()": "Success",
+      "test_erc20ApprovalWithdrawalIsActuallyExercised()": "Success"
+    },
+    "invariants": [
+      {
+        "predicates": [
+          {
+            "name": "invariant_bulkHoldsNothing",
+            "status": "Success"
+          },
+          {
+            "name": "invariant_everyRowIsAccountedFor",
+            "status": "Success"
+          },
+          {
+            "name": "invariant_sentMeansItMoved",
+            "status": "Success"
+          }
+        ],
+        "run": {
+          "Invariant": {
+            "runs": 96,
+            "calls": 2304,
+            "reverts": 0,
+            "workers": 1,
+            "metrics": {
+              "test/Invariants.t.sol:Handler.drop1155": {
+                "calls": 562,
+                "reverts": 0,
+                "discards": 0
+              },
+              "test/Invariants.t.sol:Handler.setApproval": {
+                "calls": 558,
+                "reverts": 0,
+                "discards": 0
+              },
+              "test/Invariants.t.sol:Handler.drop721": {
+                "calls": 566,
+                "reverts": 0,
+                "discards": 0
+              },
+              "test/Invariants.t.sol:Handler.drop20": {
+                "calls": 618,
+                "reverts": 0,
+                "discards": 0
+              }
+            },
+            "failed_corpus_replays": 0,
+            "optimization_best_value": null
+          }
+        }
+      }
+    ]
+  },
+  "test/Reentrancy.t.sol:ReentrancyTest": {
+    "results": {
+      "test_backToBackBatchesInOneTransactionStillWork()": "Success",
+      "test_hostileReceiverCannotPolluteTheEventStream()": "Success",
+      "test_reentryInLenientModeIsJustASkip()": "Success",
+      "test_reentryIsRefusedWithItsOwnError()": "Success"
+    },
+    "invariants": []
+  },
+  "test/FloorAudit.t.sol:FloorAuditTest": {
+    "results": {
+      "testDirectDepositsCanBeStuckDespiteNormalPathBeingNoncustodial()": "Success",
+      "testFuzzMixed1155PreservesEveryRecipientIdPair(uint256,uint8)": "Success",
+      "testLateSelfRecipientRevertsEvenEarlierLenientSuccess()": "Success",
+      "testLenientDoesNotBoundMaliciousClassificationCalls()": "Success",
+      "testNonpayableEntryRejectsAttachedEth()": "Success"
+    }
+  }
+}

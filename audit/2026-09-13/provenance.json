@@ -1,0 +1,27 @@
+{
+  "reviewed_commit": "3cba293ed26229b2a29cff7e3a3d797e4c9d1647",
+  "source_sha256": "61f7bb7f208d307542d51fc4e42fe99d5519d94893ae3a60fb7f07534b4c1159",
+  "preflight": "passed",
+  "live_deployment_checked": false,
+  "full_browser_suite_run": false,
+  "probe_baseline": {
+    "AuditProbe": {
+      "source_hash_matches": true,
+      "assertion_hash_matches": true
+    },
+    "Audit12": {
+      "source_hash_matches": true,
+      "assertion_hash_matches": true
+    },
+    "Audit13": {
+      "source_hash_matches": true,
+      "assertion_hash_matches": true
+    }
+  },
+  "artifact_sha256": {
+    "audit/2026-09-13/References.sol": "c256d1a713fd3797c18947508086f7d6d3843093f90c748a103e095580077cf2",
+    "audit/2026-09-13/benchmark.mjs": "65ed18d483ea868e8d891c32435a7ae65b3caac2198328f21473c98f46978622",
+    "audit/2026-09-13/results.json": "b9b0c708b25069ec76da28a43e7c1f635b97decfe04d29dcd6fbea5bfc6fc6f5",
+    "test/FloorAudit.t.sol": "615ac213df7eccab0cd1840363dc19b2133358a8905c079996247593cb6cf0b4"
+  }
+}

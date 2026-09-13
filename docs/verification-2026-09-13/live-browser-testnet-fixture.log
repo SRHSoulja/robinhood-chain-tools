@@ -1,0 +1,6 @@
+  ok   OZ721 (plain OpenZeppelin)       cap=389  measured 77,064 gas a wallet
+  ok   A721 (lazily minted, ERC721A)    cap=376  measured 79,710 gas a wallet
+  ok   OZ1155                           cap=396  measured 75,749 gas a wallet
+  ok   OZ20                             cap=400  measured 59,576 gas a wallet
+
+all 4 measured against the real chain

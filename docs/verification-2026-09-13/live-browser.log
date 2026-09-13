@@ -1,0 +1,6 @@
+  FAIL OZ721 (plain OpenZeppelin)       cap=200  NOT MEASURED: t can hold the token, and leaving each transfer room to fail, both cost gas, so a transaction fills up sooner.
+  FAIL A721 (lazily minted, ERC721A)    cap=200  NOT MEASURED: t can hold the token, and leaving each transfer room to fail, both cost gas, so a transaction fills up sooner.
+  FAIL OZ1155                           cap=200  NOT MEASURED: t can hold the token, and leaving each transfer room to fail, both cost gas, so a transaction fills up sooner.
+  FAIL OZ20                             cap=200  NOT MEASURED: t can hold the token, and leaving each transfer room to fail, both cost gas, so a transaction fills up sooner.
+
+4 of 4 did not measure against the real chain
