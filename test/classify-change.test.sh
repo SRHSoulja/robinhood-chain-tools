@@ -87,8 +87,24 @@ fx_intro_typo()      { py_sub web/index.html 'is a good habit' 'is a good habbit
 fx_support_spacing() { py_sub web/index.html '<details id="support" class="card" style="padding:8px 14px;font-size:12.5px">' \
                               '<details id="support" class="card" style="padding: 8px 14px; font-size: 12.5px">'; }
 fx_new_og_image()    { make_png web/og-airdrop.png 1200 630; }
-fx_comment_text()    { py_sub web/index.html '// mainnet is switched off until it is deployed and tested there' \
-                              '// both networks are live; this only refuses a chain the page has no deployment on'; }
+# Finds its own line rather than naming one: the first line inside the inline script whose code part carries no
+# quote, backtick or slash and ends in a // comment, exactly the shape rule (ii) of the classifier accepts. A named
+# comment stops existing the moment someone rewords it through the lane, which is the one change this lane is for.
+fx_comment_text()    { python3 - web/index.html <<'PY2'
+import re, sys
+path = sys.argv[1]; s = open(path, encoding='utf-8').read()
+a = s.index('<script>\n'); b = s.index('</script>', a)
+body = s[a:b]; lines = body.split('\n')
+for i, line in enumerate(lines):
+    p = line.find('//')
+    if p > 0 and line.strip() and not line.lstrip().startswith('//') and not any(c in line[:p] for c in '\'"`/') and '`' not in line and line[:p].strip():
+        lines[i] = line[:p] + '// reworded by the classifier fixture: still a comment, still not code'
+        break
+else:
+    sys.exit('no trailing-comment line of the accepted shape found in the inline script')
+open(path, 'w', encoding='utf-8').write(s[:a] + '\n'.join(lines) + s[b:])
+PY2
+}
 fx_docs_edit()       { printf '\nThe presentation lane is described below.\n' >> docs/harness.md; }
 fx_new_meta()        { py_sub web/index.html '<meta name="twitter:image" content="https://rhairdrop.gmgnrepeat.com/og.png">' \
                               '<meta name="twitter:image" content="https://rhairdrop.gmgnrepeat.com/og.png">'$'\n''<meta property="og:locale" content="en_GB">'; }
