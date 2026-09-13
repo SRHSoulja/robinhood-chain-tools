@@ -99,3 +99,76 @@ the proof that it changes nothing else is that every probe's assertion fingerpri
 baseline across the default-network change. The client suite does the same for itself inside `open()`; a case
 that wants a genuinely fresh visit passes `network: null`.
 
+## The presentation lane
+
+`./verify.sh` is the authoritative gate and nothing here changes that. The presentation lane is a second,
+much faster gate for the one class of change that cannot affect a transaction: the words on the page, its
+styles, its share metadata, its icons and share cards, the documentation, and comments inside the page's own
+script. A typo fix costing a 35-minute full verify is why every typo waits; this makes the cheap change cheap
+without making the dangerous change cheap, because nothing decides which is which by eye.
+
+    ./test/classify-change.sh [BASE]   # the verdict alone: NO_CHANGE, PRESENTATION_ONLY, FULL_VERIFY_REQUIRED
+    ./test/presentation.sh [BASE]      # the lane: classify, then everything the lane checks
+
+`npm run classify` and `npm run presentation` are the same two. BASE defaults to `HEAD`.
+
+### What it refuses
+
+Everything it cannot prove. The classifier compares the working tree, untracked files included, against BASE
+and escalates on any path outside a short allowlist: `web/index.html`, `web/check.html`, the four PNGs,
+`README.md`, `SECURITY.md`, `docs/**/*.md` and `test/web/presentation.test.mjs`. A change to `src/`,
+`script/`, `deploy/`, `.github/`, `verify.sh`, `preflight.sh`, any other file under `test/`, `web/check.js`,
+`web/wc.js`, `web/sync.sh`, `deployments*.json`, `foundry.toml`, `package.json`, the findings baseline, or
+the lane's own scripts escalates, and so does a new untracked file anywhere else. Whenever the answer is not
+certain, the answer is `FULL_VERIFY_REQUIRED`: an unparseable region, a mismatched count, a page with no
+version in BASE. It never prints `PRESENTATION_ONLY` with a reason beside it.
+
+### The guard, in plain words
+
+The two pages are allowed to change, but only outside the parts that decide what a transaction does. Against
+BASE, on each page:
+
+- every `<script src>` tag must be identical, character for character, in the same order: that tag carries the
+  library URL and its integrity hash;
+- the inline script must be identical once comments are removed, and the only thing counted as a comment is a
+  line that starts with `//`, a block-comment line with no quote characters in it, or a trailing `//` whose
+  code part contains no other `/` and an even number of unescaped `'` and `"`. A line with a backtick in it is
+  never treated as a comment, because a template literal spans lines. Anything else is code;
+- `web/check.html`'s inline script may not differ at all, comments included: it is a copy of `web/check.js`
+  spliced in by `web/sync.sh`, and `check.js` is not in the allowlist;
+- the Content-Security-Policy may differ only in its single `'sha256-…'` script hash, and only when the inline
+  script itself differs. Any other `http-equiv` meta must be identical, and no `<base>` tag may exist;
+- the whole `<select id="net">` element must be identical, options, values, order and labels;
+- every `<link rel=…>` must be identical except `icon` and `apple-touch-icon`, which are the icon lane;
+- `<meta name=…>` and `<meta property=…>` may change freely: that is the share-metadata lane;
+- no element id may be removed or renamed; new ones are fine;
+- the page must carry no `on…=` attribute, no `javascript:` URL and no `<iframe>`, `<object>`, `<embed>` or
+  `<form>` tag that BASE did not already carry in exactly the same words.
+
+An allowlisted PNG is accepted only if it really is a PNG, with a valid signature and IHDR chunk, at
+1200x630 for a share card and 180x180 for a home-screen icon.
+
+### Examples
+
+| change | gate |
+| --- | --- |
+| a typo in the intro text | presentation |
+| a new share card image | presentation |
+| spacing in the support section's styles | presentation |
+| the wording of a comment in the page's script | presentation |
+| the default network, or the order of the two options | full verify |
+| a contract address on the page | full verify |
+| anything in the send path | full verify |
+| any change to a Solidity file | full verify |
+
+### What the lane runs
+
+`test/classify-change.sh`, then `web/sync.sh` as a check that the pages are already in the state the publisher
+would put them in, then `preflight.sh`, `test/csp-gate.test.sh`, `test/worker.test.mjs`, the image and share
+card checks (including building both workers through `deploy/render-worker.py` the way `deploy/publish.sh`
+does, and comparing the bytes they would serve with the files on disk), `test/web/presentation.test.mjs`, and
+finally `test/classify-change.test.sh` so the guard is proved on every run rather than on the day it was
+written. It takes a few minutes and it says out loud that `./verify.sh` was not run.
+
+CI is unchanged: every push still runs the full gate, `preflight.sh` then `verify.sh` then the deployed
+bytecode and the served pages. The lane is a local gate for a local change, not a replacement for the record.

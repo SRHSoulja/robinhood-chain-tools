@@ -10,6 +10,8 @@
     "test:airdrop": "node test/web/client.test.mjs",
     "test:check": "node test/web/check.test.mjs",
     "quick": "./test/quick.sh",
+    "presentation": "./test/presentation.sh",
+    "classify": "./test/classify-change.sh",
     "readers": "node test/readers.test.mjs",
     "verify": "./verify.sh",
     "postinstall": "playwright install chromium --only-shell || true"

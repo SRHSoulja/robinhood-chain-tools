@@ -227,10 +227,11 @@ what makes Check's previews real; `debug_traceCall` and `eth_createAccessList` a
     ./test/quick.sh            # while developing: readers in a fraction of a second, the fast browser cases in seconds
     ./test/quick.sh assign     # or one area (parse, assign, picker, snapshot, send, ledger, wallet, wc, gas, check-page, csp, probe-pins)
     ONLY='round 21' node test/web/client.test.mjs    # or one case, by name
+    ./test/presentation.sh     # for a change that cannot affect a transaction: page text, styles, share metadata, icons, share cards, docs. It classifies the change mechanically against HEAD and refuses everything else, so a change it accepts has never touched the send path
     ./verify.sh                # before any commit, and before any claim that a finding is closed: everything, against the baseline
 
-`npm run quick`, `npm run readers` and `npm run verify` are the same three, for anyone who reaches for npm
-first. GitHub CI runs the full gate independently on every push: `preflight.sh`, then `verify.sh`, then the
+`npm run quick`, `npm run readers`, `npm run presentation` and `npm run verify` are the same four, for anyone
+who reaches for npm first. GitHub CI runs the full gate independently on every push: `preflight.sh`, then `verify.sh`, then the
 deployed bytecode and the served pages. A green local run is a reason to push; the CI run is the record.
 The harness itself is described in [docs/harness.md](docs/harness.md).
 
