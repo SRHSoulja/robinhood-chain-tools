@@ -15,6 +15,7 @@ community. Both are free, both are open source, and neither takes a fee.
 |---|---|---|---|
 | **BulkSend** | send an NFT or a token to hundreds of wallets in a few transactions | [rhairdrop.gmgnrepeat.com](https://rhairdrop.gmgnrepeat.com/) | `src/BulkSend.sol`, `web/index.html` |
 | **Check** | read a transaction or a contract in plain English before you sign it | [rhcheck.gmgnrepeat.com](https://rhcheck.gmgnrepeat.com/) | `web/check.html` |
+| **Trust Center** | what has been reviewed, measured and verified about BulkSend, and how to check it yourself | [rhairdrop.gmgnrepeat.com/trust](https://rhairdrop.gmgnrepeat.com/trust) | `deploy/build-trust.py`, `web/trust.html` |
 
 > **Live on mainnet and testnet.** `BulkSend` v13 is deployed on Robinhood Chain mainnet (4663) at
 > `0x904412cfe982f33385f486aaff8c8a4a6f4b5fbf` since 12 September 2026, and on testnet (46630) at
@@ -278,6 +279,11 @@ as deliberate that was a double-payment path; a page printing safety conclusions
 recipe that did not reproduce the file it described; a CI job that stayed red for eight commits because
 deliberately-failing files were added and nobody ran the watcher; and five occasions where a fix became the
 next round's finding.
+
+Every figure any of that produced is on one page: the [Trust Center](https://rhairdrop.gmgnrepeat.com/trust),
+generated from the files in this repository by `deploy/build-trust.py` and regenerated whenever a round is
+added. It carries the findings, the measured gas, the live-deployment checks, the suite results and the whole
+round history, each with the file it came from.
 
 **These are not an audit in the sense a firm means it, and calling them one would be borrowing authority they
 have not earned.** They are the pass that finds what would otherwise waste a real auditor's time. No human

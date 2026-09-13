@@ -1,0 +1,10 @@
+{
+  "_why": "One plain-English sentence for each row of the round-twenty-two findings table, so the Trust Center can say what a finding means without paraphrasing the report's evidence or its fix, both of which it quotes verbatim. Each sentence is keyed on the exact text of that row's 'Finding / exact location' cell in audit/2026-09-13/REPORT.md, section B. If the report's rows and these keys ever stop matching, deploy/build-trust.py fails and says which key is orphaned rather than publishing a page where the plain-English line describes a different finding from the one beside it.",
+  "plain_english": {
+    "Direct deposits can be irrecoverable; `BulkSend` has no rescue surface": "Anything sent directly to the contract, rather than through it, cannot be taken back out by anybody, including whoever wrote it.",
+    "`_mustBeNft`, `_mustNotBeNft`, `_answersOwnerOf` use uncapped staticcalls and dynamic returndata": "A deliberately hostile token can burn the gas of the batch that names it while the contract is still working out what kind of token it is, which wastes that one sender's transaction and reaches nothing else.",
+    "`_airdrop20` and NFT call-success counters do not prove economic delivery": "A count of successful transfers is a count of calls that did not fail, and a token that accepts the call and moves nothing, or takes a cut, produces exactly the same count.",
+    "`_airdrop721(... safe=false ...)` can send NFTs to contracts unable to recover them": "Turning off the safe-transfer box lets an NFT reach a contract that has no way to send it on again, which is why the box is on unless the sender turns it off."
+  },
+  "harness_status": "closed"
+}

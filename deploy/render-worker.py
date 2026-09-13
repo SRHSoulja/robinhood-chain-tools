@@ -2,6 +2,7 @@
 """Renders the Worker script text that serves one page.
 
     python3 deploy/render-worker.py <page.html> <out worker.js> <airdrop|check> <wc_bundle_url> <wc_sha256> <csp_hash>
+        [<og.png> <apple-touch-icon.png> [<trust.html> <og-trust.png>]]
 
 This is the exact template deploy/publish.sh used to build inline, moved here so a test can render the same
 worker.js publish.sh would produce without publishing anything. publish.sh calls render(...) through this
@@ -11,7 +12,17 @@ is one copy of it, and this file is it.
 import base64, json, re, sys
 
 
-def render(src, target, wc_bundle, wc_sha, csp_hash, og_png_path='', touch_png_path=''):
+# The Trust Center's policy, written here and nowhere else in this file. It is not derived from the page's own
+# meta tag the way the application pages' header is, because this page has no inline script and therefore no
+# hash that moves: the policy is a fixed string, and deploy/publish.sh refuses to publish a web/trust.html
+# whose meta tag is not exactly this. A header and a meta tag that agree because both were read from the same
+# file would go on agreeing after somebody weakened the file.
+TRUST_CSP = ("default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
+             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+
+
+def render(src, target, wc_bundle, wc_sha, csp_hash, og_png_path='', touch_png_path='',
+           trust_html_path='', trust_og_path=''):
     m = re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]*)">', open(src, encoding="utf-8").read())
     assert m, "no CSP meta tag to derive the header from"
     # The same policy the page carries, sent as a header as well, where a browser cannot be tricked out of it by
@@ -53,6 +64,35 @@ def render(src, target, wc_bundle, wc_sha, csp_hash, og_png_path='', touch_png_p
     const bytes = url.pathname === '/og.png' ? OG_PNG_BYTES : TOUCH_PNG_BYTES;
     if (!bytes) return new Response('not found', { status: 404, headers: secure() });
     return new Response(bytes, { headers: Object.assign(secure(), { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }) });
+  }
+"""
+
+    # The Trust Center: a second static page on the airdrop origin, under /trust, with its own share card at
+    # /trust-og.png. It belongs to the airdrop target alone, so neither the constants nor the route are
+    # generated for Check, whose worker is therefore byte-identical to what it was before this existed. Empty
+    # paths mean not configured, and the routes below 404 rather than inventing a page, exactly as /og.png
+    # does. deploy/publish.sh refuses to publish the airdrop target without both files.
+    trust_consts = ""
+    trust_route = ""
+    if target == "airdrop":
+        trust_html = open(trust_html_path, encoding="utf-8").read() if trust_html_path else ''
+        trust_og_b64 = base64.b64encode(open(trust_og_path, 'rb').read()).decode() if trust_og_path else ''
+        trust_consts = """const TRUST_HTML = %s;
+const TRUST_OG = %s;
+const TRUST_OG_BYTES = TRUST_OG ? Uint8Array.from(atob(TRUST_OG), (c) => c.charCodeAt(0)) : null;
+// The page carries this same policy in a meta tag; it is sent as a header too, where nothing that arrives
+// before the document is parsed can get out from under it, and where `frame-ancestors` actually applies.
+const TRUST_CSP = %s;
+""" % (json.dumps(trust_html or None), json.dumps(trust_og_b64 or None), json.dumps(TRUST_CSP))
+        trust_route = """
+  // The Trust Center. With and without the trailing slash, because both are links people write.
+  if (url.pathname === '/trust' || url.pathname === '/trust/') {
+    if (!TRUST_HTML) return new Response('not found', { status: 404, headers: secure() });
+    return new Response(TRUST_HTML, { headers: Object.assign(secure(), { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300', 'content-security-policy': TRUST_CSP }) });
+  }
+  if (url.pathname === '/trust-og.png') {
+    if (!TRUST_OG_BYTES) return new Response('not found', { status: 404, headers: secure() });
+    return new Response(TRUST_OG_BYTES, { headers: Object.assign(secure(), { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }) });
   }
 """
 
@@ -235,7 +275,7 @@ const TOUCH_PNG = %s;
 // Decoded once at module load, not per request: the bytes never change for the life of this deployment.
 const OG_PNG_BYTES = OG_PNG ? Uint8Array.from(atob(OG_PNG), (c) => c.charCodeAt(0)) : null;
 const TOUCH_PNG_BYTES = TOUCH_PNG ? Uint8Array.from(atob(TOUCH_PNG), (c) => c.charCodeAt(0)) : null;
-const EXPLORERS = { '4663': 'https://robinhoodchain.blockscout.com', '46630': 'https://explorer.testnet.chain.robinhood.com' };
+%sconst EXPLORERS = { '4663': 'https://robinhoodchain.blockscout.com', '46630': 'https://explorer.testnet.chain.robinhood.com' };
 // Sent on every response. A wallet-connected page delivered once over plain HTTP can be replaced in transit
 // before any of its own protections exist, so the first request is redirected and the browser is told never
 // to try HTTP again. No preload: that is a decision about every subdomain, not just this one.
@@ -263,7 +303,7 @@ export default { async fetch(request, env) {
     // check. It is carried here too, and the sentence in SECURITY.md now says what actually pins a visitor.
     return new Response(null, { status: 301, headers: Object.assign(secure(), { location: url.toString() }) });
   }
-%s%s%s  // Anything else goes to the page rather than to a 404. Cloudflare replaces the headers on an error
+%s%s%s%s  // Anything else goes to the page rather than to a 404. Cloudflare replaces the headers on an error
   // response from a worker, so a 404 here arrives without HSTS or the rest of the hardening: a visitor whose
   // first ever contact with this host is a mistyped path would not be pinned to HTTPS. A redirect keeps them.
   if (url.pathname !== '/' && url.pathname !== '/index.html') {
@@ -272,14 +312,18 @@ export default { async fetch(request, env) {
   return new Response(HTML, { headers: Object.assign(secure(), { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300', 'content-security-policy': CSP }) });
 } };
 """ % (target, json.dumps(html), json.dumps(wc_bundle or None), json.dumps(wc_sha or None), json.dumps(csp_header),
-       json.dumps(og_b64 or None), json.dumps(touch_b64 or None), wc_route, og_route, x_route)
+       json.dumps(og_b64 or None), json.dumps(touch_b64 or None), trust_consts,
+       wc_route, og_route, trust_route, x_route)
 
 
 if __name__ == "__main__":
     argv = sys.argv[1:]
     src, out, target, wc_bundle, wc_sha, csp_hash = argv[:6]
-    # Optional, and positional the same way SRC is: a path this file reads itself, so publish.sh never has to
+    # Optional, and positional the same way SRC is: paths this file reads itself, so publish.sh never has to
     # agree with a second copy of "how to turn a PNG into what the worker embeds."
     og_png_path = argv[6] if len(argv) > 6 else ''
     touch_png_path = argv[7] if len(argv) > 7 else ''
-    open(out, "w", encoding="utf-8").write(render(src, target, wc_bundle, wc_sha, csp_hash, og_png_path, touch_png_path))
+    trust_html_path = argv[8] if len(argv) > 8 else ''
+    trust_og_path = argv[9] if len(argv) > 9 else ''
+    open(out, "w", encoding="utf-8").write(render(src, target, wc_bundle, wc_sha, csp_hash, og_png_path,
+                                                  touch_png_path, trust_html_path, trust_og_path))

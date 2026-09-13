@@ -43,9 +43,13 @@ for f in NO_PHONE_WALLET ALLOW_DIRTY_PUBLISH ALLOW_CONNECTOR_GAP; do
 done
 
 TARGET="${1:-}"
+TRUST_SRC=""; TRUST_OG=""
 case "$TARGET" in
   airdrop) SRC="$ROOT/web/index.html"; WORKER="${WORKER_AIRDROP:-rh-airdrop}"; VERIFY="${URL_AIRDROP:-}"; ORIGIN_NAME="${ORIGIN_NAME_AIRDROP:-rhairdrop}"
-           OG_PNG="$ROOT/web/og-airdrop.png"; TOUCH_PNG="$ROOT/web/apple-touch-icon.png" ;;
+           OG_PNG="$ROOT/web/og-airdrop.png"; TOUCH_PNG="$ROOT/web/apple-touch-icon.png"
+           # The Trust Center is part of this target, not a separate deployment: one worker serves the tool at
+           # / and the evidence about it at /trust, so the two can never be at different versions of the story.
+           TRUST_SRC="$ROOT/web/trust.html"; TRUST_OG="$ROOT/web/og-trust.png" ;;
   check)   SRC="$ROOT/web/check.html"; WORKER="${WORKER_CHECK:-rh-check}";    VERIFY="${URL_CHECK:-}";   ORIGIN_NAME="${ORIGIN_NAME_CHECK:-rhcheck}"
            OG_PNG="$ROOT/web/og-check.png"; TOUCH_PNG="$ROOT/web/apple-touch-icon-check.png" ;;
   *) echo "usage: $0 airdrop|check" >&2; exit 2 ;;
@@ -55,8 +59,8 @@ esac
 # reads and embeds them, the same way it reads the page itself). A page whose og:image 404s is worse than a page
 # that names no image at all, so a missing file here refuses the whole publish rather than shipping a broken
 # preview that only shows up when someone actually shares the link.
-for f in "$OG_PNG" "$TOUCH_PNG"; do
-  [ -f "$f" ] || { echo "Refusing to publish: $f is missing. The $TARGET page's share image or home-screen icon would 404 if published." >&2; exit 1; }
+for f in "$OG_PNG" "$TOUCH_PNG" ${TRUST_SRC:+"$TRUST_SRC" "$TRUST_OG"}; do
+  [ -f "$f" ] || { echo "Refusing to publish: $f is missing. The $TARGET page's share image, home-screen icon or Trust Center would 404 if published." >&2; exit 1; }
 done
 
 : "${CF_ACCOUNT_ID:?set CF_ACCOUNT_ID (see the header of this script)}"
@@ -101,6 +105,37 @@ PY
 )"
 python3 deploy/csp-gate.py "$SRC" "$CSP_HASH"
 
+# The Trust Center is a different kind of page and needs a different gate. It has no inline script, so there is
+# no hash to check and csp-gate.py's table does not describe it; what it promises instead is that it carries no
+# script at all and that its policy is the exact one the Worker sends as a header for that route. A page whose
+# meta tag and header disagree is a page where one of them is doing nothing, and the one doing nothing is
+# always the one somebody weakened. This checks; like csp-gate.py it does not repair.
+if [ -n "$TRUST_SRC" ]; then
+  python3 - "$TRUST_SRC" <<'PY'
+import re, sys
+path = sys.argv[1]
+src = open(path, encoding="utf-8").read()
+WANT = ("default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+if re.search(r"<script", src, re.I):
+    raise SystemExit("Refusing to publish: %s contains a <script tag. It is published as a page with no\n"
+                     "  script of any kind, and its policy has no script-src, so anything in one would be\n"
+                     "  refused by the browser rather than run: the tag would be a promise the page breaks." % path)
+metas = re.findall(r'<meta\b[^>]*http-equiv\s*=\s*"([^"]*)"[^>]*content\s*=\s*"([^"]*)"[^>]*>', src, re.I)
+csps = [c for k, c in metas if k.lower() == "content-security-policy"]
+if len(csps) != 1:
+    raise SystemExit("Refusing to publish: %s has %d Content-Security-Policy meta tags, expected exactly one."
+                     % (path, len(csps)))
+if csps[0] != WANT:
+    raise SystemExit("Refusing to publish: %s's policy is not the one the Worker sends as a header.\n"
+                     "  page   %s\n  header %s\n"
+                     "  If the change is deliberate, change TRUST_CSP in deploy/render-worker.py, the check in\n"
+                     "  deploy/publish.sh and the page in the same commit, so it appears in a diff."
+                     % (path, csps[0], WANT))
+print("  Trust Center: no script tag, and its policy is the one the Worker sends")
+PY
+fi
+
 # The page is inlined into the worker as a string constant, so the worker serves it from the edge with no
 # origin request at all. Everything the page needs beyond that is fetched by the browser.
 # The connector is signing-page code. It is fetched from a URL at request time rather than embedded, because
@@ -142,7 +177,8 @@ fi
 
 # The Worker template itself lives in deploy/render-worker.py, so this script and test/worker.test.mjs build
 # the exact same worker.js from the exact same code rather than two copies that can drift apart.
-python3 deploy/render-worker.py "$SRC" "$WORK/worker.js" "$TARGET" "${WC_BUNDLE_URL:-}" "$WC_SHA256" "$CSP_HASH" "$OG_PNG" "$TOUCH_PNG"
+python3 deploy/render-worker.py "$SRC" "$WORK/worker.js" "$TARGET" "${WC_BUNDLE_URL:-}" "$WC_SHA256" "$CSP_HASH" \
+  "$OG_PNG" "$TOUCH_PNG" ${TRUST_SRC:+"$TRUST_SRC" "$TRUST_OG"}
 
 node --check "$WORK/worker.js" 2>/dev/null || { echo "the generated worker does not parse" >&2; exit 1; }
 
@@ -218,6 +254,11 @@ if [ -z "$VERIFY" ]; then
   echo "No URL to verify against (URL_${TARGET^^} unset): the published bytes were not compared with this repository." >&2
 fi
 [ -n "$VERIFY" ] && { verify_body "$VERIFY" "$SRC" "page:" || FAILED=1; }
+# The Trust Center goes out in the same worker and is checked the same way: a page about what can be verified
+# is the last page that should be taken on trust.
+if [ -n "$TRUST_SRC" ] && [ -n "$VERIFY" ]; then
+  verify_body "${VERIFY%/}/trust" "$TRUST_SRC" "trust:" || FAILED=1
+fi
 # Only when a connector was actually configured. This used to ask whether web/wc.js exists, so a deliberate
 # NO_PHONE_WALLET=1 publish -- a supported path this script tells you about itself -- exited 1 with
 # "connector: DOES NOT match" about something it was never asked to publish. A script that cries failure on

@@ -1,0 +1,37 @@
+{
+  "_why": "The questions and their answers, kept here so the wording can be changed without touching deploy/build-trust.py. Every answer is drawn from README.md, SECURITY.md, docs/what-this-is-for.md, docs/status.md or audit/2026-09-13/REPORT.md. No answer states a figure of its own: a figure is written as {a_name_in_braces} and the generator substitutes the value it computed from the source files, so the prose here cannot drift away from the tables above it. An unknown name fails the build.",
+  "questions": [
+    {
+      "q": "Why use BulkSend?",
+      "answer": "It sends an NFT or a token to hundreds of wallets in a few transactions instead of one at a time. When this started there was a bulk sender for ERC-20 on Robinhood Chain and nothing else, so anyone with an NFT collection or a set of ERC-1155 editions had no tool at all. It covers all three standards to the same standard, and it is free, open source and takes no fee. If your wallet can run several transfers as itself under EIP-5792, the page uses that route instead and BulkSend is never approved for anything."
+    },
+    {
+      "q": "What do the audits prove?",
+      "answer": "They are adversarial review rounds, each by a fresh model given the code and no other context and asked to break it, published unedited including the unflattering parts. {rounds_total} rounds have run and {rounds_clean} of them found no release blocker. The most recent demonstrated no critical, high or medium exploit and recorded four limitations instead, listed above with the report's own minimal fix beside each. These are not an audit in the sense a firm means it, and no human audit firm has reviewed this."
+    },
+    {
+      "q": "How close is it to the gas floor?",
+      "answer": "The round-twenty-two benchmark built a minimal safe reference loop and measured real receipts against it on a local chain. At 300 recipients the current strict path costs between {strict_300_min} and {strict_300_max} more than that reference, depending on the token standard. The reference is not a mathematical lower bound; it is the cheapest loop that still keeps the safety properties this contract is for."
+    },
+    {
+      "q": "Why stop optimizing?",
+      "answer": "Because the measured savings are smaller than the risk of taking them. Three specialized prototypes were built and the best of them saved {best_saving} at 100 recipients, while one was slower than the code it replaced. Each would need a new selector, a new deployment and its own differential fuzzing before it could ship. The one large saving, ascending NFT ordering, is already implemented in the page and needs no new bytecode."
+    },
+    {
+      "q": "What is verified about the live deployment?",
+      "answer": "The runtime bytecode at {mainnet_address} on Robinhood Chain mainnet was read back from the chain and is byte for byte what this repository builds, {runtime_bytes} bytes, and a second RPC endpoint was asked the same question at the same block and gave the same answer. The creation input matches the canonical initcode, there are no constructor arguments and no immutables, and the four constants and ten function selectors read from the live contract match the source. The page served at the live URL was compared with the file in this repository, and a scheduled workflow repeats that comparison four times a day from outside the thing being watched."
+    },
+    {
+      "q": "Does BulkSend custody user assets?",
+      "answer": "No. Every transfer is transferFrom with the original caller as the source, so the contract can only move what you approved, inside the transaction you signed, and nothing is ever held by it. There is no owner, no upgrade path, no fee and no pause. The one thing to know is the other side of that: there is no rescue function either, so anything sent directly to the contract rather than through it is lost, and for the two NFT standards the only approval either standard offers is setApprovalForAll, which is wider than the batch and lasts until you revoke it."
+    },
+    {
+      "q": "What does strict versus lenient execution mean?",
+      "answer": "Strict is all or nothing: one recipient that cannot receive reverts the whole batch, nothing moves, and the token's own error is what you see. Lenient keeps going: a failing transfer is skipped and logged with its reason, the rest is delivered, and the call reports how many were sent and how many were skipped. Lenient also caps the gas each transfer may use, because without a cap one recipient whose hook burns everything starves the rest of the batch; the default is {default_gas} gas and the WithGas entry points take a number between {min_gas} and {max_gas}. Structural failures still revert the whole batch in both modes, including a zero amount, the contract itself as a recipient, and an ERC-20 answer that can be read as neither success nor failure."
+    },
+    {
+      "q": "What are the current limitations and boundaries?",
+      "answer": "A delivery count means the token's transfer function was called and did not revert, which is not the same as somebody being paid: a contract that accepts the call and moves nothing looks identical from outside, and no on-chain check can tell the difference. The page asks the chain who holds what after every batch and reports a token that disagrees rather than counting it. Everything the pages show comes through one configured RPC endpoint, and a node can be stale or wrong while the block explorer is a separate reading to compare against, not proof. The duplicate ledger lives in one browser for one account, so another browser, another device or a cleared cache will not know about it, and the gas figures were measured for ordinary wallet recipients rather than for contracts with expensive receive hooks."
+    }
+  ]
+}

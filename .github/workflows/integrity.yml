@@ -52,6 +52,7 @@ jobs:
             fi
           }
           check https://rhairdrop.gmgnrepeat.com/ web/index.html
+          check https://rhairdrop.gmgnrepeat.com/trust web/trust.html
           check https://rhcheck.gmgnrepeat.com/ web/check.html
           check https://rhairdrop.gmgnrepeat.com/wc.js web/wc.js
           exit $fail

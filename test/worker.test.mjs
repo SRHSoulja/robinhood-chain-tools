@@ -8,7 +8,7 @@
 // The worker under test is built the same way publish.sh builds it -- through deploy/render-worker.py, not a
 // second copy of the template -- so this suite and the published worker can never quietly drift apart.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -138,17 +138,23 @@ function makeFetch(callLog) {
 }
 
 // ---------- render the worker exactly as publish.sh would, then load it ----------
-// og/touch are optional file paths, passed through to render-worker.py exactly as publish.sh passes them: a
-// path it reads and base64-embeds itself, not content this test pre-encodes.
-function renderWorker(target, og, touch) {
+// og/touch/trust are optional file paths, passed through to render-worker.py exactly as publish.sh passes
+// them: paths it reads and embeds itself, not content this test pre-encodes.
+function renderWorker(target, og, touch, trustHtml, trustOg) {
   const dir = mkdtempSync(join(tmpdir(), 'rh-worker-'));
   const src = join(ROOT, target === 'airdrop' ? 'web/index.html' : 'web/check.html');
   const out = join(dir, 'worker.mjs');
   const args = [join(ROOT, 'deploy/render-worker.py'), src, out, target, '', '', 'sha256-test'];
   if (og) args.push(og, touch);
+  if (trustHtml) args.push(trustHtml, trustOg);
   execFileSync('python3', args, { cwd: ROOT, stdio: 'inherit' });
   return out;
 }
+
+// The Trust Center's policy, written out here rather than read from the page, because the point of the check
+// is that this exact string is what the worker sends. A page and a header that agree because both were read
+// from the same file would agree just as happily after someone changed it.
+const TRUST_CSP = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 // ---------- tiny valid PNG fixtures for /og.png and /apple-touch-icon.png (not the real files) ----------
 // Two different 1x1 RGB PNGs, so a route that accidentally served the other one's bytes would be caught.
@@ -160,6 +166,19 @@ function writeFixtures() {
   writeFileSync(og, OG_FIXTURE);
   writeFileSync(touch, TOUCH_FIXTURE);
   return { og, touch };
+}
+
+// ---------- fixtures for /trust and /trust-og.png (not the real files either) ----------
+// A third distinct 1x1 PNG, so a route that served the share card's bytes instead would be caught, and a page
+// that is not web/trust.html, so "the body is the file it was given" is a real comparison.
+const TRUST_HTML_FIXTURE = '<!doctype html>\n<title>trust fixture</title>\n<p>not the real page</p>\n';
+const TRUST_OG_FIXTURE = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4b8UAAAOZAWF0/l6bAAAAAElFTkSuQmCC', 'base64');
+function writeTrustFixtures() {
+  const dir = mkdtempSync(join(tmpdir(), 'rh-trust-fixture-'));
+  const html = join(dir, 'trust.html'), og = join(dir, 'og-trust.png');
+  writeFileSync(html, TRUST_HTML_FIXTURE);
+  writeFileSync(og, TRUST_OG_FIXTURE);
+  return { html, og };
 }
 
 const mkReq = (pathAndQuery) => ({ url: 'https://rh.gmgnrepeat.com' + pathAndQuery, headers: { get: () => null } });
@@ -373,6 +392,70 @@ async function run() {
     // HEAD or an unknown path is unchanged: still the ordinary redirect-to-/ behaviour, not touched by this route.
     const rUnknown = await imgWorker.fetch(mkReq('/some/unknown/path'), NO_KEY_ENV);
     check('an unknown path is still the existing 302-to-/ behaviour, unchanged', rUnknown.status === 302 && rUnknown.headers.get('location') === '/', JSON.stringify([rUnknown.status, rUnknown.headers.get('location')]));
+  }
+
+  // ---- /trust and /trust-og.png: the Trust Center, served from the airdrop worker only ----
+  {
+    const { og, touch } = writeFixtures();
+    const trust = writeTrustFixtures();
+    const trustWorker = (await import('file://' + renderWorker('airdrop', og, touch, trust.html, trust.og))).default;
+    globalThis.fetch = makeFetch([]);
+
+    for (const path of ['/trust', '/trust/']) {
+      const r = await trustWorker.fetch(mkReq(path), NO_KEY_ENV);
+      check(`${path} answers 200`, r.status === 200, r.status);
+      check(`${path} content-type is text/html`, r.headers.get('content-type') === 'text/html; charset=utf-8', r.headers.get('content-type'));
+      check(`${path} cache-control is public, max-age=300`, r.headers.get('cache-control') === 'public, max-age=300', r.headers.get('cache-control'));
+      check(`${path} sends exactly the Trust Center's own policy as a header`,
+        r.headers.get('content-security-policy') === TRUST_CSP, r.headers.get('content-security-policy'));
+      check(`${path} sends the hardening headers every response carries`,
+        r.headers.get('strict-transport-security') === 'max-age=31536000; includeSubDomains'
+        && r.headers.get('x-content-type-options') === 'nosniff', JSON.stringify([r.headers.get('strict-transport-security'), r.headers.get('x-content-type-options')]));
+      const body = await r.text();
+      check(`${path} body is the file that was passed in, byte for byte`, body === TRUST_HTML_FIXTURE, body.slice(0, 80));
+    }
+
+    const rPng = await trustWorker.fetch(mkReq('/trust-og.png'), NO_KEY_ENV);
+    check('/trust-og.png answers 200', rPng.status === 200, rPng.status);
+    check('/trust-og.png content-type is image/png', rPng.headers.get('content-type') === 'image/png', rPng.headers.get('content-type'));
+    check('/trust-og.png cache-control is public, max-age=86400', rPng.headers.get('cache-control') === 'public, max-age=86400', rPng.headers.get('cache-control'));
+    const pngBytes = Buffer.from(await rPng.arrayBuffer());
+    check('/trust-og.png body bytes equal the fixture passed in (not /og.png’s)',
+      pngBytes.equals(TRUST_OG_FIXTURE) && !pngBytes.equals(OG_FIXTURE), `${pngBytes.length} vs ${TRUST_OG_FIXTURE.length}`);
+
+    // The share card and the ordinary page are untouched by the new routes.
+    const rOg = await trustWorker.fetch(mkReq('/og.png'), NO_KEY_ENV);
+    check('/og.png still serves the share card, not the Trust Center card',
+      Buffer.from(await rOg.arrayBuffer()).equals(OG_FIXTURE));
+    const rRoot = await trustWorker.fetch(mkReq('/'), NO_KEY_ENV);
+    check('/ still serves the airdrop page, not the Trust Center',
+      rRoot.status === 200 && !(await rRoot.text()).includes('trust fixture'), rRoot.status);
+
+    // The key never appears in either new response.
+    const bodyHasKey = (buf, resp) => buf.toString('latin1').includes(KEY) || Array.from(resp.headers.entries()).some(([, v]) => String(v).includes(KEY));
+    const rTrustKeyed = await trustWorker.fetch(mkReq('/trust'), KEYED_ENV);
+    const trustBuf = Buffer.from(await rTrustKeyed.arrayBuffer());
+    const rPngKeyed = await trustWorker.fetch(mkReq('/trust-og.png'), KEYED_ENV);
+    const pngBuf = Buffer.from(await rPngKeyed.arrayBuffer());
+    check('the key never appears in the /trust or /trust-og.png response',
+      !bodyHasKey(trustBuf, rTrustKeyed) && !bodyHasKey(pngBuf, rPngKeyed));
+
+    // A worker built without them (the 8-argument call publish.sh makes for the Check target, and the
+    // 6-argument call every other case in this file makes) must not crash and must not invent a page.
+    const bare = (await import('file://' + renderWorker('airdrop', og, touch))).default;
+    globalThis.fetch = makeFetch([]);
+    const rNone = await bare.fetch(mkReq('/trust'), NO_KEY_ENV);
+    check('with no Trust Center configured, /trust 404s rather than crashing or guessing', rNone.status === 404, rNone.status);
+
+    // The Check worker has no Trust Center at all: not a route, not a constant, not a 404 that implies one.
+    const checkSrc = readFileSync(renderWorker('check', og, touch), 'utf8');
+    check('the check worker carries no /trust route and no TRUST_ constant',
+      !checkSrc.includes('/trust') && !checkSrc.includes('TRUST_'),
+      checkSrc.split('\n').filter((l) => l.includes('trust')).slice(0, 2).join(' | '));
+    const rCheckTrust = await checkWorker.fetch(mkReq('/trust'), NO_KEY_ENV);
+    check('the check worker redirects /trust to / like any other unknown path',
+      rCheckTrust.status === 302 && rCheckTrust.headers.get('location') === '/',
+      JSON.stringify([rCheckTrust.status, rCheckTrust.headers.get('location')]));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

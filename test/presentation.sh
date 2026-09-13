@@ -16,9 +16,10 @@
 #   3  preflight.sh               the cheap invariants, CSP hash and spliced copy included
 #   4  test/csp-gate.test.sh      the publish gate still refuses every weakening of the policy
 #   5  test/worker.test.mjs       the worker the publisher builds still behaves
-#   6  assets                     the four PNGs are real and the right size, each page's share card is its
-#                                 own, and the worker the publisher would build carries those exact bytes
-#   7  test/web/presentation.test.mjs   both pages load clean, with every control and every share tag
+#   6  assets                     the five PNGs are real and the right size, each page's share card is its
+#                                 own, the Trust Center's policy is the one its route sends, and the workers
+#                                 the publisher would build carry those exact bytes
+#   7  test/web/presentation.test.mjs   all three pages load clean, with every control and every share tag
 #   8  test/classify-change.test.sh     the classifier's own fixtures, so the guard is proved every run
 #
 # See docs/harness.md, "The presentation lane".
@@ -137,6 +138,7 @@ def note(ok, msg):
         bad = True
 
 for path, want in (('web/og-airdrop.png', (1200, 630)), ('web/og-check.png', (1200, 630)),
+                   ('web/og-trust.png', (1200, 630)),
                    ('web/apple-touch-icon.png', (180, 180)), ('web/apple-touch-icon-check.png', (180, 180))):
     try:
         data = open(path, 'rb').read()
@@ -163,6 +165,26 @@ for path in ('web/index.html', 'web/check.html'):
     note(prop('og:image') == want, '%s og:image is %s' % (path, prop('og:image')))
     note(name('twitter:image') == want, '%s twitter:image is %s' % (path, name('twitter:image')))
 
+# The Trust Center is served from the airdrop origin under /trust, so its card is that origin's
+# /trust-og.png, and its policy has to be the exact string the worker sends as a header for that route.
+# It carries no inline script, so the CSP-hash check above does not apply to it; this does instead.
+TRUST_CSP = ("default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
+             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+try:
+    s = open('web/trust.html', encoding='utf-8').read()
+except FileNotFoundError:
+    note(False, 'web/trust.html is missing; deploy/publish.sh would refuse to publish the airdrop target')
+else:
+    csp = (re.search(r'<meta http-equiv="Content-Security-Policy" content="([^"]*)"', s) or [None, None])[1]
+    note(csp == TRUST_CSP, 'web/trust.html carries the exact policy the worker sends'
+         + ('' if csp == TRUST_CSP else ': %s' % csp))
+    note(not re.search(r'<script', s, re.I), 'web/trust.html carries no <script tag')
+    prop = lambda p: (re.search(r'<meta property="%s" content="([^"]*)"' % p, s) or [None, None])[1]
+    name = lambda n: (re.search(r'<meta name="%s" content="([^"]*)"' % n, s) or [None, None])[1]
+    note(prop('og:url') == 'https://rhairdrop.gmgnrepeat.com/trust', 'web/trust.html og:url is %s' % prop('og:url'))
+    note(prop('og:image') == 'https://rhairdrop.gmgnrepeat.com/trust-og.png', 'web/trust.html og:image is %s' % prop('og:image'))
+    note(name('twitter:image') == 'https://rhairdrop.gmgnrepeat.com/trust-og.png', 'web/trust.html twitter:image is %s' % name('twitter:image'))
+
 sys.exit(1 if bad else 0)
 PY
 
@@ -170,8 +192,10 @@ PY
 # render-worker.py call with the same arguments in the same order. The connector arguments are empty because
 # nothing is being published here; everything else is what a publish would produce.
 for target in airdrop check; do
+  TRUST_SRC=""; TRUST_OG=""
   case "$target" in
-    airdrop) SRC=web/index.html; OG=web/og-airdrop.png; TOUCH=web/apple-touch-icon.png ;;
+    airdrop) SRC=web/index.html; OG=web/og-airdrop.png; TOUCH=web/apple-touch-icon.png
+             TRUST_SRC=web/trust.html; TRUST_OG=web/og-trust.png ;;
     check)   SRC=web/check.html; OG=web/og-check.png;   TOUCH=web/apple-touch-icon-check.png ;;
   esac
   CSP_HASH="$(python3 - "$SRC" <<'PY'
@@ -187,11 +211,12 @@ PY
     || die "6 assets" "$(cat "$WORK/cspgate-$target.out")"
   sed 's/^ *//;s/^/  /' "$WORK/cspgate-$target.out"
   python3 deploy/render-worker.py "$SRC" "$WORK/worker-$target.js" "$target" "" "" "$CSP_HASH" "$OG" "$TOUCH" \
+        ${TRUST_SRC:+"$TRUST_SRC" "$TRUST_OG"} \
     || die "6 assets" "deploy/render-worker.py refused to build the $target worker"
   node --check "$WORK/worker-$target.js" 2>/dev/null || die "6 assets" "the generated $target worker does not parse"
-  python3 - "$WORK/worker-$target.js" "$OG" "$TOUCH" "$target" <<'PY' || die "6 assets" "the worker would serve different bytes than the files on disk"
+  python3 - "$WORK/worker-$target.js" "$OG" "$TOUCH" "$target" "$TRUST_SRC" "$TRUST_OG" <<'PY' || die "6 assets" "the worker would serve different bytes than the files on disk"
 import base64, json, re, sys
-worker, og_path, touch_path, target = sys.argv[1:5]
+worker, og_path, touch_path, target, trust_src, trust_og = sys.argv[1:7]
 src = open(worker, encoding='utf-8').read()
 ok = True
 for const, path in (('OG_PNG', og_path), ('TOUCH_PNG', touch_path)):
@@ -204,10 +229,28 @@ for const, path in (('OG_PNG', og_path), ('TOUCH_PNG', touch_path)):
     if base64.b64decode(value) != open(path, 'rb').read():
         print('  FAIL  the %s worker would serve a %s that is not %s' % (target, const, path)); ok = False; continue
     print('  ok    the %s worker carries %s byte for byte' % (target, path))
+
+# The Trust Center is the airdrop target's, and only the airdrop target's. Its page is embedded as text, its
+# card as base64, both the same way the page and the share card already are.
+if trust_src:
+    m = re.search(r'^const TRUST_HTML = (.*);$', src, re.M)
+    if not m or json.loads(m.group(1)) != open(trust_src, encoding='utf-8').read():
+        print('  FAIL  the %s worker would serve a /trust that is not %s' % (target, trust_src)); ok = False
+    else:
+        print('  ok    the %s worker carries %s byte for byte' % (target, trust_src))
+    m = re.search(r'^const TRUST_OG = (.*);$', src, re.M)
+    if not m or base64.b64decode(json.loads(m.group(1)) or '') != open(trust_og, 'rb').read():
+        print('  FAIL  the %s worker would serve a /trust-og.png that is not %s' % (target, trust_og)); ok = False
+    else:
+        print('  ok    the %s worker carries %s byte for byte' % (target, trust_og))
+elif 'TRUST_' in src or '/trust' in src:
+    print('  FAIL  the %s worker carries a Trust Center, which belongs to the airdrop target alone' % target); ok = False
+else:
+    print('  ok    the %s worker carries no Trust Center route or constant' % target)
 sys.exit(0 if ok else 1)
 PY
 done
-note "6  assets:      four PNGs, both share cards, and both workers carry the files on disk"
+note "6  assets:      five PNGs, every share card, the Trust Center, and both workers carry the files on disk"
 
 # ---- 7: the pages, in a browser -------------------------------------------------------------------------------
 echo

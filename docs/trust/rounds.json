@@ -1,0 +1,27 @@
+{
+  "_why": "The review history, written by hand because it is the one thing in the Trust Center that no file in this repository already holds in one place: the reports are 22 separate documents in docs/, and how many release blockers each one found is stated in each report's own words rather than in a field anything can read. Everything here is checkable against the report named beside it, and deploy/build-trust.py refuses to run if a report file is missing or if a date disagrees with the date in its own filename. To add a round: add a row here, drop the report in docs/, run the generator. Reviewer names the model or person who ran the round; commit is the tree the round was run against, as the report or docs/status.md states it, and null where neither names one.",
+  "rounds": [
+    { "round": 1,  "date": "2026-09-06", "reviewer": "Claude (fresh session, no prior context)", "blockers": 15, "report": "audit-2026-09-06-external.md",              "commit": null },
+    { "round": 2,  "date": "2026-09-06", "reviewer": "Claude (fresh session, no prior context)", "blockers": 11, "report": "audit-2026-09-06-second-external.md",       "commit": null },
+    { "round": 3,  "date": "2026-09-06", "reviewer": "Claude (fresh session, no prior context)", "blockers": 5,  "report": "audit-2026-09-06-third-external.md",        "commit": "73f1aba" },
+    { "round": 4,  "date": "2026-09-06", "reviewer": "Claude (fresh session, no prior context)", "blockers": 9,  "report": "audit-2026-09-06-fourth-external.md",       "commit": null },
+    { "round": 5,  "date": "2026-09-06", "reviewer": "Claude (fresh session, no prior context)", "blockers": 9,  "report": "audit-2026-09-06-fifth-external.md",        "commit": null },
+    { "round": 6,  "date": "2026-09-06", "reviewer": "Claude (fresh session, no prior context)", "blockers": 4,  "report": "audit-2026-09-06-sixth-external.md",        "commit": null },
+    { "round": 7,  "date": "2026-09-07", "reviewer": "Claude (fresh session, no prior context)", "blockers": 6,  "report": "audit-2026-09-07-seventh-external.md",      "commit": null },
+    { "round": 8,  "date": "2026-09-07", "reviewer": "Claude (fresh session, no prior context)", "blockers": 3,  "report": "audit-2026-09-07-eighth-external.md",       "commit": null },
+    { "round": 9,  "date": "2026-09-07", "reviewer": "Claude (fresh session, no prior context)", "blockers": 4,  "report": "audit-2026-09-07-ninth-external.md",        "commit": "595ac039b4d54b51865f7643ae211d90962299d6" },
+    { "round": 10, "date": "2026-09-08", "reviewer": "Claude (fresh session, no prior context)", "blockers": 3,  "report": "audit-2026-09-08-tenth-external.md",        "commit": "6f4249e41aa399418908c7bc3860f8819e4403e7" },
+    { "round": 11, "date": "2026-09-09", "reviewer": "Claude (fresh session, no prior context)", "blockers": 5,  "report": "audit-2026-09-09-eleventh-external.md",     "commit": "33c29e0" },
+    { "round": 12, "date": "2026-09-10", "reviewer": "Claude (fresh session, no prior context)", "blockers": 1,  "report": "audit-2026-09-10-twelfth-external.md",      "commit": "59e979f" },
+    { "round": 13, "date": "2026-09-10", "reviewer": "Claude (fresh session, no prior context)", "blockers": 2,  "report": "audit-2026-09-10-thirteenth-external.md",   "commit": "f4f5ca6" },
+    { "round": 14, "date": "2026-09-11", "reviewer": "Codex",                                    "blockers": 4,  "report": "audit-2026-09-11-fourteenth-external.md",   "commit": "f5b76145a6de3a84cc66be9b6cae78b316487de7" },
+    { "round": 15, "date": "2026-09-11", "reviewer": "Codex",                                    "blockers": 5,  "report": "audit-2026-09-11-fifteenth-external.md",    "commit": "9426c2c6442ad9d5ca269053cfd21022d839eb80" },
+    { "round": 16, "date": "2026-09-11", "reviewer": "Codex",                                    "blockers": 1,  "report": "audit-2026-09-11-sixteenth-external.md",    "commit": "ebc910b" },
+    { "round": 17, "date": "2026-09-11", "reviewer": "Claude Opus",                              "blockers": 0,  "report": "audit-2026-09-11-seventeenth-external.md",  "commit": "4cc8a1ce441787168637a1a3eaadb3ccc609bb3b" },
+    { "round": 18, "date": "2026-09-11", "reviewer": "Claude Opus",                              "blockers": 1,  "report": "audit-2026-09-11-eighteenth-external.md",   "commit": "79d6446" },
+    { "round": 19, "date": "2026-09-12", "reviewer": "Claude Opus",                              "blockers": 1,  "report": "audit-2026-09-12-nineteenth-external.md",   "commit": "39eaaf2" },
+    { "round": 20, "date": "2026-09-12", "reviewer": "Claude Opus",                              "blockers": 0,  "report": "audit-2026-09-12-twentieth-external.md",    "commit": "11d52c6" },
+    { "round": 21, "date": "2026-09-12", "reviewer": "Claude Opus",                              "blockers": 0,  "report": "audit-2026-09-12-twenty-first-external.md", "commit": "42eab38" },
+    { "round": 22, "date": "2026-09-13", "reviewer": "GPT (external run by the maintainer)",      "blockers": 0,  "report": "audit-2026-09-13-twenty-second-external.md", "commit": "3cba293ed26229b2a29cff7e3a3d797e4c9d1647" }
+  ]
+}

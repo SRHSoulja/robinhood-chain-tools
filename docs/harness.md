@@ -172,3 +172,60 @@ written. It takes a few minutes and it says out loud that `./verify.sh` was not 
 
 CI is unchanged: every push still runs the full gate, `preflight.sh` then `verify.sh` then the deployed
 bytecode and the served pages. The lane is a local gate for a local change, not a replacement for the record.
+
+## The Trust Center
+
+`web/trust.html`, served at <https://rhairdrop.gmgnrepeat.com/trust>, is a static page carrying every figure
+this project has measured about itself: the last review round's findings, the gas benchmark, the checks made
+against the live deployment, the suite results, and the whole round history. It has no script in it at all,
+and its policy has no `script-src`, so nothing on it can run.
+
+The rule it is built on: **a figure on that page comes from a file in this repository, through the generator,
+and is never typed by hand.** If a figure is not in a file, it is not on the page.
+
+### Where each number comes from
+
+| source | what it supplies |
+| --- | --- |
+| `audit/2026-09-13/REPORT.md` | the findings table, the gas tables of sections C, D and E, and every sentence the page quotes as the report's own words |
+| `audit/2026-09-13/benchmarks.csv` | every measured receipt, used to recompute the report's tables rather than believe them |
+| `audit/2026-09-13/results.json` | the benchmark environment: chain, compiler, optimizer runs, source hash |
+| `audit/2026-09-13/provenance.json` | the reviewed commit, the source hash, the artifact hash table |
+| `docs/verification-2026-09-13/final-results.json` | the pinned versions, each suite's own count, and everything checked against the live deployment |
+| `deployments.mainnet.json`, `deployments.testnet.json` | the addresses, the deployment record, the runtime hash |
+| `docs/status.md` | the harness row of the round-twenty-two findings table, verbatim |
+| `docs/trust/rounds.json` | the round history: date, reviewer, release blockers, report, reviewed commit |
+| `docs/trust/findings.json` | one plain-English sentence per finding, keyed on the report's own wording |
+| `docs/trust/faq.json` | the questions and answers; a figure inside an answer is written `{like_this}` and substituted |
+
+### The generator
+
+    python3 deploy/build-trust.py        # writes docs/trust/data.json and web/trust.html
+    node deploy/render-trust-card.mjs    # writes web/og-trust.png from docs/trust/data.json
+
+`data.json` is committed so that a change to the page is reviewable as a diff of numbers rather than a diff of
+markup. Running the generator twice produces identical bytes. It fails, loudly and without writing anything,
+when a source file is missing, when a markdown table it parses has moved, when a sentence it quotes is no
+longer in the report, or when an arithmetic identity does not hold: the three components of the gas breakdown
+must reconcile to receipt gas, the report's stated overhead must equal the overhead recomputed from the CSV,
+the suite counts must sum to the total the page prints, and every round must name a report file that exists
+and a date that matches that file's own name.
+
+### Adding a round
+
+1. Drop the report in `docs/`, named `audit-<date>-<ordinal>-external.md`.
+2. Add a row to `docs/trust/rounds.json`: round, date, reviewer, release blockers, report, reviewed commit.
+3. `python3 deploy/build-trust.py`
+4. `node deploy/render-trust-card.mjs`
+5. `./test/presentation.sh` — the page, its card and the JSON beside it are all in the presentation lane.
+
+### What the lane checks about it
+
+The classifier treats `web/trust.html`, `web/og-trust.png` and `docs/trust/*.json` as presentation, because
+nothing on that page can reach a transaction. What it will not accept is the page ceasing to be that kind of
+page: a `<script` tag, an `on…=` attribute, a `javascript:` URL, an `<iframe>`, `<object>`, `<embed>`,
+`<form>` or `<base>` tag, or a Content-Security-Policy meta that is not the exact string the Worker sends as
+a header for `/trust`. `deploy/publish.sh` refuses to publish on the same two grounds, and
+`test/presentation.sh` compares the bytes the airdrop worker would serve at `/trust` and `/trust-og.png` with
+the files on disk. `deploy/build-trust.py` itself is not in the allowlist, so a change to it needs the full
+verify.

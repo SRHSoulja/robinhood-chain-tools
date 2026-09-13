@@ -24,8 +24,12 @@ import { makeRunner } from './lib.mjs';
 const ROOT = new URL('../../', import.meta.url).pathname;
 const AIRDROP = join(ROOT, 'web/index.html');
 const CHECK = join(ROOT, 'web/check.html');
+const TRUST = join(ROOT, 'web/trust.html');
 const AIRDROP_SRC = readFileSync(AIRDROP, 'utf8');
 const CHECK_SRC = readFileSync(CHECK, 'utf8');
+
+// The Trust Center's policy, written out here rather than read from the page it is meant to constrain.
+const TRUST_CSP = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail) => {
@@ -283,6 +287,100 @@ await t('presentation: the Check page loads and points at its own share card', a
     m.twImage === 'https://rhcheck.gmgnrepeat.com/og.png', m.twImage);
   check('check-page: og:title is the page title', m.ogTitle === m.title, m.ogTitle + ' vs ' + m.title);
   check('check-page: twitter:card is summary_large_image', m.twCard === 'summary_large_image', m.twCard);
+  await page.close();
+});
+
+// ---- 8: the Trust Center --------------------------------------------------------------------------------------
+// It is a static page with no script of any kind, so it is opened with every request refused: a page that has
+// started asking for something would show up as an aborted request rather than as a silent dependency.
+async function openTrust() {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 1400 } });
+  const errs = [], consoleErrs = [], aborted = [];
+  page.on('pageerror', (e) => errs.push(String(e).slice(0, 200)));
+  page.on('console', (m) => { if (m.type() === 'error') consoleErrs.push(m.text().slice(0, 200)); });
+  await page.route('**/*', async (route) => {
+    const url = route.request().url();
+    if (url.startsWith('file://')) return route.continue();
+    aborted.push(route.request().method() + ' ' + url.slice(0, 120));
+    return route.abort();
+  });
+  await page.goto(pathToFileURL(TRUST).href, { waitUntil: 'load' });
+  await page.waitForTimeout(300);
+  page.__errs = errs;
+  page.__consoleErrs = consoleErrs;
+  page.__aborted = aborted;
+  trackPage(page);
+  return page;
+}
+
+await t('presentation: the Trust Center is a static page whose figures agree with each other', async () => {
+  const TRUST_SRC = readFileSync(TRUST, 'utf8');
+  const page = await openTrust();
+  // One console message is expected and is not a defect: a browser ignores `frame-ancestors` in a meta tag
+  // and says so. The directive is in the meta anyway because the page and the header the Worker sends for
+  // /trust are held to being the same string, by deploy/publish.sh and by the classifier, and it is the
+  // header that actually stops the framing. Anything else in the console is a failure.
+  const FRAME_ANCESTORS_NOTE = "The Content Security Policy directive 'frame-ancestors' is ignored when delivered via a <meta> element.";
+  const unexpected = page.__consoleErrs.filter((m) => m !== FRAME_ANCESTORS_NOTE);
+  check('trust: the page loads with no pageerror and nothing in the console but the frame-ancestors note',
+    page.__errs.length === 0 && unexpected.length === 0, noise(page));
+  check('trust: the browser did report that a meta frame-ancestors is ignored, which is why the header carries it',
+    page.__consoleErrs.includes(FRAME_ANCESTORS_NOTE), JSON.stringify(page.__consoleErrs));
+  check('trust: it asked the network for nothing at all', page.__aborted.length === 0, JSON.stringify(page.__aborted));
+
+  check('trust: the file carries no <script tag of any kind', !/<script/i.test(TRUST_SRC),
+    (TRUST_SRC.match(/<script[^>]*>/i) || [''])[0]);
+  const scripts = await page.evaluate(() => document.querySelectorAll('script').length);
+  check('trust: the browser found no <script> element in the parsed document', scripts === 0, scripts);
+
+  const WANT_IDS = ['top', 'glance', 'findings', 'gas', 'verification', 'tests', 'rounds', 'faq', 'provenance'];
+  const missing = await page.evaluate((ids) => ids.filter((id) => !document.getElementById(id)), WANT_IDS);
+  check('trust: all nine sections are present by id', missing.length === 0, 'missing: ' + missing.join(', '));
+
+  const csp = (TRUST_SRC.match(/<meta http-equiv="Content-Security-Policy" content="([^"]*)"/) || [])[1] || '';
+  check('trust: the CSP meta is exactly the policy this page publishes', csp === TRUST_CSP, csp);
+
+  const meta = await page.evaluate(() => ({
+    ogImage: (document.querySelector('meta[property="og:image"]') || {}).content || null,
+    ogUrl: (document.querySelector('meta[property="og:url"]') || {}).content || null,
+    twImage: (document.querySelector('meta[name="twitter:image"]') || {}).content || null,
+    title: document.title,
+  }));
+  check('trust: og:image is the Trust Center\'s own card', meta.ogImage === 'https://rhairdrop.gmgnrepeat.com/trust-og.png', meta.ogImage);
+  check('trust: twitter:image is the same card', meta.twImage === 'https://rhairdrop.gmgnrepeat.com/trust-og.png', meta.twImage);
+  check('trust: og:url is /trust', meta.ogUrl === 'https://rhairdrop.gmgnrepeat.com/trust', meta.ogUrl);
+  check('trust: the title is the Trust Center', meta.title === 'BulkSend Trust Center', meta.title);
+
+  // The live mainnet address, read from the manifest rather than typed here.
+  const mainnet = JSON.parse(readFileSync(join(ROOT, 'deployments.mainnet.json'), 'utf8')).BulkSend.toLowerCase();
+  const bodyText = await page.evaluate(() => document.body.innerText);
+  check('trust: the page names the mainnet BulkSend from deployments.mainnet.json',
+    bodyText.toLowerCase().includes(mainnet), mainnet);
+
+  // The glance strip and the test table have to agree, because they are the two places the same run is
+  // summarised and a page that disagrees with itself is worse than one that says nothing.
+  const glance = await page.evaluate(() => {
+    const vals = [...document.querySelectorAll('#glance [data-figure]')]
+      .map((el) => [el.getAttribute('data-figure'), (el.querySelector('.fig') || el).textContent.trim()]);
+    return Object.fromEntries(vals);
+  });
+  check('trust: the glance strip says no critical, no high, no medium',
+    glance.critical === '0' && glance.high === '0' && glance.medium === '0', JSON.stringify(glance));
+  check('trust: the glance strip says 22 rounds and 4 with no blocker',
+    glance.rounds === '22' && glance.clean === '4', JSON.stringify(glance));
+
+  const table = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#tests tbody tr')];
+    return { rows: rows.length, checks: rows.map((r) => (r.querySelector('.n') || {}).textContent || '') };
+  });
+  check('trust: the test table lists seven suites', table.rows === 7, JSON.stringify(table));
+  // Only a cell that is a bare integer is a check count. The ordinary contract suites are counted in files,
+  // not in checks, and their cell says so rather than contributing a number that means something else.
+  const summed = table.checks.map((s) => String(s).trim()).filter((s) => /^[0-9]+$/.test(s)).map(Number);
+  const total = summed.reduce((a, b) => a + b, 0);
+  check('trust: the glance total equals the sum of the suite counts printed in the page\'s own table',
+    String(total) === glance.checks && total > 0, `table sums to ${total}, the strip says ${glance.checks}`);
+
   await page.close();
 });
 
