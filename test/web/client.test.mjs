@@ -2439,6 +2439,26 @@ await t("picker: choosing which NFTs go out, rather than leaving it to chance", 
     (await page.evaluate(() => document.querySelector('#rand').checked)) === false);
   await page.close();
 });
+
+// Operator 2026-10-10: ten to one wallet with "How many each" = 10, ten chosen, and the picker said "9 too many":
+// it sized itself one per wallet and never read "How many each". It now reads quantities the way Assign does.
+await t("picker: \"How many each\" counts, so several chosen for one wallet go to that wallet", async () => {
+  const page = await open(browser, { approved: true, artOnchain: true, ownedIds: [11, 12, 13] });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#list', A(0x71) + '\n');
+  await page.fill('#each', '3');
+  await page.waitForTimeout(300);
+  await page.click('#pick'); await page.waitForTimeout(6000);
+  check('the picker asks for three, not one', /3/.test(await text(page, '#pickNeed')), await text(page, '#pickNeed'));
+  await page.evaluate(() => [...document.querySelectorAll('#pickGrid .tile')].slice(0, 3).forEach((t) => t.click()));
+  await page.click('#pickUse'); await page.waitForTimeout(1500);
+  const list = await page.evaluate(() => document.querySelector('#list').value.trim());
+  check('three chosen for one wallet with "How many each" 3 is accepted, not "2 too many"',
+    !/too many/.test(await text(page, '#pickMsg')), await text(page, '#pickMsg'));
+  check('and written as one line: the wallet, then its three ids', /^0x[0-9a-fA-F]{40},\d+,\d+,\d+$/.test(list), list);
+  await page.close();
+});
 // ---- a collection that keeps its art on its own server ----------------------------
 await t("picker: a collection that keeps its art on its own server", async () => {
   const page = await open(browser, { approved: true, artOffchain: true, ownedIds: [21, 22] });

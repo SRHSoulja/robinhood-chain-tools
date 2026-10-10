@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-17V6GqpHJBbVOky4z4smG8SnEf/GTX0XCT/joofLqR8='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-QDQjrNT8qIsyZHcCd9tG1cD8JTU0uLKIX10D/YR0748='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AF%3C/text%3E%3C/svg%3E">
@@ -1733,10 +1733,27 @@
       + (bad.length === 1 ? 'that line' : 'those lines') + ' first.', 'bad');
     return true;
   }
+  // The picker's slots: one per NFT the box asks for, read with the SAME reader Assign uses (requestedNftQuantity:
+  // "How many each", a line's xN, a quantity column, several ids on a line). It used to size itself with
+  // walletsInBox, one per bare address, so "How many each" = 10 for one wallet made 10 chosen read as "9 too
+  // many" (operator, 2026-10-10). A line whose quantity does not read counts once here; "Use these" refuses it.
+  function pickSlots() {
+    const col = boxColumns();
+    const perWallet = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
+    const out = [];
+    for (const line of $('list').value.split(/\r?\n/)) {
+      const a = addressOn(line, col);
+      if (!a) continue;
+      const q = requestedNftQuantity(line, col, perWallet).n;
+      for (let k = 0, n = (q >= 1 && q <= 1000) ? q : 1; k < n; k++) out.push(a);
+    }
+    return out;
+  }
+  const walletCount = (slots) => new Set(slots.map((a) => a.toLowerCase())).size;
   function updatePickCount() {
-    const need = walletsInBox().length;
+    const slots = pickSlots(), need = slots.length, nw = walletCount(slots);
     $('pickNeed').textContent = String(need);
-    $('pickCount').textContent = pick.chosen.size + ' chosen' + (need ? ' of ' + need + ' wallet' + (need === 1 ? '' : 's') : '');
+    $('pickCount').textContent = pick.chosen.size + ' chosen' + (need ? ' of ' + need + (need === nw ? ' wallet' + (need === 1 ? '' : 's') : ' for ' + nw + ' wallet' + (nw === 1 ? '' : 's')) : '');
     $('pickCount').className = 'pill' + (need && pick.chosen.size === need ? ' ok' : '');
   }
 
@@ -1746,7 +1763,7 @@
     if (!ethers.isAddress(token) || !me) { say('msgList', 'Connect a wallet and enter the token address first.', 'bad'); return; }
     if (std() === '20') { say('msgList', 'A token has amounts, not individual items to choose between.', 'warn'); return; }
     if (std() === '1155') { say('msgList', 'An edition is one id held many times over, so there is nothing to choose between. Use "How many each".', 'warn'); return; }
-    const need = walletsInBox().length;
+    const need = pickSlots().length;
     if (need > PICK_CAP) {
       say('msgList', 'There are ' + need + ' wallets in the box. Choosing that many one at a time is not what '
         + 'this is for: use "Assign my token ids", which pairs everything you hold without picking. The picker '
@@ -1762,7 +1779,7 @@
   $('pickNone').addEventListener('click', () => { pick.chosen.clear(); renderPick(); });
   $('pickAll').addEventListener('click', () => {
     pick.chosen.clear();
-    for (const id of pick.ids.slice(0, walletsInBox().length)) pick.chosen.add(String(id));
+    for (const id of pick.ids.slice(0, pickSlots().length)) pick.chosen.add(String(id));
     renderPick();
   });
   $('pickUse').addEventListener('click', () => {
@@ -1776,8 +1793,12 @@
       $('pickBox').style.display = 'block';
       return;
     }
-    const wallets = walletsInBox();
+    const wallets = pickSlots();
     if (!wallets.length) { say('pickMsg', 'Put the recipient wallets in the box first, one per line.', 'bad'); return; }
+    // a quantity that does not read is counted once by pickSlots for sizing; here it is refused, as Assign does
+    { const col = boxColumns(), perWallet = Math.max(1, Math.min(1000, parseInt($('each').value) || 1));
+      for (const line of $('list').value.split(/\r?\n/)) { if (!addressOn(line, col)) continue; const asked = requestedNftQuantity(line, col, perWallet);
+        if (asked.n === null || asked.n > 1000) { say('pickMsg', 'One line asks for "' + asked.raw.slice(0, 20) + '", which is not a whole number of NFTs from 1 to 1000. Fix it and try again.', 'bad'); return; } } }
     // Before the count check, because the count is computed from walletsInBox too: a shortfall from an
     // unreadable line is invisible to it, so the user was never told the list they see and the list being
     // paired are different lengths.
@@ -1788,8 +1809,9 @@
       // "Choose one for each wallet" is true and useless when the reason you cannot is that you do not own
       // enough of them. Name the thing that is actually in the way, and where the short list came from.
       const short = wallets.length - chosen.length;
-      let why = 'You have chosen ' + chosen.length + ' NFT' + (chosen.length === 1 ? '' : 's')
-        + ' and there ' + (wallets.length === 1 ? 'is 1 wallet' : 'are ' + wallets.length + ' wallets') + ' in the box. ';
+      const nw = walletCount(wallets);
+      let why = 'You have chosen ' + chosen.length + ' NFT' + (chosen.length === 1 ? '' : 's') + ' and the box asks for '
+        + wallets.length + ' (' + (nw === 1 ? '1 wallet' : nw + ' wallets') + (wallets.length === nw ? '' : ', counting "How many each" and any xN') + '). ';
       if (short > 0 && pick.held < wallets.length) {
         why += 'You hold ' + pick.held + ' in this collection, which is ' + (wallets.length - pick.held)
           + ' fewer than there are wallets, so one each is not possible however they are chosen. Shorten the '
@@ -1800,13 +1822,16 @@
       } else if (short > 0) {
         why += 'Choose ' + short + ' more, or shorten the list.';
       } else {
-        why += 'That is ' + (-short) + ' too many. Unpick some, or add more wallets.';
+        why += 'That is ' + (-short) + ' too many. Unpick some, raise "How many each", or add more wallets.';
       }
       say('pickMsg', why, 'bad');
       return;
     }
     // Paired in the order shown, not at random: choosing them and then shuffling would undo the choosing.
-    $('list').value = wallets.map((w, i) => w + ',' + chosen[i]).join('\n');
+    // one line per wallet, its chosen ids after it ("0xabc,1,2,3" sends several), in the order shown
+    const byWallet = new Map();
+    wallets.forEach((w, i) => { const k = w.toLowerCase(); if (!byWallet.has(k)) byWallet.set(k, { w, ids: [] }); byWallet.get(k).ids.push(chosen[i]); });
+    $('list').value = [...byWallet.values()].map((x) => x.w + ',' + x.ids.join(',')).join('\n');
     $('rand').checked = false;
     $('pickBox').style.display = 'none';
     say('msgList', 'Using the ' + chosen.length + ' you chose, paired in the order they are listed.', 'ok');
