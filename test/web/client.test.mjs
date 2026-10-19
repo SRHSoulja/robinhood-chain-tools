@@ -9,6 +9,7 @@ import { mkdtempSync, copyFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { makeRunner } from './lib.mjs';
+import { ethers } from 'ethers';
 
 const PAGE = pathToFileURL(new URL('../../web/index.html', import.meta.url).pathname).href;
 const NFT = '0x1111111111111111111111111111111111111111';
@@ -176,6 +177,17 @@ function chainAnswer(O) {
       case 'eth_call': {
         const to = String(params[0].to || '').toLowerCase(), from = String(params[0].from || '').toLowerCase();
         const data = String(params[0].data || ''), sel = data.slice(0, 10);
+        if (O.scanIds) {   // an ERC721A drop with no enumeration (Stray Cucks): the page scans ownerOf through Multicall3
+          if (sel === '0x70a08231') return enc(O.scanIds.length);
+          if (sel === '0x18160ddd') return enc(O.scanSupply ?? 20);
+          if (sel === '0x82ad56cb' && to === '0xca11bde05977b3631167028862be2a173976ca11') {
+            const M3 = new ethers.Interface(['function aggregate3((address target, bool allowFailure, bytes callData)[] calls) view returns ((bool success, bytes returnData)[])']);
+            const [calls] = M3.decodeFunctionData('aggregate3', data);
+            const res = calls.map((c) => { const id = Number(BigInt('0x' + c.callData.slice(10)));
+              return id < 1 || id > (O.scanSupply ?? 20) ? [false, '0x'] : [true, ethers.AbiCoder.defaultAbiCoder().encode(['address'], [O.scanIds.includes(id) ? me : A(0xe9)])]; });
+            return M3.encodeFunctionResult('aggregate3', [res]);
+          }
+        }
         if (sel === '0x2f745c59' && O.ownedIds) {                      // tokenOfOwnerByIndex
           const i = Number(BigInt('0x' + data.slice(74)));
           return i < O.ownedIds.length ? enc(O.ownedIds[i]) : null;
@@ -2268,6 +2280,19 @@ await t("parse: leaving the token field must not throw away the token that is in
   await page.waitForTimeout(1200);
   check('but changing the address really does load the new one',
     (await text(page, '#tokenInfo')).length > 0, await text(page, '#tokenInfo'));
+  await page.close();
+});
+
+// ---- Assign with the explorer out of credits (operator 2026-10-19: "Could not read your token ids: explorer unavailable (402)")
+await t('assign: with the explorer out of credits, ids come from the chain (an ownerOf scan through Multicall3)', async () => {
+  const page = await open(browser, { scanIds: [5, 7, 9], ownedNfts: { error: 'upstream', status: 402 } });
+  await page.click('#connect'); await page.waitForTimeout(600);
+  await useToken(page, NFT, '721');
+  await page.fill('#list', A(0xd1) + ' x2\n' + A(0xd2) + ' x1\n'); await page.waitForTimeout(200);
+  await page.click('#assign'); await page.waitForTimeout(3500);
+  const list = await val(page, '#list'), log = await text(page, '#log');
+  check('the three held ids are assigned from the chain', /,5\b/.test(list) && /,7\b/.test(list) && /,9\b/.test(list), list.slice(0, 200));
+  check('and no explorer error is shown', !/Could not read your token ids/.test(log), log.slice(-200));
   await page.close();
 });
 

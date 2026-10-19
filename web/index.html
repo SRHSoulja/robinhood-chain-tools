@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-bLOxmjMjxkLTdB040GioObd0AdKb2QOG/DKS+cNPE28='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-fBKKjspQc9JCUydBy9j86Jy0NHITLpgSQL1l5kLXwRo='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AF%3C/text%3E%3C/svg%3E">
@@ -1776,7 +1776,9 @@
   $('pick').addEventListener('click', async () => {
     if (sending) return;
     const token = $('token').value.trim();
-    if (!ethers.isAddress(token) || !me) { say('msgList', 'Connect a wallet and enter the token address first.', 'bad'); return; }
+    // one sentence per cause (2026-10-19: a connected holder was told to connect a wallet when the token box was the problem)
+    if (!me) { say('msgList', 'Connect a wallet first.', 'bad'); return; }
+    if (!ethers.isAddress(token)) { say('msgList', token ? 'The token address is not a valid address: ' + String(token).slice(0, 48) : 'Enter the collection\'s token address first.', 'bad'); return; }
     if (std() === '20') { say('msgList', 'A token has amounts, not individual items to choose between.', 'warn'); return; }
     if (std() === '1155') { say('msgList', 'An edition is one id held many times over, so there is nothing to choose between. Use "How many each".', 'warn'); return; }
     const need = pickSlots().length;
@@ -2276,7 +2278,9 @@
   $('assign').addEventListener('click', async () => {
     if (sending) return;
     const token = $('token').value.trim();
-    if (!ethers.isAddress(token) || !me) { say('msgList', 'Connect a wallet and enter the token address first.', 'bad'); return; }
+    // one sentence per cause (2026-10-19: a connected holder was told to connect a wallet when the token box was the problem)
+    if (!me) { say('msgList', 'Connect a wallet first.', 'bad'); return; }
+    if (!ethers.isAddress(token)) { say('msgList', token ? 'The token address is not a valid address: ' + String(token).slice(0, 48) : 'Enter the collection\'s token address first.', 'bad'); return; }
     if (std() === '20') { log('For a token, write the amount after each address; there are no ids to assign.', 'warn'); return; }
     // Assign rewrites the box from the lines it could read, exactly as "Use these" did, so it needs the same
     // refusal. Reached by a different route and with the same consequence: a recipient dropped from an
@@ -2416,7 +2420,8 @@
     $('assign').disabled = false;
   });
 
-  // Prefer the chain (Enumerable), fall back to the explorer, so this works on collections that lack enumeration.
+  // Prefer the chain (Enumerable, then an ownerOf scan), fall back to the explorer.
+  const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';   // the canonical Multicall3 address, deployed on Robinhood Chain
   async function myTokenIds(token, want) {
     const rp = new ethers.JsonRpcProvider(cfg().rpc); const out = [];
     try {
@@ -2424,6 +2429,27 @@
       for (let i = 0; i < Math.min(bal, want + 50); i++) out.push(BigInt(await t.tokenOfOwnerByIndex(me, i)));
       if (out.length) return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     } catch (e) { out.length = 0; }   // a half-finished enumeration must not be blended with the explorer's answer
+    // No enumeration (ERC721A drops such as Stray Cucks): ask ownerOf for every id through Multicall3, 500 ids a call,
+    // when the collection is small enough. 2026-10-19 the explorer's credits ran out ("explorer unavailable (402)") and
+    // Assign could read no ids at all; the chain answers this without any explorer. Only a scan that finds exactly the
+    // wallet's balance is used; anything short falls through to the explorer, never blended with it.
+    try {
+      const t = new ethers.Contract(token, ['function balanceOf(address) view returns (uint256)', 'function totalSupply() view returns (uint256)'], rp);
+      const [bal, sup] = await Promise.all([t.balanceOf(me).then(Number), t.totalSupply().then(Number)]);
+      if (bal > 0 && sup > 0 && sup <= 20000) {
+        const M3 = new ethers.Interface(['function aggregate3((address target, bool allowFailure, bytes callData)[] calls) view returns ((bool success, bytes returnData)[])']);
+        const OF = new ethers.Interface(['function ownerOf(uint256) view returns (address)']);
+        const meL = me.toLowerCase(), last = sup + 64;   // ids start at 0 or 1; burns leave the highest id above totalSupply
+        for (let s0 = 0; s0 <= last && out.length < bal; s0 += 500) {
+          const ids = []; for (let i = s0; i <= Math.min(s0 + 499, last); i++) ids.push(i);
+          const data = M3.encodeFunctionData('aggregate3', [ids.map((i) => ({ target: token, allowFailure: true, callData: OF.encodeFunctionData('ownerOf', [i]) }))]);
+          const res = M3.decodeFunctionResult('aggregate3', await rp.call({ to: MULTICALL3, data }))[0];
+          res.forEach((r, k) => { if (r.success && r.returnData.length === 66 && ('0x' + r.returnData.slice(-40)).toLowerCase() === meL) out.push(BigInt(ids[k])); });
+        }
+        if (out.length === bal) return out.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      }
+    } catch (e) {}
+    out.length = 0;
     let next = '';
     for (let page = 0; page < 20 && out.length < want + 50; page++) {
       const d = await explorer('/addresses/' + me + '/nft?type=ERC-721%2CERC-1155' + (next ? '&' + next : ''));
