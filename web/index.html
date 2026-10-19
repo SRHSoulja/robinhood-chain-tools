@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-QDQjrNT8qIsyZHcCd9tG1cD8JTU0uLKIX10D/YR0748='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; object-src 'none'; script-src 'self' https://static.cloudflareinsights.com https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js 'sha256-bLOxmjMjxkLTdB040GioObd0AdKb2QOG/DKS+cNPE28='; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.testnet.chain.robinhood.com https://rpc.mainnet.chain.robinhood.com https://robinhood-sepolia-rpc.publicnode.com https://robinhood-testnet.drpc.org https://robinhood-rpc.publicnode.com https://robinhood.api.pocket.network https://robinhoodchain.blockscout.com https://explorer.testnet.chain.robinhood.com https://api.coinbase.com wss://relay.walletconnect.org wss://relay.walletconnect.com https://relay.walletconnect.org https://relay.walletconnect.com https://api.web3modal.org https://pulse.walletconnect.org https://explorer-api.walletconnect.com; img-src 'self' data: blob: https://explorer-api.walletconnect.com https://imagedelivery.net; font-src https://fonts.reown.com; frame-src https://verify.walletconnect.org https://verify.walletconnect.com; base-uri 'none'; form-action 'none'">
 <title>BulkSend · Robinhood Chain airdrops</title>
 <meta name="description" content="Send an NFT or token to hundreds of wallets in a few transactions on Robinhood Chain. The contract holds nothing; it only moves what you approve, in the transaction you sign.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AF%3C/text%3E%3C/svg%3E">
@@ -310,7 +310,8 @@
   }
   let walletBatch = null;   // does the wallet run several calls as itself, in one transaction (EIP-5792)
   let walletBatchReady = false;   // 'ready' means it will prompt to upgrade the account before the first batch
-  let gatedBy = null;       // the collection's creator transfer validator, if it has one
+  let gatedBy = null;       // the collection's creator transfer validator, if it has one AND it refuses BulkSend
+  let validatorLetsBulk = false;   // the collection has a validator, and it lets BulkSend operate (checked by a read)
   let tokenPaused = false;  // a paused collection refuses every transfer, so say so before anyone pays gas
   let tokenLoadedChain = null;   // which chain the token details were read on
   let ethUsd = null;        // best effort, for the cost line; the page works fine without it
@@ -885,7 +886,7 @@
     // The same address is a different contract on a different chain, and decimals differ. Keeping a parsed
     // list across that boundary would send amounts computed for one token using another one's units.
     if (pick.context) closePicker('The network changed, and the same address is a different contract on a different chain.');
-    rows = []; parsedListSource = null; decimals = null; tokenLoadedFor = null; tokenLoadedChain = null; gatedBy = null; tokenPaused = false;
+    rows = []; parsedListSource = null; decimals = null; tokenLoadedFor = null; tokenLoadedChain = null; gatedBy = null; validatorLetsBulk = false; tokenPaused = false;
     badLines = 0; badLinesOk = false; skippedRows = []; gasPriceFor = null;
     setStat($('parseOut'), []); setStat($('tokenInfo'), []); say('msgList', ''); $('problems').style.display = 'none'; $('ackRow').style.display = 'none';
     refreshGasPrice(); plan(); contractLink();
@@ -908,6 +909,20 @@
     gatedBy = null; tokenPaused = false;
     try { const pz = await rp.call({ to: addr, data: '0x5c975abb' }); if (pz && pz !== '0x' && BigInt(pz) === 1n) tokenPaused = true; } catch (e) {}
     try { const gv = await rp.call({ to: addr, data: '0x098144d4' }); if (gv && gv !== '0x' && BigInt(gv) !== 0n) gatedBy = '0x' + gv.slice(-40); } catch (e) {}
+    // A validator is not always an operator allowlist (Stray Cucks' StrayFreeze only voids a list of frozen ids, and lets
+    // any operator move the rest; 2026-10-19 the page told a holder BulkSend could not send them). So ask the validator
+    // itself: validateTransfer(BulkSend, you, you, id) as a read, for a few ids. One that passes means it lets BulkSend
+    // operate here; an id it still refuses (a frozen one) just fails on its own row.
+    validatorLetsBulk = false;
+    if (gatedBy && std() === '721' && cfg().bulk) {
+      const who = me || '0x000000000000000000000000000000000000dEaD';
+      const ids = [...new Set([...(rows || []).map((r) => r.id).filter((x) => x != null).slice(0, 4).map(String), '2', '3', '4', '5', '6'])].slice(0, 8);
+      const VI = new ethers.Interface(['function validateTransfer(address caller, address from, address to, uint256 tokenId)']);
+      for (const id of ids) {
+        try { await rp.call({ to: gatedBy, data: VI.encodeFunctionData('validateTransfer', [cfg().bulk, who, who, BigInt(id)]) }); validatorLetsBulk = true; break; } catch (e) {}
+      }
+      if (validatorLetsBulk) gatedBy = null;
+    }
     try {
       if (std() === '721') { const t = new ethers.Contract(addr, ERC721_ABI, rp); const [n, s] = await Promise.all([t.name().catch(() => '?'), t.symbol().catch(() => '?')]); const bal = me ? await t.balanceOf(me).catch(() => null) : null;
         const parts = [['', clip(n) + ' (' + clip(s) + ')']]; if (bal !== null) parts.push(['you hold', String(bal)]); setStat(box, parts); decimals = 0; }
@@ -916,6 +931,7 @@
         const parts = [['', clip(n) + ' (' + clip(s) + ') · ' + decimals + ' decimals']]; if (bal !== null) parts.push(['you hold', ethers.formatUnits(bal, decimals)]);
         parts.push(['', 'If this token takes a fee on transfer, each wallet receives less than the amount listed.', 'warn']); setStat(box, parts); }
       else { setStat(box, [['', 'ERC-1155 contract found.']]); decimals = 0; }
+      if (validatorLetsBulk) { const span = document.createElement('span'); span.className = 'ok'; span.textContent = 'This collection checks every transfer with its own validator; it lets BulkSend send these (checked just now). Any token it still refuses fails on its own row.'; box.appendChild(span); }
       if (tokenPaused) { const span = document.createElement('span'); span.className = 'bad'; span.textContent = 'This contract is paused: every transfer will fail until the owner unpauses it.'; box.appendChild(span); }
       if (gatedBy) {
         const parts = [['', 'This collection restricts transfers to operators its creator approved.', 'warn']];

@@ -219,6 +219,12 @@ function chainAnswer(O) {
         if (sel === '0x00fdd58e') return enc(O.balance1155 ?? 1000);
         if (sel === '0xdd62ed3e') return enc(O.allowance ?? '1000000000000000000000');
         if (sel === '0x098144d4') return O.gated ? enc(BigInt('0xA000027A9B2802E1ddf7000061001e5c005A0000')) : null;
+        // the validator asked whether it lets BulkSend operate: validateTransfer(caller, from, to, id). StrayFreeze-like
+        // validators pass (O.validatorLets); an operator allowlist that does not list BulkSend reverts
+        if (sel === '0xcaee23ea' && to === '0xa000027a9b2802e1ddf7000061001e5c005a0000') {
+          if (O.validatorLets) return '0x';
+          const e = new Error('execution reverted'); e.revertData = '0xef28f901'; throw e;
+        }
         if (sel === '0x5c975abb') return enc(0);
         if (sel === '0xe985e9c5') return enc(O.approved ? 1 : 0);
         // the receive hooks, asked of a delegate directly
@@ -2263,6 +2269,21 @@ await t("parse: leaving the token field must not throw away the token that is in
   check('but changing the address really does load the new one',
     (await text(page, '#tokenInfo')).length > 0, await text(page, '#tokenInfo'));
   await page.close();
+});
+
+// ---- a transfer validator is not always an operator allowlist (operator 2026-10-19, Stray Cucks) ----------------
+// Stray Cucks' StrayFreeze voids a list of frozen ids and lets any operator move the rest, yet the page said "A wallet
+// that batches is needed" for every collection with a validator. It now asks the validator itself.
+await t('validator: one that lets BulkSend operate is not treated as gated; one that refuses still is', async () => {
+  for (const [lets, want, not] of [[true, /lets BulkSend send these/, /A wallet that batches is needed/], [false, /A wallet that batches is needed/, /lets BulkSend send these/]]) {
+    const page = await open(browser, { gated: true, validatorLets: lets });
+    await page.click('#connect'); await page.waitForTimeout(600);
+    await useToken(page, NFT, '721');
+    let info = '';
+    for (let i = 0; i < 40 && !/BulkS/.test(info); i++) { await page.waitForTimeout(150); info = await text(page, '#tokenInfo'); }
+    check('validator ' + (lets ? 'lets BulkSend' : 'refuses BulkSend') + ': the token box says so', want.test(info) && !not.test(info), info.slice(0, 220));
+    await page.close();
+  }
 });
 
 // ---- the file a real user sent in, exactly as they sent it ---------------------
