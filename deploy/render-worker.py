@@ -269,6 +269,72 @@ const TRUST_CSP = %s;
   }
 """
 
+    # /art/<chain>/<contract>/<id> (2026-10-19, operator: "fix this issue" -- the picker showed nothing for a collection
+    # whose art lives on a web server, Stray Cucks among them). The page never fetches a collection's own server: that
+    # would tell it who is looking, on a page that signs transactions. This Worker can fetch it instead, so the
+    # visitor's address never reaches that server. Read-only and bounded at every step: tokenURI from the chain, its
+    # JSON (https or ipfs only, 256 KB), then the image (https, ipfs or data:, 3 MB, image types only), cached a day.
+    art_route = """
+  const art = url.pathname.match(/^\\/art\\/(4663|46630)\\/(0x[0-9a-fA-F]{40})\\/([0-9]{1,30})$/);
+  if (art) {
+    if (request.method !== 'GET') return new Response('GET only', { status: 405, headers: secure() });
+    const cache = caches.default, hit = await cache.match(request);
+    if (hit) return hit;
+    const none = (why) => new Response(why, { status: 404, headers: Object.assign(secure(), { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=600' }) });
+    const rpcs = ART_RPCS[art[1]];
+    let uri = null;
+    for (const rpc of rpcs) {
+      try {
+        const r = await fetch(rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(6000),
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [{ to: art[2], data: '0xc87b56dd' + BigInt(art[3]).toString(16).padStart(64, '0') }, 'latest'] }) });
+        const j = await r.json();
+        if (j && typeof j.result === 'string' && j.result.length >= 130) { uri = abiString(j.result); break; }
+        if (j && j.error) break;   // the token answered: no tokenURI for this id
+      } catch (e) {}
+    }
+    if (!uri) return none('no tokenURI');
+    const meta = await boundedFetch(uri, 262144, (t) => /json|text\\/plain|octet-stream/i.test(t));
+    if (!meta) return none('metadata unavailable');
+    let j; try { j = JSON.parse(new TextDecoder().decode(meta.bytes)); } catch (e) { return none('metadata is not JSON'); }
+    const src = j && (typeof j.image === 'string' ? j.image : typeof j.image_url === 'string' ? j.image_url : null);
+    if (!src) return none('no image');
+    let img = null;
+    const d = src.match(/^data:(image\\/(?:png|jpeg|gif|webp|avif|svg\\+xml))([^,]*),(.*)$/s);   // any parameters (;utf8, ;charset=..), then ;base64 or not
+    if (d) {
+      try { const raw = /;base64$/i.test(d[2]) ? Uint8Array.from(atob(d[3]), (c) => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(d[3])); if (raw.length <= 3145728) img = { bytes: raw, type: d[1] }; } catch (e) {}
+    } else img = await boundedFetch(src, 3145728, (t) => /^image\\/(png|jpeg|gif|webp|avif|svg\\+xml)\\b/i.test(t));
+    if (!img) return none('image unavailable');
+    const res = new Response(img.bytes, { headers: Object.assign(secure(), { 'content-type': img.type, 'cache-control': 'public, max-age=86400' }) });
+    try { await cache.put(request, res.clone()); } catch (e) {}
+    return res;
+  }
+"""
+    art_consts = """
+const ART_RPCS = { '4663': ['https://robinhood-rpc.publicnode.com', 'https://rpc.ordofi.network'], '46630': ['https://rpc.testnet.chain.robinhood.com'] };
+// the string a tokenURI(uint256) eth_call returns (offset, length, bytes)
+function abiString(hex) {
+  const h = hex.slice(2), off = parseInt(h.slice(0, 64), 16) * 2, len = parseInt(h.slice(off, off + 64), 16);
+  const b = new Uint8Array(len); for (let i = 0; i < len; i++) b[i] = parseInt(h.substr(off + 64 + i * 2, 2), 16);
+  return new TextDecoder().decode(b);
+}
+// one https (or ipfs, through a public gateway) GET with a deadline and a size cap; the content type must pass ok().
+// A host given as an address rather than a name, or localhost, is refused: this fetches other people's URLs.
+async function boundedFetch(u, cap, ok) {
+  if (/^ipfs:\\/\\//i.test(u)) u = 'https://ipfs.io/ipfs/' + u.replace(/^ipfs:\\/\\/(ipfs\\/)?/i, '');
+  let p; try { p = new URL(u); } catch (e) { return null; }
+  if (p.protocol !== 'https:' || /^(localhost|[0-9.]+|\\[.*\\])$/i.test(p.hostname)) return null;
+  let r; try { r = await fetch(p.toString(), { redirect: 'follow', signal: AbortSignal.timeout(8000), cf: { cacheEverything: true, cacheTtl: 86400 } }); } catch (e) { return null; }
+  const type = (r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  if (!r.ok || !ok(type)) return null;
+  const len = Number(r.headers.get('content-length') || 0); if (len > cap) return null;
+  const reader = r.body.getReader(), parts = []; let n = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; n += value.length; if (n > cap) { try { reader.cancel(); } catch (e) {} return null; } parts.push(value); }
+  const bytes = new Uint8Array(n); let o = 0; for (const v of parts) { bytes.set(v, o); o += v.length; }
+  return { bytes, type };
+}
+"""
+    x_route = art_route + x_route
+
     return """// Serves the %s page from Cloudflare's edge. Generated by deploy/publish.sh; do not edit by hand.
 const HTML = %s;
 const WC_BUNDLE = %s;
@@ -279,7 +345,7 @@ const TOUCH_PNG = %s;
 // Decoded once at module load, not per request: the bytes never change for the life of this deployment.
 const OG_PNG_BYTES = OG_PNG ? Uint8Array.from(atob(OG_PNG), (c) => c.charCodeAt(0)) : null;
 const TOUCH_PNG_BYTES = TOUCH_PNG ? Uint8Array.from(atob(TOUCH_PNG), (c) => c.charCodeAt(0)) : null;
-%sconst EXPLORERS = { '4663': 'https://robinhoodchain.blockscout.com', '46630': 'https://explorer.testnet.chain.robinhood.com' };
+%s%sconst EXPLORERS = { '4663': 'https://robinhoodchain.blockscout.com', '46630': 'https://explorer.testnet.chain.robinhood.com' };
 // One upstream request with a bounded retry: a thrown fetch or a 5xx is tried again after 300 ms and then
 // 600 ms, three attempts in all; anything below 500 is an answer and is returned at once. Returns null when
 // every attempt threw. Written once here because both the keyed translation and the direct passthrough
@@ -329,7 +395,7 @@ export default { async fetch(request, env) {
   return new Response(HTML, { headers: Object.assign(secure(), { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300', 'content-security-policy': CSP }) });
 } };
 """ % (target, json.dumps(html), json.dumps(wc_bundle or None), json.dumps(wc_sha or None), json.dumps(csp_header),
-       json.dumps(og_b64 or None), json.dumps(touch_b64 or None), trust_consts,
+       json.dumps(og_b64 or None), json.dumps(touch_b64 or None), trust_consts, art_consts,
        wc_route, og_route, trust_route, x_route)
 
 

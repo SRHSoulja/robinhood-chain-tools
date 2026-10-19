@@ -499,6 +499,35 @@ async function run() {
       JSON.stringify([rCheckTrust.status, rCheckTrust.headers.get('location')]));
   }
 
+  // ---- /art/<chain>/<contract>/<id>: off-chain art fetched by the Worker, never by the visitor (2026-10-19) ----
+  {
+    globalThis.caches = { default: { match: async () => null, put: async () => {} } };
+    const C = addrN(0xa47), seen = [];
+    const strHex = (s) => { const b = Buffer.from(s, 'utf8'); return '0x' + (32).toString(16).padStart(64, '0') + b.length.toString(16).padStart(64, '0') + b.toString('hex').padEnd(Math.ceil(b.length / 32) * 64, '0'); };
+    const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    const world = (o = {}) => async (url, init = {}) => {
+      url = String(url); seen.push(url);
+      if (init.method === 'POST') { const b = JSON.parse(init.body); return Response.json({ jsonrpc: '2.0', id: b.id, result: strHex(o.uri || 'https://art.example/meta/2') }); }
+      if (url.startsWith('https://art.example/meta/')) return new Response(JSON.stringify({ name: 'x', image: o.image || 'https://art.example/img/2.png' }), { headers: { 'content-type': 'application/json' } });
+      if (url.startsWith('https://art.example/img/')) return new Response(o.big ? new Uint8Array(4 * 1048576) : PNG, { headers: { 'content-type': o.imgType || 'image/png', ...(o.big ? { 'content-length': String(4 * 1048576) } : {}) } });
+      return new Response('nope', { status: 404 });
+    };
+    const get = async (o, path = '/art/4663/' + C + '/2', method = 'GET') => { seen.length = 0; globalThis.fetch = world(o); return airdropWorker.fetch(new Request('https://rhairdrop.gmgnrepeat.com' + path, { method }), {}); };
+    let r = await get({});
+    const body = new Uint8Array(await r.arrayBuffer());
+    check('art: an https tokenURI gives the picture, fetched by the Worker', r.status === 200 && r.headers.get('content-type') === 'image/png' && body.length === PNG.length, r.status + ' ' + r.headers.get('content-type'));
+    check('art: and it is cached a day, with the hardening headers', r.headers.get('cache-control') === 'public, max-age=86400' && /sandbox/.test(r.headers.get('content-security-policy') || ''), r.headers.get('cache-control'));
+    check('art: the chain was asked for tokenURI(2), then the JSON, then the image', seen.length === 3 && seen[1] === 'https://art.example/meta/2' && seen[2] === 'https://art.example/img/2.png', seen.join(' | '));
+    r = await get({ imgType: 'text/html' }); check('art: a non-image answer is refused', r.status === 404, r.status);
+    r = await get({ big: true }); check('art: an image over 3 MB is refused', r.status === 404, r.status);
+    r = await get({ image: 'http://art.example/img/2.png' }); check('art: a plain-http image is refused', r.status === 404 && !seen.some((u) => u.startsWith('http://')), seen.join(' | '));
+    r = await get({ uri: 'https://127.0.0.1/meta/2' }); check('art: a host given as an address is refused', r.status === 404 && !seen.some((u) => u.includes('127.0.0.1')), seen.join(' | '));
+    r = await get({ image: 'data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E' });
+    check('art: an image carried in the JSON as data: is served', r.status === 200 && r.headers.get('content-type') === 'image/svg+xml', r.status + ' ' + r.headers.get('content-type'));
+    r = await get({}, '/art/4663/' + C + '/2', 'POST'); check('art: GET only', r.status === 405, r.status);
+    r = await get({}, '/art/1/' + C + '/2'); check('art: an unlisted chain is not an art route', r.status === 302, r.status);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }
