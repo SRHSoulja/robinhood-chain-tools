@@ -26,18 +26,20 @@ page load, reload and retry spent credits, and `?anything=1` made a new request 
 | upstream answers 402 | the Worker stops spending until 00:00 UTC (in memory and as a shared marker in the colo's cache) |
 | budget spent, cached answer exists | served labelled `x-explorer-state: stale` with `stale_seconds` in the body, within the stale window |
 | budget spent, nothing usable | the usual `{"error":"upstream","status":402}` envelope plus `reason: "credits_exhausted"` and `retry_after` (next 00:00 UTC) |
-| `x-credits-remaining` under 4,000 | the 20-call inventory walk is shed (`reason: "credits_low"`); holders, transactions and contracts continue |
+| more than 16 distinct walks in flight in one isolate | admission limit: stale if allowed, else `reason: "busy"` with a 5 s `retry_after` |
+| `x-credits-remaining` under 4,000 (observation expires at the next 00:00 UTC) | the 20-call inventory walk is shed (`reason: "credits_low"`); holders, transactions and contracts continue |
 
 | answer | fresh | may be served stale for |
 | --- | --- | --- |
-| holders page | 10 min | 6 h |
-| NFT inventory | 5 min | 6 h |
+| holders page | 10 min | never (see below) |
+| NFT inventory | 5 min | never |
 | transaction | 24 h | 7 d |
 | contract, verified | 24 h | 7 d |
 | contract, unverified | 10 min | 7 d |
 
-Holders and inventories are kept stale for hours only: a recipient snapshot a day old is worse than "could not
-check". Transactions and verified contracts do not change once mined and verified.
+Holders and inventories are never served stale: they feed recipient selection and proportional allocation, and
+the page cannot yet show how old a snapshot is (the reader ignores `stale_seconds`). Until a page edit shows the
+age, they are fresh or "could not check". Transactions and verified contracts do not change once mined and verified.
 
 Failures are never cached, and `ok:false` answers (NOTOK, 4xx, 5xx) keep their audit-eighteen behaviour. The
 envelope fields are additive: the pages read `error` and `status` only, so no page, CSP hash or reviewed digest
@@ -57,7 +59,7 @@ and a re-hash; the data it needs (`reason`, `retry_after`) is already in the env
 
 `.github/workflows/integrity.yml` now tells "credits exhausted" (402, or `reason` credits_exhausted/credits_low)
 from "path dark": the first is a `::warning::` annotation and skips that host's content assertions; everything
-else that is not a real holders list, unverified contract and verified contract still fails. The check itself
+else that is not a real holders list, unverified contract and verified contract still fails. Each of the three lookups per host is classified on its own (`test/integrity-classify.test.sh`). Stale age is recomputed when an answer is served and browser caching is capped to what remains of the window. The check itself
 spends about 24 calls (480 credits) a day.
 
 ## Rotation and monitoring

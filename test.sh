@@ -30,6 +30,10 @@ echo "=== gate 11: the Worker's mainnet explorer translation ==="
 node test/worker.test.mjs
 
 echo
+echo "=== the integrity workflow's explorer classification ==="
+./test/integrity-classify.test.sh
+
+echo
 echo "=== the reviewers' probes (a FAILING probe is a finding that is fixed) ==="
 forge test --match-path 'test/Audit*.t.sol' 2>&1 | grep -E "^Suite result|^Ran " || true
 echo

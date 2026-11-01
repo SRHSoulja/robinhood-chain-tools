@@ -307,25 +307,28 @@ jobs:
           for host in rhcheck.gmgnrepeat.com rhairdrop.gmgnrepeat.com; do
           echo "  host: $host"
           j() { curl -sS --max-time 25 "https://$host/x/4663$1"; }
+          # Each endpoint is classified on its own (docs/credit-budget.md). Credits spent (402, or reason
+          # credits_exhausted / credits_low / busy) is a ::warning:: for THAT endpoint only; any other answer
+          # that is not the expected real one fails. One endpoint being cached and another exhausted therefore
+          # neither hides a dark path nor turns a spent budget red. A Worker from before the budget existed
+          # has no reason field, so status 402 counts too.
+          spent() { printf '%s' "$1" | python3 -c 'import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get("error")=="upstream" and (d.get("status")==402 or d.get("reason") in ("credits_exhausted","credits_low","busy")) else 1)' 2>/dev/null; }
+          assert() { printf '%s' "$2" | python3 -c "import sys,json; d=json.load(sys.stdin); $1" 2>/dev/null; }
           h="$(j /tokens/0xdFa5D366Cc9B2bdf08d44A7d7e891012C893385b/holders)"; echo "  holders: ${h:0:120}"
-          # Credits spent is not a path gone dark (docs/credit-budget.md). The Blockscout PRO key is 100K credits a
-          # day and resets at 00:00 UTC; past that the gateway answers 402 and the Worker says so ("credits_exhausted",
-          # or "credits_low" when it is shedding). That is the Worker behaving as designed, so it is a visible
-          # warning, not a red run; the content assertions are skipped for this host because there is nothing to
-          # assert about. Anything else that is not a real answer still fails below. A 402 envelope from the
-          # Worker as deployed before the budget existed has no reason field, so status 402 counts too.
-          if printf '%s' "$h" | python3 -c 'import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get("error")=="upstream" and (d.get("status")==402 or d.get("reason") in ("credits_exhausted","credits_low")) else 1)'; then
-            echo "::warning title=explorer credits exhausted::$host /x/4663 answered 402 (Blockscout PRO daily credits spent; resets 00:00 UTC). The path is not dark. Body: ${h:0:200}"
-            continue
-          fi
-          printf '%s' "$h" | python3 -c 'import sys,json; d=json.load(sys.stdin); it=d.get("items"); assert isinstance(it,list) and len(it)>0 and it[0]["address"]["hash"].startswith("0x"), d' \
+          if spent "$h"; then echo "::warning title=explorer credits exhausted::$host holders answered 402/credits (Blockscout PRO daily credits; resets 00:00 UTC). Not a dark path. ${h:0:160}"
+          else assert 'it=d.get("items"); assert isinstance(it,list) and len(it)>0 and it[0]["address"]["hash"].startswith("0x"), d' "$h" \
             || { echo "the holders page is not a non-empty items list; the mainnet explorer path is dark or wrong"; exit 1; }
+          fi
           u="$(j /smart-contracts/0x324f1fddc6df85859e52f43f365d6b06670b74a1)"; echo "  unverified: ${u:0:120}"
-          printf '%s' "$u" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("is_verified") is False, d' \
+          if spent "$u"; then echo "::warning title=explorer credits exhausted::$host unverified-contract lookup answered 402/credits. ${u:0:160}"
+          else assert 'assert d.get("is_verified") is False, d' "$u" \
             || { echo "a contract known to be unverified does not read is_verified false"; exit 1; }
+          fi
           v="$(j /smart-contracts/0x8876789976decbfcbbbe364623c63652db8c0904)"; echo "  verified: ${v:0:120}"
-          printf '%s' "$v" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d.get("is_verified") is True and d.get("name")=="UniversalRouter" and len(d.get("abi") or [])>0, {k:d.get(k) for k in ("is_verified","name")}' \
+          if spent "$v"; then echo "::warning title=explorer credits exhausted::$host verified-contract lookup answered 402/credits. ${v:0:160}"
+          else assert 'assert d.get("is_verified") is True and d.get("name")=="UniversalRouter" and len(d.get("abi") or [])>0, {k:d.get(k) for k in ("is_verified","name")}' "$v" \
             || { echo "a contract known to be verified does not read as verified with its name and ABI"; exit 1; }
+          fi
           done
       - name: say so somewhere public if this failed
         if: failure()

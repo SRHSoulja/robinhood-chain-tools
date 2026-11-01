@@ -635,6 +635,51 @@ async function run() {
     await ask(w, H(HOLDERS_TOKEN));
     b = await (await w.fetch(mkReq('/x/46630/tokens/' + HOLDERS_TOKEN + '/holders'), KEYED_ENV)).json();
     check('budget: the testnet passthrough ignores a spent mainnet budget', b.untouched === true, JSON.stringify(b));
+
+    // ---- review of a501254 ----
+    // a fake clock: Date.now() and new Date() move together, so the UTC reset and entry ages can be tested
+    const RealDate = Date; let skew = 0;
+    globalThis.Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super(RealDate.now() + skew); } static now() { return RealDate.now() + skew; } };
+    try {
+      // P1: stale holders and inventories are never served; only tx/contract may be
+      store.clear(); w = await fresh(); globalThis.fetch = upstream(); await ask(w, H(HOLDERS_TOKEN)); await ask(w, `/x/4663/addresses/${WALLET}/nft`);
+      for (const k of stored()) { const en = JSON.parse(store.get(k)); if (en.body) { en.at -= 3000 * 1000; store.set(k, JSON.stringify(en)); } }
+      w = await fresh(); globalThis.fetch = upstream({ status402: true });
+      let bh = await (await ask(w, H(HOLDERS_TOKEN))).json(), bn = await (await ask(w, `/x/4663/addresses/${WALLET}/nft`)).json();
+      check('P1: a holders page past its fresh window is NOT served stale (no stale_seconds, the envelope)', bh.error === 'upstream' && bh.items === undefined && bh.stale_seconds === undefined, JSON.stringify(bh).slice(0, 120));
+      check('P1: an inventory past its fresh window is NOT served stale either', bn.error === 'upstream' && bn.items === undefined, JSON.stringify(bn).slice(0, 120));
+
+      // P2: the low-credit observation dies at the UTC reset
+      store.clear(); skew = 0; w = await fresh(); f = upstream({ credits: 3000 }); globalThis.fetch = f;
+      await ask(w, H(HOLDERS_TOKEN));
+      let bl = await (await ask(w, `/x/4663/addresses/${WALLET}/nft`)).json();
+      check('reset: before midnight the low balance still sheds the walk', bl.reason === 'credits_low', JSON.stringify(bl));
+      skew = 26 * 3600 * 1000; const nb = f.calls.length; globalThis.fetch = upstream();   // past the next reset
+      bl = await (await ask(w, `/x/4663/addresses/${WALLET}/nft`)).json();
+      check('reset: after midnight UTC the old balance is forgotten and the walk is attempted', Array.isArray(bl.items) && bl.reason === undefined, JSON.stringify(bl).slice(0, 120));
+      skew = 0;
+
+      // P2: admission limit on distinct concurrent walks
+      store.clear(); w = await fresh(); const base2 = upstream(); let live = 0, peak = 0;
+      globalThis.fetch = async (u, i) => { live++; peak = Math.max(peak, live); await new Promise((r) => setTimeout(r, 30)); live--; return base2(u, i); };
+      const many = await Promise.all(Array.from({ length: 64 }, (_, i) => ask(w, H(addrN(0x70000 + i))).then((r) => r.json())));
+      const busy = many.filter((m) => m.reason === 'busy'), served = many.filter((m) => Array.isArray(m.items));
+      check('overload: 64 distinct simultaneous keys never run more than 16 upstream walks', peak <= 16 && base2.calls.length <= 16, JSON.stringify({ peak, calls: base2.calls.length }));
+      check('overload: the rest get a bounded "busy" envelope with a short retry_after', busy.length === 64 - served.length && busy.length >= 48 && busy.every((m) => m.error === 'upstream' && Date.parse(m.retry_after) - Date.now() <= 6000), JSON.stringify({ busy: busy.length, served: served.length }));
+
+      // P2: stale age is recomputed at serve time, and downstream caching is capped to what is left
+      store.clear(); w = await fresh(); globalThis.fetch = upstream(); await ask(w, `/x/4663/smart-contracts/${SC_VERIFIED}`);
+      const sk = stored().find((k) => k.includes('/smart-contracts/'));
+      const age = (secs) => { const en = JSON.parse(store.get(sk)); en.at = Date.now() - secs * 1000; store.set(sk, JSON.stringify(en)); };
+      age(604800 - 30); w = await fresh(); globalThis.fetch = upstream({ status402: true });
+      let rs2 = await ask(w, `/x/4663/smart-contracts/${SC_VERIFIED}`); let bs2 = await rs2.json();
+      check('age: a stale answer with 30 s of window left is cached downstream for at most 30 s, not 60', bs2.is_verified === true && /max-age=(\d+)/.exec(rs2.headers.get('cache-control'))[1] <= 30, rs2.headers.get('cache-control'));
+      store.delete('https://explorer-cache.internal/__credits_out'); age(604800 - 1); w = await fresh();
+      const slow = upstream({ status402: true });
+      globalThis.fetch = async (u, i) => { skew += 5000; return slow(u, i); };   // the upstream wait outlives the window
+      bs2 = await (await ask(w, `/x/4663/smart-contracts/${SC_VERIFIED}`)).json();
+      check('age: an entry that expires during the upstream wait is not served', bs2.error === 'upstream', JSON.stringify(bs2).slice(0, 100));
+    } finally { globalThis.Date = RealDate; }
     delete globalThis.caches;
   }
 

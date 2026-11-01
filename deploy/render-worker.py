@@ -112,15 +112,15 @@ const TRUST_CSP = %s;
     // counter resets, so a monitor (and one day the page) can tell the two apart.
     const upstreamFail = (status, reason) => {
       const env402 = { error: 'upstream', status: status || 0 };
-      if (reason || status === 402) { env402.reason = reason || 'credits_exhausted'; env402.retry_after = new Date(nextUtcMidnight()).toISOString(); }
+      if (reason || status === 402) { env402.reason = reason || 'credits_exhausted'; env402.retry_after = new Date(reason === 'busy' ? Date.now() + 5000 : nextUtcMidnight()).toISOString(); }
       return new Response(JSON.stringify(env402), {
         status: 200,
         headers: Object.assign(secure(), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store',
-          'x-explorer-state': env402.reason ? 'exhausted' : 'failed' }),
+          'x-explorer-state': env402.reason === 'busy' ? 'busy' : env402.reason ? 'exhausted' : 'failed' }),
       });
     };
-    const upstreamOk = (body, state) => new Response(JSON.stringify(body), { status: 200, headers: Object.assign(secure(), {
-      'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=60', 'x-explorer-state': state || 'fresh' }) });
+    const upstreamOk = (body, state, maxAge) => new Response(JSON.stringify(body), { status: 200, headers: Object.assign(secure(), {
+      'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=' + Math.max(0, Math.min(60, Math.floor(maxAge === undefined ? 60 : maxAge))), 'x-explorer-state': state || 'fresh' }) });
 
     // Gate 11: the mainnet explorer challenges every non-browser client, this worker included, so every
     // /x/4663 answer would be the upstreamFail envelope above on its own. Blockscout is retiring per-instance
@@ -152,7 +152,7 @@ const TRUST_CSP = %s;
         });
         if (!r) return { ok: false, status: 0 };
         const left = parseInt(r.headers.get('x-credits-remaining') || '', 10);
-        if (Number.isFinite(left)) XSTATE.left = left;
+        if (Number.isFinite(left)) { XSTATE.left = left; XSTATE.leftUntil = nextUtcMidnight(); }   // a balance observation dies at the reset
         if (r.status === 402) { XSTATE.outUntil = nextUtcMidnight(); return { ok: false, status: 402 }; }
         const ct = String(r.headers.get('content-type') || '');
         if (!r.ok || !ct.includes('json')) return { ok: false, status: r.status };
@@ -182,7 +182,7 @@ const TRUST_CSP = %s;
         // netting every transfer of every id this address has ever touched, newest first, one upstream page
         // at a time so the free tier's 5-requests-a-second limit is never burst. It stops as soon as a page
         // comes back short, which is the end of this address's history.
-        if (XSTATE.left !== null && XSTATE.left < CREDIT_RESERVE) return upstreamFail(402, 'credits_low');   // shed the 400-credit walk first
+        if (XSTATE.left !== null && Date.now() < XSTATE.leftUntil && XSTATE.left < CREDIT_RESERVE) return upstreamFail(402, 'credits_low');   // shed the 400-credit walk first
         const held = new Map();   // "contract|id" (lowercased) -> [net count, original contract, original id]
         let hitCeiling = false;
         for (let page = 1; page <= 20; page++) {
@@ -264,10 +264,15 @@ const TRUST_CSP = %s;
         const freshFor = (c) => (kind === 'contract' && c.body && c.body.is_verified === false ? pol.freshUnverified : pol.fresh);
         const c = await cget(ckeyUrl);
         const age = c && typeof c.at === 'number' ? (Date.now() - c.at) / 1000 : Infinity;
-        if (c && age < freshFor(c)) return upstreamOk(c.body, 'cached');
-        const serveStaleOr = (status, reason) => (c && age < pol.stale
-          ? upstreamOk(Object.assign({}, c.body, { stale_seconds: Math.floor(age) }), 'stale')
-          : upstreamFail(status, reason));
+        if (c && age < freshFor(c)) return upstreamOk(c.body, 'cached', freshFor(c) - age);
+        // Age is recomputed when the answer is served, not when the entry was read: an upstream wait in between
+        // must not carry an entry past its window, and a browser may keep it only for what remains of that window.
+        const serveStaleOr = (status, reason) => {
+          const ageNow = c && typeof c.at === 'number' ? (Date.now() - c.at) / 1000 : Infinity;
+          return c && ageNow < pol.stale
+            ? upstreamOk(Object.assign({}, c.body, { stale_seconds: Math.floor(ageNow) }), 'stale', pol.stale - ageNow)
+            : upstreamFail(status, reason);
+        };
         // The shared "credits are out" marker: one isolate finding the 402 tells the rest of this colo.
         if (Date.now() >= XSTATE.outUntil) {
           const m = await cget('https://explorer-cache.internal/__credits_out');
@@ -276,6 +281,7 @@ const TRUST_CSP = %s;
         if (Date.now() < XSTATE.outUntil) return serveStaleOr(402);
         // Identical concurrent requests share one upstream walk.
         let p = XSTATE.inflight.get(ckeyUrl);
+        if (!p && XSTATE.inflight.size >= MAX_INFLIGHT) return serveStaleOr(0, 'busy');   // admission limit
         if (!p) {
           p = (async () => {
             try {
@@ -286,7 +292,7 @@ const TRUST_CSP = %s;
                 if (j.status === 402 && XSTATE.outUntil > Date.now()) await cput('https://explorer-cache.internal/__credits_out', { until: XSTATE.outUntil }, (XSTATE.outUntil - Date.now()) / 1000);
                 return { ok: false, status: j.status, reason: j.reason };
               }
-              await cput(ckeyUrl, { at: Date.now(), body: j }, pol.stale);
+              await cput(ckeyUrl, { at: Date.now(), body: j }, Math.max(pol.fresh, pol.stale));
               return { ok: true, body: j };
             } catch (e) { return { ok: false, status: 0 }; }
             finally { XSTATE.inflight.delete(ckeyUrl); }
@@ -429,14 +435,17 @@ async function fetchWithRetry(url, init) {
 // calls this Worker makes are not in the published price table, so they cost the default 20: about 5,000
 // upstream calls a day, resetting at 00:00 UTC (docs.blockscout.com/rate-limits). Past that the gateway
 // answers 402 until the reset. State kept per isolate; the edge cache (caches.default) is what is shared.
-const XSTATE = { outUntil: 0, left: null, inflight: new Map() };
+const XSTATE = { outUntil: 0, left: null, leftUntil: 0, inflight: new Map() };
+const MAX_INFLIGHT = 16;   // distinct upstream walks at once, per isolate; past this the answer is a bounded 'busy'
 const CREDIT_RESERVE = 4000;   // below this, the 20-call inventory walk (400 credits) is shed; cheap lookups continue
 // fresh: seconds a good answer is served with no upstream call. stale: seconds it may still be served, labelled,
 // when the upstream cannot answer. Holders and inventories move, so their stale window is short; a mined
 // transaction and a verified contract do not, so theirs is long.
 const XPOLICY = {
-  holders: { fresh: 600, stale: 21600 },
-  nft: { fresh: 300, stale: 21600 },
+  // stale 0: a holder list feeds recipient selection and proportional allocation, and the page cannot show how old
+  // a snapshot is. Until it can, a holders page or inventory is either fresh or "could not check", never stale.
+  holders: { fresh: 600, stale: 0 },
+  nft: { fresh: 300, stale: 0 },
   tx: { fresh: 86400, stale: 604800 },
   contract: { fresh: 86400, freshUnverified: 600, stale: 604800 },
 };
