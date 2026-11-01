@@ -48,7 +48,7 @@ The pages read exactly these fields, and nothing else may be invented:
 Anything the module API cannot supply is `null`, never a guess: the readers already treat null as "could not
 check". Every upstream call carries `chain_id=4663`, the key, and a 10-second timeout; every answer is cached at
 the edge for 60 seconds; a non-200 or non-JSON upstream answer is the existing `{"error":"upstream"}` envelope.
-Rate: the free tier is 5 requests a second; the NFT derivation may need up to 20 upstream pages for one page
+Credit budget, caching and the 402 behaviour: docs/credit-budget.md. Rate: the free tier is 5 requests a second; the NFT derivation may need up to 20 upstream pages for one page
 request, so it runs sequentially and stops early when a page comes back short.
 
 ## The airdrop page

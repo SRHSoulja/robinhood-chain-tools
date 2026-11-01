@@ -107,12 +107,20 @@ const TRUST_CSP = %s;
   if (x) {
     const base = EXPLORERS[x[1]];
     if (!base || x[2].includes('..')) return new Response('bad path', { status: 400, headers: secure() });
-    const upstreamFail = (status) => new Response(JSON.stringify({ error: 'upstream', status: status || 0 }), {
-      status: 200,
-      headers: Object.assign(secure(), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }),
-    });
-    const upstreamOk = (body) => new Response(JSON.stringify(body), { status: 200, headers: Object.assign(secure(), {
-      'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=60' }) });
+    // `reason` is additive: the pages read only error and status, so "could not check" is unchanged. A 402 from
+    // the gateway is the daily credit budget running out, not a path gone dark, and says so with the time the
+    // counter resets, so a monitor (and one day the page) can tell the two apart.
+    const upstreamFail = (status, reason) => {
+      const env402 = { error: 'upstream', status: status || 0 };
+      if (reason || status === 402) { env402.reason = reason || 'credits_exhausted'; env402.retry_after = new Date(nextUtcMidnight()).toISOString(); }
+      return new Response(JSON.stringify(env402), {
+        status: 200,
+        headers: Object.assign(secure(), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store',
+          'x-explorer-state': env402.reason ? 'exhausted' : 'failed' }),
+      });
+    };
+    const upstreamOk = (body, state) => new Response(JSON.stringify(body), { status: 200, headers: Object.assign(secure(), {
+      'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=60', 'x-explorer-state': state || 'fresh' }) });
 
     // Gate 11: the mainnet explorer challenges every non-browser client, this worker included, so every
     // /x/4663 answer would be the upstreamFail envelope above on its own. Blockscout is retiring per-instance
@@ -121,7 +129,9 @@ const TRUST_CSP = %s;
     // is translated here when a key is bound. Everything else on mainnet, and everything on testnet, falls
     // through to the direct passthrough further down, unchanged. The spec is docs/gate-11-explorer.md.
     if (x[1] === '4663' && env.BLOCKSCOUT_KEY) {
+      const translate = async () => {
       const mod = async (params) => {
+        if (Date.now() < XSTATE.outUntil) return { ok: false, status: 402 };   // budget spent: spend nothing more today
         const u = new URL('https://api.blockscout.com/v2/api');
         for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
         u.searchParams.set('chain_id', '4663');
@@ -141,6 +151,9 @@ const TRUST_CSP = %s;
           cf: { cacheTtl: 0 },
         });
         if (!r) return { ok: false, status: 0 };
+        const left = parseInt(r.headers.get('x-credits-remaining') || '', 10);
+        if (Number.isFinite(left)) XSTATE.left = left;
+        if (r.status === 402) { XSTATE.outUntil = nextUtcMidnight(); return { ok: false, status: 402 }; }
         const ct = String(r.headers.get('content-type') || '');
         if (!r.ok || !ct.includes('json')) return { ok: false, status: r.status };
         let json; try { json = await r.json(); } catch (e) { return { ok: false, status: r.status }; }
@@ -169,6 +182,7 @@ const TRUST_CSP = %s;
         // netting every transfer of every id this address has ever touched, newest first, one upstream page
         // at a time so the free tier's 5-requests-a-second limit is never burst. It stops as soon as a page
         // comes back short, which is the end of this address's history.
+        if (XSTATE.left !== null && XSTATE.left < CREDIT_RESERVE) return upstreamFail(402, 'credits_low');   // shed the 400-credit walk first
         const held = new Map();   // "contract|id" (lowercased) -> [net count, original contract, original id]
         let hitCeiling = false;
         for (let page = 1; page <= 20; page++) {
@@ -229,6 +243,58 @@ const TRUST_CSP = %s;
           implementations: r.ImplementationAddress ? [{ address: r.ImplementationAddress }] : [],
           verified_at: r.VerifiedAt || null,
         });
+      }
+      return null;   // x[2] matched none of the four known page paths
+      };
+
+      // Everything above is the translation. Everything below is the budget around it (docs/credit-budget.md).
+      const kind = /^\\/tokens\\/0x[0-9a-fA-F]{40}\\/holders$/.test(x[2]) ? 'holders'
+        : /^\\/addresses\\/0x[0-9a-fA-F]{40}\\/nft$/.test(x[2]) ? 'nft'
+        : /^\\/transactions\\/0x[0-9a-fA-F]{64}$/.test(x[2]) ? 'tx'
+        : /^\\/smart-contracts\\/0x[0-9a-fA-F]{40}$/.test(x[2]) ? 'contract' : null;
+      if (kind) {
+        const pol = XPOLICY[kind];
+        // The cache key is the path and, for holders, the page number -- never the key, and never the rest of the
+        // query string, which the translation ignores: a visitor varying `?x=1` must not buy a fresh upstream call.
+        const pg = kind === 'holders' ? '?page=' + Math.max(1, parseInt(url.searchParams.get('page') || '1', 10) || 1) : '';
+        const ckeyUrl = 'https://explorer-cache.internal/4663' + x[2].toLowerCase() + pg;
+        const cache = typeof caches !== 'undefined' && caches.default ? caches.default : null;
+        const cget = async (u) => { if (!cache) return null; try { const h = await cache.match(new Request(u)); return h ? await h.json() : null; } catch (e) { return null; } };
+        const cput = async (u, obj, secs) => { if (!cache || secs < 1) return; try { await cache.put(new Request(u), new Response(JSON.stringify(obj), { headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=' + Math.floor(secs) } })); } catch (e) {} };
+        const freshFor = (c) => (kind === 'contract' && c.body && c.body.is_verified === false ? pol.freshUnverified : pol.fresh);
+        const c = await cget(ckeyUrl);
+        const age = c && typeof c.at === 'number' ? (Date.now() - c.at) / 1000 : Infinity;
+        if (c && age < freshFor(c)) return upstreamOk(c.body, 'cached');
+        const serveStaleOr = (status, reason) => (c && age < pol.stale
+          ? upstreamOk(Object.assign({}, c.body, { stale_seconds: Math.floor(age) }), 'stale')
+          : upstreamFail(status, reason));
+        // The shared "credits are out" marker: one isolate finding the 402 tells the rest of this colo.
+        if (Date.now() >= XSTATE.outUntil) {
+          const m = await cget('https://explorer-cache.internal/__credits_out');
+          if (m && typeof m.until === 'number' && m.until > Date.now()) XSTATE.outUntil = m.until;
+        }
+        if (Date.now() < XSTATE.outUntil) return serveStaleOr(402);
+        // Identical concurrent requests share one upstream walk.
+        let p = XSTATE.inflight.get(ckeyUrl);
+        if (!p) {
+          p = (async () => {
+            try {
+              const res = await translate();
+              if (!res) return { ok: false, status: 0 };
+              const j = JSON.parse(await res.text());
+              if (j && j.error === 'upstream') {
+                if (j.status === 402 && XSTATE.outUntil > Date.now()) await cput('https://explorer-cache.internal/__credits_out', { until: XSTATE.outUntil }, (XSTATE.outUntil - Date.now()) / 1000);
+                return { ok: false, status: j.status, reason: j.reason };
+              }
+              await cput(ckeyUrl, { at: Date.now(), body: j }, pol.stale);
+              return { ok: true, body: j };
+            } catch (e) { return { ok: false, status: 0 }; }
+            finally { XSTATE.inflight.delete(ckeyUrl); }
+          })();
+          XSTATE.inflight.set(ckeyUrl, p);
+        }
+        const out = await p;
+        return out.ok ? upstreamOk(out.body, 'fresh') : serveStaleOr(out.status, out.reason);
       }
       // x[2] matched none of the four known page paths: fall through to the direct passthrough below, which
       // is the same challenge-page answer this got before the translation layer existed.
@@ -359,6 +425,22 @@ async function fetchWithRetry(url, init) {
   }
   return r;
 }
+// Blockscout PRO credit budget (docs/credit-budget.md). The free key is 100K credits a day, and the module
+// calls this Worker makes are not in the published price table, so they cost the default 20: about 5,000
+// upstream calls a day, resetting at 00:00 UTC (docs.blockscout.com/rate-limits). Past that the gateway
+// answers 402 until the reset. State kept per isolate; the edge cache (caches.default) is what is shared.
+const XSTATE = { outUntil: 0, left: null, inflight: new Map() };
+const CREDIT_RESERVE = 4000;   // below this, the 20-call inventory walk (400 credits) is shed; cheap lookups continue
+// fresh: seconds a good answer is served with no upstream call. stale: seconds it may still be served, labelled,
+// when the upstream cannot answer. Holders and inventories move, so their stale window is short; a mined
+// transaction and a verified contract do not, so theirs is long.
+const XPOLICY = {
+  holders: { fresh: 600, stale: 21600 },
+  nft: { fresh: 300, stale: 21600 },
+  tx: { fresh: 86400, stale: 604800 },
+  contract: { fresh: 86400, freshUnverified: 600, stale: 604800 },
+};
+const nextUtcMidnight = () => { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1); };
 // Sent on every response. A wallet-connected page delivered once over plain HTTP can be replaced in transit
 // before any of its own protections exist, so the first request is redirected and the browser is told never
 // to try HTTP again. No preload: that is a decision about every subdomain, not just this one.

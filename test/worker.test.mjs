@@ -528,6 +528,116 @@ async function run() {
     r = await get({}, '/art/1/' + C + '/2'); check('art: an unlisted chain is not an art route', r.status === 302, r.status);
   }
 
+  // ---- the credit budget (docs/credit-budget.md): cache, collapse, 402 breaker, stale-if-error, shed ----
+  // The free PRO key is 100K credits a day at 20 per module call, about 5,000 calls, back at 00:00 UTC. A 402 is
+  // that budget spent. Each case loads a FRESH copy of the worker (a ?v= query) because the breaker is module state.
+  {
+    const wpath = renderWorker('airdrop');
+    let n = 0;
+    const fresh = async () => (await import('file://' + wpath + '?v=' + (++n))).default;
+    const store = new Map();
+    const stored = () => [...store.keys()];
+    globalThis.caches = { default: {
+      match: async (rq) => { const v = store.get(rq.url); return v === undefined ? undefined : new Response(v, { headers: { 'content-type': 'application/json' } }); },
+      put: async (rq, res) => { store.set(rq.url, await res.text()); },
+    } };
+    // wraps the standard fixtures; `mode.status402` answers every module call 402, `mode.credits` adds the header
+    const upstream = (mode = {}) => {
+      const calls = []; const base = makeFetch([]);
+      const f = async (url, init) => {
+        const u = new URL(String(url));
+        if (u.hostname !== 'api.blockscout.com') return base(url, init);
+        calls.push(u.searchParams.get('action'));
+        if (mode.status402) return new Response(JSON.stringify({ message: 'Payment Required' }), { status: 402, headers: { 'content-type': 'application/json' } });
+        const r = await base(url, init);
+        if (mode.credits === undefined) return r;
+        return new Response(await r.text(), { status: r.status, headers: { 'content-type': 'application/json', 'x-credits-remaining': String(mode.credits) } });
+      };
+      f.calls = calls; return f;
+    };
+    const ask = (w, p) => w.fetch(mkReq(p), KEYED_ENV);
+    const H = (t) => `/x/4663/tokens/${t}/holders`;
+
+    // 1. a good answer is served from the edge for its fresh window, and a changed query string buys nothing
+    store.clear(); let w = await fresh(); let f = upstream(); globalThis.fetch = f;
+    let r1 = await ask(w, H(HOLDERS_TOKEN)); const b1 = await r1.json();
+    let r2 = await ask(w, H(HOLDERS_TOKEN)); const b2 = await r2.json();
+    let r3 = await ask(w, H(HOLDERS_TOKEN) + '?cachebust=' + Math.random());
+    check('budget: the second identical request spends no credits (one upstream call in all)', f.calls.length === 1 && deepEqual(b1, b2), JSON.stringify(f.calls));
+    check('budget: first answer is labelled fresh, the second cached', r1.headers.get('x-explorer-state') === 'fresh' && r2.headers.get('x-explorer-state') === 'cached');
+    check('budget: a junk query string does not buy a new upstream call', f.calls.length === 1 && r3.headers.get('x-explorer-state') === 'cached', JSON.stringify(f.calls));
+    check('budget: holders page 2 is a different cache entry', (await ask(w, H(HOLDERS_TOKEN) + '?page=2')).headers.get('x-explorer-state') === 'fresh' && f.calls.length === 2);
+    check('budget: nothing the cache holds, key or entry name, contains the API key', !stored().some((k) => k.includes(KEY)) && ![...store.values()].some((v) => v.includes(KEY)));
+
+    // 2. identical concurrent requests share one upstream call
+    store.clear(); w = await fresh(); f = upstream(); globalThis.fetch = f;
+    const rs = await Promise.all([ask(w, H(HOLDERS_TOKEN)), ask(w, H(HOLDERS_TOKEN)), ask(w, H(HOLDERS_TOKEN))]);
+    const bs = await Promise.all(rs.map((r) => r.json()));
+    check('budget: three simultaneous identical requests make one upstream call', f.calls.length === 1 && bs.every((b) => Array.isArray(b.items)), JSON.stringify(f.calls));
+
+    // 3. a 402 is a stated state, not a broken page, and it stops all spending until the reset
+    store.clear(); w = await fresh(); f = upstream({ status402: true }); globalThis.fetch = f;
+    let r = await ask(w, H(HOLDERS_TOKEN)); let b = await r.json();
+    check('402: the envelope is still {error:"upstream", status:402}, so the pages read it as before', r.status === 200 && b.error === 'upstream' && b.status === 402, JSON.stringify(b));
+    check('402: and it says credits_exhausted with a retry_after at the next 00:00 UTC',
+      b.reason === 'credits_exhausted' && /T00:00:00\.000Z$/.test(b.retry_after) && Date.parse(b.retry_after) > Date.now() && Date.parse(b.retry_after) - Date.now() <= 86400000, JSON.stringify(b));
+    check('402: it is not retried, and carries no-store and the exhausted state', f.calls.length === 1 && r.headers.get('cache-control') === 'no-store' && r.headers.get('x-explorer-state') === 'exhausted', JSON.stringify(f.calls));
+    await ask(w, `/x/4663/transactions/${TX_OK}`); await ask(w, `/x/4663/smart-contracts/${SC_VERIFIED}`); await ask(w, `/x/4663/addresses/${WALLET}/nft`);
+    check('402: after the first, no other path makes an upstream call until the reset', f.calls.length === 1, JSON.stringify(f.calls));
+    w = await fresh(); globalThis.fetch = f;   // another isolate in the same colo
+    await ask(w, `/x/4663/transactions/${TX_OK}`);
+    check('402: another isolate learns it from the shared marker and spends nothing', f.calls.length === 1, JSON.stringify(f.calls));
+    check('402: the envelope never carries the key', !(await responseHasKey(await ask(w, H(HOLDERS_TOKEN)))));
+
+    // 4. stale-if-error: a known answer past its fresh window beats a dark page, and says how old it is
+    store.clear(); w = await fresh(); f = upstream(); globalThis.fetch = f;
+    await ask(w, `/x/4663/smart-contracts/${SC_VERIFIED}`);
+    const ck = stored().find((k) => k.includes('/smart-contracts/'));
+    const agedBy = (secs) => { const e = JSON.parse(store.get(ck)); e.at -= secs * 1000; store.set(ck, JSON.stringify(e)); };
+    agedBy(90000);   // past the 24 h fresh window, inside the 7 d stale window
+    w = await fresh(); globalThis.fetch = upstream({ status402: true });
+    r = await ask(w, `/x/4663/smart-contracts/${SC_VERIFIED}`); b = await r.json();
+    check('stale: a verified contract past its fresh window is served from cache when the budget is out', b.is_verified === true && b.name === 'Foo' && b.stale_seconds >= 90000 && r.headers.get('x-explorer-state') === 'stale', JSON.stringify(b).slice(0, 160));
+    agedBy(700000);  // now past 7 d
+    w = await fresh(); globalThis.fetch = upstream({ status402: true });
+    b = await (await ask(w, `/x/4663/smart-contracts/${SC_VERIFIED}`)).json();
+    check('stale: past the stale window it is the envelope, never an ancient answer', b.error === 'upstream' && b.reason === 'credits_exhausted', JSON.stringify(b).slice(0, 160));
+
+    // 5. an unverified contract is only trusted for ten minutes (it may be verified any time); a verified one for a day
+    store.clear(); w = await fresh(); f = upstream(); globalThis.fetch = f;
+    await ask(w, `/x/4663/smart-contracts/${SC_UNVERIFIED}`);
+    const uk = stored().find((k) => k.includes('/smart-contracts/'));
+    let e = JSON.parse(store.get(uk)); e.at -= 700 * 1000; store.set(uk, JSON.stringify(e));
+    await ask(w, `/x/4663/smart-contracts/${SC_UNVERIFIED}`);
+    check('ttl: an unverified answer 700 s old is asked again', f.calls.length === 2, JSON.stringify(f.calls));
+
+    // 6. holders are NOT served stale beyond six hours: an old recipient snapshot is worse than "could not check"
+    store.clear(); w = await fresh(); f = upstream(); globalThis.fetch = f;
+    await ask(w, H(HOLDERS_TOKEN));
+    const hk = stored().find((k) => k.includes('/holders'));
+    e = JSON.parse(store.get(hk)); e.at -= 22000 * 1000; store.set(hk, JSON.stringify(e));
+    w = await fresh(); globalThis.fetch = upstream({ status402: true });
+    b = await (await ask(w, H(HOLDERS_TOKEN))).json();
+    check('stale: holders older than six hours are not served stale', b.error === 'upstream' && b.reason === 'credits_exhausted', JSON.stringify(b).slice(0, 120));
+
+    // 7. running low sheds the 20-call inventory walk first and keeps the cheap lookups alive
+    store.clear(); w = await fresh(); f = upstream({ credits: 3000 }); globalThis.fetch = f;
+    b = await (await ask(w, H(HOLDERS_TOKEN))).json();
+    check('low: a cheap lookup still answers when credits are under the reserve', Array.isArray(b.items), JSON.stringify(b).slice(0, 100));
+    const before = f.calls.length;
+    b = await (await ask(w, `/x/4663/addresses/${WALLET}/nft`)).json();
+    check('low: the inventory walk is shed with reason credits_low and makes no upstream call', b.error === 'upstream' && b.reason === 'credits_low' && f.calls.length === before, JSON.stringify(b));
+    b = await (await ask(w, `/x/4663/transactions/${TX_OK}`)).json();
+    check('low: a transaction lookup is still served', b.status === 'ok', JSON.stringify(b).slice(0, 100));
+
+    // 8. testnet and the keyless path never touch the budget code
+    store.clear(); w = await fresh(); globalThis.fetch = upstream({ status402: true });
+    await ask(w, H(HOLDERS_TOKEN));
+    b = await (await w.fetch(mkReq('/x/46630/tokens/' + HOLDERS_TOKEN + '/holders'), KEYED_ENV)).json();
+    check('budget: the testnet passthrough ignores a spent mainnet budget', b.untouched === true, JSON.stringify(b));
+    delete globalThis.caches;
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }
